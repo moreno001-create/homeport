@@ -394,6 +394,12 @@ function rich(text) {
       const lines = para.trim().split("\n");
       const rows = lines.filter(l => l.trim().startsWith("|"));
       if (rows.length >= 2 && rows.length === lines.filter(l => l.trim()).length) { out.push(table(rows)); continue; }
+      const head = /^#{1,6}\s+(.*)$/.exec(lines[0].trim());
+      if (head) {
+        out.push(h("p", { class: "heading" }, h("b", {}, head[1].replace(/\*\*/g, ""))));
+        if (lines.length > 1) out.push(...rich(lines.slice(1).join("\n")));
+        continue;
+      }
       out.push(h("p", {}, para.trim().split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map(bit =>
         bit.startsWith("`") && bit.endsWith("`") && bit.length > 2 ? h("code", {}, bit.slice(1, -1))
         : bit.startsWith("**") && bit.endsWith("**") && bit.length > 4 ? h("b", {}, bit.slice(2, -2)) : bit)));
