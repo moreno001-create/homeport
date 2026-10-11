@@ -47,7 +47,11 @@ fi
 caddy version
 
 say "Installing Homeport"
-here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)"
+# A local build is only used when this script is run as a file next to it (curl | bash always downloads).
+here=/nonexistent
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if [ -x "$here/homeport-linux-$arch" ]; then
   cp "$here/homeport-linux-$arch" "$tmp/homeport"            # a local build next to this script
@@ -120,10 +124,13 @@ fi
 
 # MARK: First setup (like YunoHost's post-install)
 say "Setting up this server"
+# A terminal to ask at? (/dev/tty can exist without being usable, e.g. over a non-interactive ssh or in CI.)
+tty_ok=false
+if { exec 3</dev/tty; } 2>/dev/null; then tty_ok=true; exec 3<&-; fi
 ask() { # ask VAR "question" [default] [secret]
   local var=$1 q=$2 def=${3:-} secret=${4:-} val=""
-  if [ -n "${!var:-}" ]; then return; fi
-  [ -r /dev/tty ] || return 0
+  if [ -n "${!var:-}" ]; then return 0; fi
+  $tty_ok || return 0
   if [ -n "$secret" ]; then
     read -r -s -p "$q: " val </dev/tty; echo >/dev/tty
   else
@@ -135,7 +142,7 @@ ask HOMEPORT_DOMAIN "Main domain (portal and admin panel; its DNS must point her
 ask HOMEPORT_ADMIN "First admin's user name"
 ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
 ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test machine)" "letsencrypt"
-while [ -z "${HOMEPORT_PASSWORD:-}" ] && [ -r /dev/tty ]; do
+while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; read -r -s -p "Again: " p2 </dev/tty; echo >/dev/tty
   if [ "$HOMEPORT_PASSWORD" != "$p2" ]; then echo "They didn't match; try again."; HOMEPORT_PASSWORD=""; fi
