@@ -174,7 +174,7 @@ fi
 # MARK: First setup
 say "Setting up Homeport"
 tty_ok=false
-if { exec 3</dev/tty; } 2>/dev/null; then tty_ok=true; exec 3<&-; fi
+if { exec 5</dev/tty; } 2>/dev/null; then tty_ok=true; exec 5<&-; fi
 ask() {
   local var=$1 q=$2 def=${3:-} secret=${4:-} val=""
   if [ -n "${!var:-}" ]; then return 0; fi
@@ -183,10 +183,17 @@ ask() {
   else read -r -p "$q${def:+ [$def]}: " val </dev/tty; fi
   printf -v "$var" '%s' "${val:-$def}"
 }
-ask HOMEPORT_DOMAIN "Main domain (portal and admin panel; its DNS must point at this Mac's public address), e.g. home.example.com"
+ips="$(for i in en0 en1 en2; do ipconfig getifaddr "$i" 2>/dev/null; done | tr '\n' ' ')"
+first_ip="${ips%% *}"
+shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
+# With no domain yet, <ip>.sslip.io works on this network with no setup: every device resolves it to this machine.
+ask HOMEPORT_DOMAIN "Main domain for the portal and admin panel. Press Enter for ${first_ip:+$first_ip.sslip.io, which works on this network with no setup;} or type your own (its DNS must point here)" "${first_ip:+$first_ip.sslip.io}"
+# Names Let's Encrypt can't certify (private addresses, test and local names) use Caddy's own certificates.
+tls_default=letsencrypt
+case "${HOMEPORT_DOMAIN:-}" in *.sslip.io|*.nip.io|*.test|*.local|*.lan|*.home.arpa|*.internal) tls_default=internal ;; esac
 ask HOMEPORT_ADMIN "First admin's user name"
 ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
-ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (just this network)" "letsencrypt"
+ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (just this network)" "$tls_default"
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; read -r -s -p "Again: " p2 </dev/tty; echo >/dev/tty
@@ -197,10 +204,50 @@ if [ -z "${HOMEPORT_DOMAIN:-}" ] || [ -z "${HOMEPORT_ADMIN:-}" ] || [ -z "${HOME
   exit 0
 fi
 printf '%s\n' "$HOMEPORT_PASSWORD" | homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
-  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-letsencrypt}"
+  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}" >/dev/null
 cat <<MSG
 
-Done. Sign in at https://$HOMEPORT_DOMAIN/admin as $HOMEPORT_ADMIN.
-To keep serving, this Mac must stay awake and logged in (System Settings > Energy: prevent automatic sleeping;
-Users & Groups: automatic login). Ports 80 and 443 must be forwarded to it from your router.
+$(printf '\033[1m')Homeport is ready$(printf '\033[0m')
+
+  Your apps (portal):  https://$HOMEPORT_DOMAIN/
+  Admin panel:         https://$HOMEPORT_DOMAIN/admin
+  …or by address:      https://$shown_ip/admin   (from this network; works before DNS is set up)
+  User name:           $HOMEPORT_ADMIN
+  Password:            the one you just chose (change it with: homeport user passwd $HOMEPORT_ADMIN)
+  This server:         ${ips:-unknown address}
+MSG
+if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
+  cat <<MSG
+
+  Certificates: Caddy's own test certificates, so your browser warns the first time; choose to continue.
+MSG
+  case "$HOMEPORT_DOMAIN" in
+    *.sslip.io|*.nip.io) cat <<MSG
+  $HOMEPORT_DOMAIN already leads to this machine from every device on this network: nothing to set up.
+  Install apps on names under it, like cloud.$HOMEPORT_DOMAIN.
+MSG
+    ;;
+    *) cat <<MSG
+  Until DNS knows $HOMEPORT_DOMAIN, tell the computer you browse from where it is: add this line to its hosts file
+  (Mac/Linux: sudo nano /etc/hosts; Windows: C:\Windows\System32\drivers\etc\hosts, as administrator):
+
+      $shown_ip  $HOMEPORT_DOMAIN
+
+  Add each app's address on the same line as you install them (e.g. cloud.$HOMEPORT_DOMAIN).
+MSG
+    ;;
+  esac
+else
+  cat <<MSG
+
+  Certificates: Let's Encrypt. $HOMEPORT_DOMAIN must point (DNS) at this server's public address, and ports 80 and
+  443 must reach it; the certificate arrives within a minute of the first visit. Trouble: tail "$STATE/logs/caddy.log"
+MSG
+fi
+cat <<MSG
+
+  This Mac must stay awake and logged in to keep serving (System Settings > Energy, and automatic login).
+
+  Next: install apps from the admin panel (Apps), or: homeport app catalog
+  Connect an AI agent (opencode, Claude Code…): homeport mcp
 MSG

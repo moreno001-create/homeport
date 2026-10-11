@@ -89,7 +89,7 @@ func (s *Server) continueTo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target, _ := url.Parse(ret)
-	if strings.EqualFold(target.Hostname(), s.settings().MainDomain) {
+	if s.isMainHost(strings.ToLower(target.Hostname())) {
 		http.Redirect(w, r, ret, http.StatusFound)
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) appSignOut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) onMain(w http.ResponseWriter, r *http.Request) bool {
-	if host(r) != s.settings().MainDomain {
+	if !s.isMainHost(host(r)) {
 		http.NotFound(w, r)
 		return false
 	}
@@ -208,7 +208,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		fail("That user name and password don't match.", http.StatusUnauthorized)
 		return
 	}
-	if _, err := s.newSession(w, name, s.settings().MainDomain, ""); err != nil {
+	// Signed in on the address used: the main domain, or this machine's own address.
+	if _, err := s.newSession(w, name, host(r), ""); err != nil {
 		fail("Couldn't sign you in: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

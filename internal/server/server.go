@@ -38,6 +38,9 @@ type Server struct {
 	Signer *Signer
 	// Assist runs tools for AI helpers (MCP on the root socket, approvals and audit in the admin panel).
 	Assist *assist.Assistant
+	// LocalAddrs are this machine's own network addresses: the portal and admin panel answer on them too, so
+	// https://192.168.1.50/admin works before any DNS is set up.
+	LocalAddrs func() []string
 
 	jobs     jobs
 	mu       sync.Mutex
@@ -148,6 +151,21 @@ func (s *Server) settings() state.Settings {
 	return st
 }
 
+// isMainHost: the main domain, or one of this machine's own addresses.
+func (s *Server) isMainHost(h string) bool {
+	if h == s.settings().MainDomain {
+		return true
+	}
+	if s.LocalAddrs != nil {
+		for _, a := range s.LocalAddrs() {
+			if h == a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // sessionUser is who the browser is signed in as on the domain it's talking to.
 func (s *Server) sessionUser(r *http.Request) (state.User, string, bool) {
 	c, err := r.Cookie(cookieName)
@@ -215,6 +233,14 @@ func (s *Server) safeReturn(raw string) (string, bool) {
 		if h == d.Settings().MainDomain {
 			ok = true
 			return
+		}
+		if s.LocalAddrs != nil {
+			for _, a := range s.LocalAddrs() {
+				if h == a {
+					ok = true
+					return
+				}
+			}
 		}
 		_, ok = d.AppOn(h)
 	})

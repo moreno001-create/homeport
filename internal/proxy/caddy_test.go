@@ -42,3 +42,10 @@ func TestCaddyfile(t *testing.T) {
 		t.Error("internal TLS should use Caddy's own certificates")
 	}
 }
+
+func TestLocalAddressesServeThePortal(t *testing.T) {
+	c := CaddyfileWith(state.Settings{MainDomain: "home.test", TLS: state.TLSLetsEncrypt}, nil, []string{"192.168.4.27"})
+	if !strings.Contains(c, "192.168.4.27 {\n\ttls internal\n") || strings.Count(c, "reverse_proxy 127.0.0.1:8090") != 2 {
+		t.Fatalf("the portal should also answer on the machine's address, with Caddy's own certificate:\n%s", c)
+	}
+}

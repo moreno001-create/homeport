@@ -31,7 +31,7 @@ func actor(r *http.Request) state.User {
 // site's page can't send, so a malicious page can't make an admin's browser change things.
 func (s *Server) browserAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if host(r) != s.settings().MainDomain {
+		if !s.isMainHost(host(r)) {
 			http.NotFound(w, r)
 			return
 		}
@@ -169,6 +169,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		MainDomain      *string        `json:"mainDomain"`
 		ACMEEmail       *string        `json:"acmeEmail"`
 		TLS             *state.TLSMode `json:"tls"`
 		AssistantShell  *bool          `json:"assistantShell"`
@@ -186,8 +187,30 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("that isn't an email address"))
 		return
 	}
+	if in.MainDomain != nil {
+		*in.MainDomain = strings.ToLower(strings.TrimSpace(*in.MainDomain))
+		if err := auth.ValidDomain(*in.MainDomain); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	err := s.Store.Update(func(d *state.Data) error {
 		st := d.Settings()
+		if in.MainDomain != nil && *in.MainDomain != st.MainDomain {
+			// Apps that sign in with Homeport were configured with the old address (their OIDC issuer).
+			for _, a := range d.Apps() {
+				if a.OIDC != nil {
+					return fmt.Errorf("%s signs in with Homeport at https://%s; remove it before changing the main domain, then install it again", a.Name, st.MainDomain)
+				}
+			}
+			if other, taken := d.AppOn(*in.MainDomain); taken {
+				return fmt.Errorf("%s already serves %s", *in.MainDomain, other.Name)
+			}
+			st.MainDomain = *in.MainDomain
+			if !d.HasDomain(st.MainDomain) {
+				d.AddDomain(state.Domain{Name: st.MainDomain, Added: time.Now()})
+			}
+		}
 		if in.ACMEEmail != nil {
 			st.ACMEEmail = *in.ACMEEmail
 		}

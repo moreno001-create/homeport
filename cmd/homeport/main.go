@@ -105,6 +105,7 @@ func usage() {
   homeport user delete NAME
 
   homeport domain list | add DOMAIN | remove DOMAIN
+  homeport domain main DOMAIN [--tls internal|letsencrypt]   move the portal and admin panel
 
   homeport app catalog
   homeport app list
@@ -146,7 +147,8 @@ func serve() error {
 		if st.MainDomain == "" {
 			return nil // not set up yet: leave Caddy alone
 		}
-		return caddy.Apply(ctx, proxy.Caddyfile(st, list))
+		writeLoginBanner(st.MainDomain)
+		return caddy.Apply(ctx, proxy.CaddyfileWith(st, list, localAddrs()))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot}
@@ -157,7 +159,8 @@ func serve() error {
 	helper := &assist.Assistant{Store: store, Apps: manager, Runner: sys, Caddyfile: caddyfile, Version: version, ApplyProxy: applyProxy, Platform: plat,
 		Audit: &assist.Audit{Path: filepath.Join(stateDir, "audit.log")}, Approvals: &assist.Approvals{},
 		Memory: &assist.Memory{Path: filepath.Join(stateDir, "assistant-memory.md")}}
-	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper}
+	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
+		LocalAddrs: localAddrs}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -177,6 +180,58 @@ func serve() error {
 	case err := <-errs:
 		return err
 	}
+}
+
+// writeLoginBanner puts the admin panel's address above the console login prompt (Linux), so it's on screen after a
+// reboot. \4 is the login prompt's code for this machine's current IPv4 address, so it stays right if it changes.
+func writeLoginBanner(domain string) {
+	if plat.Name != "linux" {
+		return
+	}
+	if err := os.MkdirAll("/etc/issue.d", 0o755); err != nil {
+		return
+	}
+	text := fmt.Sprintf("Homeport admin panel:  https://\\4/admin   (or https://%s/admin)\n\n", domain)
+	path := "/etc/issue.d/homeport.issue"
+	if old, err := os.ReadFile(path); err == nil && string(old) == text {
+		return
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err == nil {
+		_ = os.Chmod(path, 0o644)
+	}
+}
+
+// localAddrs are this machine's own IPv4 addresses on real network interfaces (not loopback, Docker bridges, VMs or
+// VPN tunnels), for reaching the portal and admin panel by IP.
+func localAddrs() []string {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	skip := []string{"lo", "docker", "br-", "veth", "virbr", "bridge", "utun", "tun", "tap", "wg", "tailscale", "vmnet", "awdl", "llw", "anpi", "ap1"}
+	var out []string
+	for _, i := range ifs {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		bad := false
+		for _, p := range skip {
+			if strings.HasPrefix(i.Name, p) {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			continue
+		}
+		addrs, _ := i.Addrs()
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLinkLocalUnicast() && !ipn.IP.IsLoopback() {
+				out = append(out, ipn.IP.String())
+			}
+		}
+	}
+	return out
 }
 
 func localZone() string {
@@ -461,6 +516,22 @@ func cmdDomain(args []string) error {
 			return errors.New("usage: homeport domain remove DOMAIN")
 		}
 		return call("DELETE", "/domains/"+args[1], nil, nil)
+	case "main":
+		fs := flag.NewFlagSet("domain main", flag.ExitOnError)
+		tls := fs.String("tls", "", "letsencrypt, or internal (Caddy's own certificates)")
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: homeport domain main DOMAIN [--tls internal|letsencrypt]")
+		}
+		body := map[string]any{"mainDomain": pos[0]}
+		if *tls != "" {
+			body["tls"] = *tls
+		}
+		if err := call("PUT", "/settings", body, nil); err != nil {
+			return err
+		}
+		fmt.Printf("The portal and admin panel are now at https://%s/ and https://%s/admin\n", pos[0], pos[0])
+		return nil
 	}
 	return fmt.Errorf("unknown domain command %q", args[0])
 }

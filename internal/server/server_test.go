@@ -268,3 +268,50 @@ func TestInstallAndRemove(t *testing.T) {
 		}
 	}
 }
+
+func TestThePortalAnswersOnTheMachinesAddress(t *testing.T) {
+	r := newRig(t)
+	r.srv.LocalAddrs = func() []string { return []string{"192.168.4.27"} }
+	b := r.browser()
+	if w := b.do("GET", "https://192.168.4.27/login", nil, nil); w.Code != http.StatusOK {
+		t.Fatalf("login page by IP: %d", w.Code)
+	}
+	b.do("POST", "https://192.168.4.27/login", url.Values{"name": {"alice"}, "password": {"correct horse"}}, nil)
+	if w := b.do("GET", "https://192.168.4.27/api/users", nil, nil); w.Code != http.StatusOK {
+		t.Fatalf("admin API by IP after signing in there: %d", w.Code)
+	}
+	if w := b.do("GET", "https://10.9.9.9/login", nil, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("another address must not serve the portal: %d", w.Code)
+	}
+}
+
+func TestChangingTheMainDomain(t *testing.T) {
+	r := newRig(t)
+	admin := r.browser()
+	admin.do("POST", "https://home.test/login", url.Values{"name": {"alice"}, "password": {"correct horse"}}, nil)
+	put := func(body string) int {
+		req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body))
+		req.Host = "home.test"
+		req.Header.Set("X-Homeport", "1")
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: admin.cookies["home.test"]})
+		w := httptest.NewRecorder()
+		r.h.ServeHTTP(w, req)
+		return w.Code
+	}
+	r.install("nextcloud", "cloud.example.test", nil)
+	if code := put(`{"mainDomain":"192.168.4.27.sslip.io"}`); code != http.StatusInternalServerError && code != http.StatusBadRequest {
+		t.Fatalf("with an app signing in through Homeport, moving must be refused: %d", code)
+	}
+	_ = r.srv.Apps.Remove(t.Context(), "nextcloud", true, io.Discard)
+	if code := put(`{"mainDomain":"192.168.4.27.sslip.io","tls":"internal"}`); code != http.StatusOK {
+		t.Fatalf("moving the main domain: %d", code)
+	}
+	var st state.Settings
+	r.srv.Store.Read(func(d *state.Data) { st = *d.Settings() })
+	if st.MainDomain != "192.168.4.27.sslip.io" || st.TLS != state.TLSInternal {
+		t.Fatalf("settings after the move: %+v", st)
+	}
+	if w := admin.do("GET", "https://192.168.4.27.sslip.io/login", nil, nil); w.Code != http.StatusOK {
+		t.Fatalf("the login page should be on the new domain: %d", w.Code)
+	}
+}

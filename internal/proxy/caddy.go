@@ -21,7 +21,11 @@ const Upstream = "127.0.0.1:8090"
 var identityHeaders = []string{"Remote-User", "Remote-Name", "Remote-Email", "Remote-Groups"}
 
 // Caddyfile builds the whole configuration.
-func Caddyfile(s state.Settings, apps []state.App) string {
+func Caddyfile(s state.Settings, apps []state.App) string { return CaddyfileWith(s, apps, nil) }
+
+// CaddyfileWith also serves the portal and admin panel on this machine's own addresses (localAddrs), with Caddy's
+// own certificates, so they can be reached by IP before DNS is set up.
+func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) string {
 	var b strings.Builder
 	b.WriteString("# Written by Homeport. Changes here are replaced: use `homeport` or the admin panel instead.\n{\n\tadmin localhost:2019\n")
 	// Other ports, for a test instance beside something else that holds 80 and 443.
@@ -43,6 +47,11 @@ func Caddyfile(s state.Settings, apps []state.App) string {
 		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
 		writeStripIdentity(&b)
 		fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
+		if len(localAddrs) > 0 {
+			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
+			writeStripIdentity(&b)
+			fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
+		}
 	}
 
 	for _, a := range apps {

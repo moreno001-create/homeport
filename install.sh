@@ -169,7 +169,7 @@ fi
 say "Setting up this server"
 # A terminal to ask at? (/dev/tty can exist without being usable, e.g. over a non-interactive ssh or in CI.)
 tty_ok=false
-if { exec 3</dev/tty; } 2>/dev/null; then tty_ok=true; exec 3<&-; fi
+if { exec 5</dev/tty; } 2>/dev/null; then tty_ok=true; exec 5<&-; fi
 ask() { # ask VAR "question" [default] [secret]
   local var=$1 q=$2 def=${3:-} secret=${4:-} val=""
   if [ -n "${!var:-}" ]; then return 0; fi
@@ -183,10 +183,17 @@ ask() { # ask VAR "question" [default] [secret]
   fi
   printf -v "$var" '%s' "${val:-$def}"
 }
-ask HOMEPORT_DOMAIN "Main domain (portal and admin panel; its DNS must point here), e.g. home.example.com"
+ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v -E '^(172\.(1[6-9]|2[0-9]|3[01])|127)\.' | tr '\n' ' ')"
+first_ip="${ips%% *}"
+shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
+# With no domain yet, <ip>.sslip.io works on this network with no setup: every device resolves it to this machine.
+ask HOMEPORT_DOMAIN "Main domain for the portal and admin panel. Press Enter for ${first_ip:+$first_ip.sslip.io, which works on this network with no setup;} or type your own (its DNS must point here)" "${first_ip:+$first_ip.sslip.io}"
+# Names Let's Encrypt can't certify (private addresses, test and local names) use Caddy's own certificates.
+tls_default=letsencrypt
+case "${HOMEPORT_DOMAIN:-}" in *.sslip.io|*.nip.io|*.test|*.local|*.lan|*.home.arpa|*.internal) tls_default=internal ;; esac
 ask HOMEPORT_ADMIN "First admin's user name"
 ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
-ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test machine)" "letsencrypt"
+ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test machine)" "$tls_default"
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; printf 'Again: ' >/dev/tty; read -r -s p2 </dev/tty; echo >/dev/tty
@@ -206,10 +213,48 @@ MSG
 fi
 
 printf '%s\n' "$HOMEPORT_PASSWORD" | homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
-  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-letsencrypt}"
+  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}" >/dev/null
 cat <<MSG
 
-Done. Sign in at https://$HOMEPORT_DOMAIN/admin as $HOMEPORT_ADMIN.
-Install apps from the admin panel, or: sudo homeport app catalog
-Connect an AI agent (opencode, Claude Code…): sudo homeport mcp
+$(printf '\033[1m')Homeport is ready$(printf '\033[0m')
+
+  Your apps (portal):  https://$HOMEPORT_DOMAIN/
+  Admin panel:         https://$HOMEPORT_DOMAIN/admin
+  …or by address:      https://$shown_ip/admin   (from this network; works before DNS is set up)
+  User name:           $HOMEPORT_ADMIN
+  Password:            the one you just chose (change it with: sudo homeport user passwd $HOMEPORT_ADMIN)
+  This server:         ${ips:-unknown address}
+MSG
+if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
+  cat <<MSG
+
+  Certificates: Caddy's own test certificates, so your browser warns the first time; choose to continue.
+MSG
+  case "$HOMEPORT_DOMAIN" in
+    *.sslip.io|*.nip.io) cat <<MSG
+  $HOMEPORT_DOMAIN already leads to this machine from every device on this network: nothing to set up.
+  Install apps on names under it, like cloud.$HOMEPORT_DOMAIN.
+MSG
+    ;;
+    *) cat <<MSG
+  Until DNS knows $HOMEPORT_DOMAIN, tell the computer you browse from where it is: add this line to its hosts file
+  (Mac/Linux: sudo nano /etc/hosts; Windows: C:\Windows\System32\drivers\etc\hosts, as administrator):
+
+      $shown_ip  $HOMEPORT_DOMAIN
+
+  Add each app's address on the same line as you install them (e.g. cloud.$HOMEPORT_DOMAIN).
+MSG
+    ;;
+  esac
+else
+  cat <<MSG
+
+  Certificates: Let's Encrypt. $HOMEPORT_DOMAIN must point (DNS) at this server's public address, and ports 80 and
+  443 must reach it; the certificate arrives within a minute of the first visit. Trouble: sudo journalctl -u caddy
+MSG
+fi
+cat <<MSG
+
+  Next: install apps from the admin panel (Apps), or: sudo homeport app catalog
+  Connect an AI agent (opencode, Claude Code…): sudo homeport mcp
 MSG
