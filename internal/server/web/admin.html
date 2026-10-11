@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Homeport admin</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/admin.js" defer></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="side">
+      <div class="brand"><span class="mark" aria-hidden="true"></span><span id="domain">Homeport</span></div>
+      <nav aria-label="Sections">
+        <a href="#overview">Overview</a>
+        <a href="#apps">Apps</a>
+        <a href="#users">Users</a>
+        <a href="#domains">Domains</a>
+        <a href="#settings">Settings</a>
+        <a href="/">Portal</a>
+      </nav>
+      <p class="foot" id="version"></p>
+    </aside>
+    <main class="content" id="view" aria-live="polite"><p class="muted">Loading…</p></main>
+  </div>
+
+  <dialog id="dialog"></dialog>
+  <div class="toast" id="toast" hidden></div>
+</body>
+</html>

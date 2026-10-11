@@ -1,0 +1,12 @@
+id: whoami
+name: Who Am I
+description: A tiny test page that shows the request it received, including who Homeport says you are. Handy for checking sign-in.
+category: Tools
+website: https://github.com/traefik/whoami
+signIn: headers
+compose: |
+  services:
+    app:
+      image: traefik/whoami:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      restart: unless-stopped

@@ -1,0 +1,17 @@
+id: uptime-kuma
+name: Uptime Kuma
+description: Watches your websites and services and tells you when one goes down.
+category: Monitoring
+website: https://uptime.kuma.pet
+signIn: gate
+notes: |
+  Open it to create its own admin account. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: louislam/uptime-kuma:2
+      ports: ["127.0.0.1:{{.Port}}:3001"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/data:/app/data"]
+      restart: unless-stopped

@@ -1,0 +1,22 @@
+id: jellyfin
+name: Jellyfin
+description: Stream your own movies, shows and music to phones, TVs and browsers.
+category: Media
+website: https://jellyfin.org
+signIn: own
+notes: |
+  Open it to finish setup and create the first Jellyfin account.
+  Put media in the media folder inside the app's data folder on the server. TV and phone apps connect straight to this address, so it stays public.
+compose: |
+  services:
+    app:
+      image: jellyfin/jellyfin:latest
+      ports: ["127.0.0.1:{{.Port}}:8096"]
+      environment:
+        JELLYFIN_PublishedServerUrl: "https://{{.Domain}}"
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/config:/config"
+        - "{{.Data}}/cache:/cache"
+        - "{{.Data}}/media:/media"
+      restart: unless-stopped

@@ -1,0 +1,39 @@
+id: nextcloud
+name: Nextcloud
+description: Files, calendars, contacts and photos in your own cloud, with desktop and phone sync apps.
+category: Files
+website: https://nextcloud.com
+signIn: own
+secrets: [db_password, admin_password]
+notes: |
+  Sign in as the admin who installed it, with the admin password in this app's secrets, then change it.
+  The sync apps connect straight to this address, so it stays public; Nextcloud's own accounts protect it.
+compose: |
+  services:
+    db:
+      image: postgres:17-alpine
+      environment:
+        POSTGRES_DB: nextcloud
+        POSTGRES_USER: nextcloud
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/db:/var/lib/postgresql/data"]
+      restart: unless-stopped
+    app:
+      image: nextcloud:stable-apache
+      depends_on: [db]
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        POSTGRES_HOST: db
+        POSTGRES_DB: nextcloud
+        POSTGRES_USER: nextcloud
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+        NEXTCLOUD_ADMIN_USER: "{{.AdminUser}}"
+        NEXTCLOUD_ADMIN_PASSWORD: "{{secret "admin_password"}}"
+        NEXTCLOUD_TRUSTED_DOMAINS: "{{.Domain}}"
+        TRUSTED_PROXIES: "172.16.0.0/12 192.168.0.0/16 10.0.0.0/8"
+        OVERWRITEPROTOCOL: https
+        OVERWRITEHOST: "{{.Domain}}"
+        PHP_UPLOAD_LIMIT: 16G
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/html:/var/www/html"]
+      restart: unless-stopped

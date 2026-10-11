@@ -1,0 +1,23 @@
+id: vaultwarden
+name: Vaultwarden
+description: A password manager that works with the Bitwarden apps and browser extensions.
+category: Security
+website: https://github.com/dani-garcia/vaultwarden
+signIn: own
+secrets: [admin_token]
+notes: |
+  Sign-ups are closed. Invite people from the admin page at /admin, using the admin token in this app's secrets.
+  The Bitwarden apps connect straight to this address, so it stays public; Vaultwarden's own accounts protect it.
+compose: |
+  services:
+    app:
+      image: vaultwarden/server:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        DOMAIN: "https://{{.Domain}}"
+        SIGNUPS_ALLOWED: "false"
+        INVITATIONS_ALLOWED: "true"
+        ADMIN_TOKEN: "{{secret "admin_token"}}"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/data:/data"]
+      restart: unless-stopped
