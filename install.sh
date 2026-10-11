@@ -21,10 +21,16 @@ die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; printf 'The whole log is i
 
 [ "$(id -u)" -eq 0 ] || { echo "Run this as root: curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash" >&2; exit 1; }
 # Everything also goes to a log, and a failure says which step it was in.
+# (The terminal's own output is kept as fds 3 and 4, and the installer waits for tee at the end, so the last lines
+# always appear before the command prompt comes back.)
+exec 3>&1 4>&2
 exec > >(tee -a "$LOG") 2>&1
+tee_pid=$!
 echo "Homeport installer, $(date)"
 trap 'printf "\n\033[31mThe installer stopped during: %s\033[0m\nThe whole log is in %s\n" "$step" "$LOG" >&2' ERR
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"
+finish() { rm -rf "$tmp"; exec 1>&3 2>&4; wait "$tee_pid" 2>/dev/null || true; }
+trap finish EXIT
 
 # fetch URL FILE WHAT: download, retrying a few times, and say plainly what failed.
 fetch() {
@@ -168,10 +174,12 @@ ask() { # ask VAR "question" [default] [secret]
   local var=$1 q=$2 def=${3:-} secret=${4:-} val=""
   if [ -n "${!var:-}" ]; then return 0; fi
   $tty_ok || return 0
+  # Questions go straight to the terminal (not through the log), so they always show.
   if [ -n "$secret" ]; then
-    read -r -s -p "$q: " val </dev/tty; echo >/dev/tty
+    printf '%s: ' "$q" >/dev/tty; read -r -s val </dev/tty; echo >/dev/tty
   else
-    read -r -p "$q${def:+ [$def]}: " val </dev/tty
+    printf '%s%s: ' "$q" "${def:+ [$def]}" >/dev/tty; read -r val </dev/tty
+    printf '%s: %s\n' "$q" "${val:-$def}" >>"$LOG"   # into the log only (never passwords)
   fi
   printf -v "$var" '%s' "${val:-$def}"
 }
@@ -181,7 +189,7 @@ ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
 ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test machine)" "letsencrypt"
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
-  p2=""; read -r -s -p "Again: " p2 </dev/tty; echo >/dev/tty
+  p2=""; printf 'Again: ' >/dev/tty; read -r -s p2 </dev/tty; echo >/dev/tty
   if [ "$HOMEPORT_PASSWORD" != "$p2" ]; then echo "They didn't match; try again."; HOMEPORT_PASSWORD=""; fi
 done
 
