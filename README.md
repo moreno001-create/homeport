@@ -14,6 +14,7 @@ Docker and Caddy. (Working name.)
   Homeport accounts directly. Nextcloud ("Log in with Homeport", groups included) and Vaultwarden (single sign-on)
   are set up for it on install. An app only gets people whose groups may open it.
 - **Admin panel** at `https://<main domain>/admin`, and the `homeport` command for the same things over SSH.
+- **A web terminal** (off by default: Settings, or `homeport terminal on`): admins only, then the Linux login prompt.
 - **An assistant** in the admin panel that can look after the server for you (see below).
 
 Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,

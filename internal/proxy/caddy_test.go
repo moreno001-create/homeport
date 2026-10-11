@@ -49,3 +49,20 @@ func TestLocalAddressesServeThePortal(t *testing.T) {
 		t.Fatalf("the portal should also answer on the machine's address, with Caddy's own certificate:\n%s", c)
 	}
 }
+
+func TestTerminalRoute(t *testing.T) {
+	s := state.Settings{MainDomain: "home.example.com", TLS: state.TLSInternal}
+	if c := CaddyfileWith(s, nil, []string{"192.168.4.27"}); strings.Contains(c, "/terminal") {
+		t.Errorf("terminal routed while off:\n%s", c)
+	}
+	s.Terminal = true
+	c := CaddyfileWith(s, nil, []string{"192.168.4.27"})
+	if n := strings.Count(c, "uri /auth/admin"); n != 2 {
+		t.Errorf("want the admin check on the main domain and the IP site, got %d:\n%s", n, c)
+	}
+	for _, want := range []string{"redir /terminal /terminal/", "handle /terminal/* {", "reverse_proxy 127.0.0.1:7682"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing %q in:\n%s", want, c)
+		}
+	}
+}

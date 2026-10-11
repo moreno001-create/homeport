@@ -32,6 +32,7 @@ import (
 	"homeport/internal/runner"
 	"homeport/internal/server"
 	"homeport/internal/state"
+	"homeport/internal/terminal"
 )
 
 var version = "dev" // set at build time
@@ -77,6 +78,8 @@ func main() {
 		err = cmdMemory()
 	case "assistant":
 		err = cmdAssistant(args)
+	case "terminal":
+		err = cmdTerminal(args)
 	case "version", "--version":
 		fmt.Println("homeport", version)
 	case "help", "-h", "--help":
@@ -123,6 +126,8 @@ func usage() {
   homeport memory              the agents' shared notes and work in progress
   homeport assistant shell on|off
 
+  homeport terminal on|off     a terminal in the admin panel (admins, then the Linux login)
+
   homeport serve      (run by systemd)
 `)
 }
@@ -162,6 +167,9 @@ func serve() error {
 	chat := &assist.Chat{A: helper, KeyFile: filepath.Join(stateDir, "anthropic-api-key"), UsageFile: filepath.Join(stateDir, "assistant-usage.json")}
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
 		Chat: chat, LocalAddrs: localAddrs}
+	if plat.Name == "linux" {
+		srv.SetTerminal = func(ctx context.Context, on bool) error { return terminal.Set(ctx, sys, on) }
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -755,6 +763,25 @@ func cmdMemory() error {
 		return err
 	}
 	fmt.Print(m["memory"])
+	return nil
+}
+
+func cmdTerminal(args []string) error {
+	if len(args) != 1 || (args[0] != "on" && args[0] != "off") {
+		return errors.New("usage: homeport terminal on|off")
+	}
+	on := args[0] == "on"
+	var o struct {
+		Settings state.Settings `json:"settings"`
+	}
+	if err := call("PUT", "/settings", map[string]any{"terminal": on}, &o); err != nil {
+		return err
+	}
+	if on {
+		fmt.Printf("The terminal is on: https://%s/terminal/ (admins only; then sign in with a Linux account).\n", o.Settings.MainDomain)
+	} else {
+		fmt.Println("The terminal is off.")
+	}
 	return nil
 }
 

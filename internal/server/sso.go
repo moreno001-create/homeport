@@ -57,6 +57,26 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// verifyAdmin lets only admins through to the web terminal (Caddy asks before every request, the WebSocket included).
+func (s *Server) verifyAdmin(w http.ResponseWriter, r *http.Request) {
+	u, _, ok := s.sessionUser(r)
+	switch {
+	case ok && u.Admin:
+		w.WriteHeader(http.StatusOK)
+	case ok:
+		http.Error(w, "Only admins can use the terminal", http.StatusForbidden)
+	case r.Header.Get("X-Forwarded-Method") != "" && r.Header.Get("X-Forwarded-Method") != http.MethodGet:
+		http.Error(w, "Sign in first", http.StatusUnauthorized)
+	default:
+		// Signing in happens on this same address, so the way back is just the path.
+		back := r.Header.Get("X-Forwarded-Uri")
+		if !strings.HasPrefix(back, "/") || strings.HasPrefix(back, "//") {
+			back = "/terminal/"
+		}
+		http.Redirect(w, r, "/login?return="+url.QueryEscape(back), http.StatusFound)
+	}
+}
+
 func groupsOf(u state.User) []string {
 	g := append([]string(nil), u.Groups...)
 	if u.Admin {

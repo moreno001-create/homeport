@@ -38,6 +38,8 @@ type Server struct {
 	Signer *Signer
 	// Assist runs tools for AI helpers (MCP on the root socket, approvals and audit in the admin panel).
 	Assist *assist.Assistant
+	// SetTerminal turns the web terminal on or off (nil where there isn't one).
+	SetTerminal func(ctx context.Context, on bool) error
 	// Chat is the admin panel's assistant chat (Claude or a local model, with the same tools).
 	Chat *assist.Chat
 	// LocalAddrs are this machine's own network addresses: the portal and admin panel answer on them too, so
@@ -62,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Caddy's sign-in check for apps, and the hand-off pages it routes to on app domains.
 	mux.HandleFunc("GET /auth/verify", s.verify)
+	mux.HandleFunc("GET /auth/admin", s.verifyAdmin)
 	mux.HandleFunc("GET /.homeport/callback", s.callback)
 	mux.HandleFunc("GET /.homeport/signout", s.appSignOut)
 	// The main domain: portal, sign-in, admin panel and its API.

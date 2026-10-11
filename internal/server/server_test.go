@@ -315,3 +315,30 @@ func TestChangingTheMainDomain(t *testing.T) {
 		t.Fatalf("the login page should be on the new domain: %d", w.Code)
 	}
 }
+
+// The web terminal is for admins only: others are refused, and a browser that isn't signed in is sent to sign in and
+// brought back.
+func TestTerminalIsForAdmins(t *testing.T) {
+	r := newRig(t)
+	ask := func(b *browser) *httptest.ResponseRecorder {
+		return b.do("GET", "https://home.test/auth/admin", nil, map[string]string{"X-Forwarded-Method": "GET", "X-Forwarded-Uri": "/terminal/"})
+	}
+	nobody := r.browser()
+	w := ask(nobody)
+	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "/login?return="+url.QueryEscape("/terminal/")) {
+		t.Fatalf("not signed in: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	if w := nobody.do("GET", "https://home.test/auth/admin", nil, map[string]string{"X-Forwarded-Method": "POST"}); w.Code != http.StatusUnauthorized {
+		t.Errorf("a POST without a session: %d", w.Code)
+	}
+	bob := r.browser()
+	bob.do("POST", "https://home.test/login", url.Values{"name": {"bob"}, "password": {"battery staple"}}, nil)
+	if w := ask(bob); w.Code != http.StatusForbidden {
+		t.Errorf("bob isn't an admin: %d", w.Code)
+	}
+	alice := r.browser()
+	alice.do("POST", "https://home.test/login", url.Values{"name": {"alice"}, "password": {"correct horse"}}, nil)
+	if w := ask(alice); w.Code != http.StatusOK {
+		t.Errorf("alice is an admin: %d", w.Code)
+	}
+}

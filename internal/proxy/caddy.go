@@ -11,6 +11,7 @@ import (
 
 	"homeport/internal/runner"
 	"homeport/internal/state"
+	"homeport/internal/terminal"
 )
 
 // Upstream is where Caddy reaches Homeport itself.
@@ -45,12 +46,10 @@ func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) stri
 
 	if s.MainDomain != "" {
 		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
-		writeStripIdentity(&b)
-		fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
+		writeHomeport(&b, s)
 		if len(localAddrs) > 0 {
 			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
-			writeStripIdentity(&b)
-			fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
+			writeHomeport(&b, s)
 		}
 	}
 
@@ -70,6 +69,19 @@ func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) stri
 		fmt.Fprintf(&b, "\t\treverse_proxy 127.0.0.1:%d\n\t}\n}\n", a.Port)
 	}
 	return b.String()
+}
+
+// writeHomeport finishes a site for the portal and admin panel, with the web terminal when it's on (admins only; Homeport
+// checks before Caddy lets anyone through to it).
+func writeHomeport(b *strings.Builder, s state.Settings) {
+	writeStripIdentity(b)
+	if s.Terminal {
+		fmt.Fprintf(b, "\tredir %s %s/\n\thandle %s/* {\n\t\tforward_auth %s {\n\t\t\turi /auth/admin\n\t\t}\n\t\treverse_proxy 127.0.0.1:%d\n\t}\n",
+			terminal.Path, terminal.Path, terminal.Path, Upstream, terminal.Port)
+		fmt.Fprintf(b, "\thandle {\n\t\treverse_proxy %s\n\t}\n}\n", Upstream)
+		return
+	}
+	fmt.Fprintf(b, "\treverse_proxy %s\n}\n", Upstream)
 }
 
 func writeStripIdentity(b *strings.Builder) {

@@ -200,6 +200,7 @@ const views = {
         h("label", { class: "check" }, shell, "Let helpers ask to run shell commands as root (each one still needs your approval)"),
         h("label", {}, "Minutes a change waits for approval before it's dropped", minutes),
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
+      terminalForm(o.settings),
       chatSettingsForm(cfg),
     ];
   },
@@ -329,6 +330,31 @@ async function runJob(title, start) {
 function splitGroups(s) { return s.split(",").map(x => x.trim().toLowerCase()).filter(Boolean); }
 
 // MARK: Routing
+
+function terminalForm(st) {
+  const on = h("input", { type: "checkbox", checked: !!st.terminal });
+  return h("form", { class: "card stack", onsubmit: async e => {
+    e.preventDefault();
+    try {
+      toast(on.checked ? "Turning the terminal on (installing ttyd the first time)…" : "Turning the terminal off…");
+      me = await api("PUT", "/settings", { terminal: on.checked });
+      terminalLink(); toast(on.checked ? "The terminal is on" : "The terminal is off");
+    } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, "Terminal"),
+    h("p", { class: "muted small" }, "A terminal on this server in your browser, at ", h("code", {}, "/terminal/"),
+      ". Only admins can open it, and it then asks for a Linux account's name and password, like the console does. Handy for running Claude Code or other tools by hand."),
+    h("label", { class: "check" }, on, "Turn on the web terminal"),
+    h("div", {}, h("button", { class: "primary", type: "submit" }, "Save")));
+}
+
+// terminalLink shows Terminal in the menu while it's on.
+function terminalLink() {
+  const nav = document.querySelector(".side nav");
+  let a = nav.querySelector('a[href="/terminal/"]');
+  if (me.settings.terminal && !a) nav.insertBefore(h("a", { href: "/terminal/", target: "_blank", rel: "noopener" }, "Terminal ↗"), nav.querySelector('a[href="/"]'));
+  if (!me.settings.terminal && a) a.remove();
+}
 
 function chatSettingsForm(cfg) {
   const st = cfg.settings;
@@ -563,6 +589,7 @@ async function route() {
     me = await api("GET", "/overview");
     document.getElementById("domain").textContent = me.settings.mainDomain;
     document.getElementById("version").textContent = "Homeport " + me.version;
+    terminalLink();
   } catch (err) { toast(err.message); }
   window.addEventListener("hashchange", route);
   route();

@@ -175,6 +175,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		TLS             *state.TLSMode `json:"tls"`
 		AssistantShell  *bool          `json:"assistantShell"`
 		ApprovalMinutes *int           `json:"approvalMinutes"`
+		Terminal        *bool          `json:"terminal"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -195,8 +196,21 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.Terminal != nil {
+		if s.SetTerminal == nil {
+			writeError(w, http.StatusBadRequest, errors.New("the web terminal is only on Linux servers"))
+			return
+		}
+		if err := s.SetTerminal(r.Context(), *in.Terminal); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
 	err := s.Store.Update(func(d *state.Data) error {
 		st := d.Settings()
+		if in.Terminal != nil {
+			st.Terminal = *in.Terminal
+		}
 		if in.MainDomain != nil && *in.MainDomain != st.MainDomain {
 			// Apps that sign in with Homeport were configured with the old address (their OIDC issuer).
 			for _, a := range d.Apps() {

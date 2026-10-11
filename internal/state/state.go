@@ -31,6 +31,8 @@ type Settings struct {
 	AssistantShell bool `json:"assistantShell,omitempty"`
 	// ApprovalMinutes is how long a change waits for an admin before it's dropped (default 10).
 	ApprovalMinutes int `json:"approvalMinutes,omitempty"`
+	// Terminal serves a web terminal (the system's login prompt) at /terminal/ on the main domain, for admins.
+	Terminal bool `json:"terminal,omitempty"`
 	// Chat is how the admin panel's assistant chat picks a model.
 	Chat ChatSettings `json:"chat"`
 }
