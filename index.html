@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Homeport: your own apps, one sign-in and careful AI helpers on an Ubuntu server or a Mac.">
+<title>Homeport</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a harbour at night up top (Caddy as the lighthouse, apps moored behind it), then calm daylight sections that
+   each explain one part with a diagram; the install commands come back at the end. */
+:root {
+  --water: #0f2233;        /* deep water: hero, dark panels */
+  --water-2: #173248;
+  --paper: #f5f7f8;        /* daylight sections */
+  --card: #ffffff;
+  --ink: #12202f;
+  --muted: #586777;
+  --line: #d6dde3;
+  --buoy: #d9541a;         /* the signal-buoy accent, from Homeport's own panel */
+  --buoy-ink: #ffffff;
+  --sea: #2f7fa8;          /* secondary: routes, links */
+  --ok: #1d7d46;
+  --warn: #a35d00;
+  --on-water: #e8f0f6;
+  --on-water-muted: #9db1c2;
+  --display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "Instrument Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0c1824; --card: #12222f; --ink: #e6edf3; --muted: #9aabbb; --line: #223646;
+    --buoy: #ff7a3d; --buoy-ink: #1b0b03; --sea: #6fb8dc; --ok: #4cc27c; --warn: #f0b04a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0c1824; --card: #12222f; --ink: #e6edf3; --muted: #9aabbb; --line: #223646;
+  --buoy: #ff7a3d; --buoy-ink: #1b0b03; --sea: #6fb8dc; --ok: #4cc27c; --warn: #f0b04a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.55; }
+a { color: var(--sea); }
+h1, h2, h3 { font-family: var(--display); line-height: 0.98; margin: 0; text-wrap: balance; letter-spacing: 0.005em; }
+h2 { font-size: clamp(38px, 6vw, 60px); font-weight: 800; text-transform: uppercase; }
+h3 { font-size: 26px; font-weight: 800; text-transform: uppercase; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; }
+.kicker { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--buoy); }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; }
+section { padding-block: 84px; }
+section + section { border-top: 1px solid var(--line); }
+.head { display: grid; gap: 14px; margin-bottom: 40px; }
+:focus-visible { outline: 3px solid var(--buoy); outline-offset: 3px; }
+
+/* MARK: Hero */
+.hero { background: var(--water); color: var(--on-water); padding-block: 28px 0; overflow: hidden; }
+.nav { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 900; font-size: 28px; letter-spacing: 0.02em; text-transform: uppercase; }
+.mark { width: 24px; height: 24px; border-radius: 50% 50% 50% 5px; background: var(--buoy); box-shadow: inset 0 -7px 0 rgb(0 0 0 / .28); flex: none; }
+.nav a { color: var(--on-water-muted); text-decoration: none; font-size: 15px; }
+.nav a:hover { color: var(--on-water); }
+.nav .links { display: flex; gap: 8px 22px; flex-wrap: wrap; min-width: 0; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 40px; align-items: center; padding-block: 56px 24px; }
+.hero h1 { font-size: clamp(56px, 9vw, 112px); font-weight: 900; text-transform: uppercase; }
+.hero h1 span { color: var(--buoy); }
+.hero .lede { color: var(--on-water-muted); margin-top: 22px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.chip { font-family: var(--mono); font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgb(255 255 255 / .18); color: var(--on-water); }
+.harbour { width: 100%; height: auto; display: block; }
+.harbour text { font-family: var(--mono); font-size: 13px; fill: var(--on-water-muted); }
+.harbour .big { font-family: var(--display); font-size: 20px; font-weight: 800; fill: var(--on-water); letter-spacing: .04em; }
+@media (prefers-reduced-motion: no-preference) {
+  .packet { animation: sail 4s linear infinite; }
+  .beam { animation: sweep 6s ease-in-out infinite alternate; transform-origin: 268px 150px; }
+}
+@keyframes sail { from { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } to { offset-distance: 100%; opacity: 0; } }
+@keyframes sweep { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
+
+/* Install */
+.install { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-block: 8px 56px; }
+.cmd { background: var(--water-2); border: 1px solid rgb(255 255 255 / .1); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.cmd .os { font-size: 13px; color: var(--on-water-muted); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.cmd pre { margin: 0; overflow-x: auto; font-family: var(--mono); font-size: 14.5px; color: var(--on-water); white-space: pre; }
+.cmd pre b { color: var(--buoy); font-weight: 500; }
+.copy { font: 500 12.5px var(--body); color: var(--on-water); background: transparent; border: 1px solid rgb(255 255 255 / .25); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+.copy:hover { border-color: var(--buoy); }
+.light .cmd { background: var(--water); }
+
+/* MARK: Sections */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 48px; align-items: center; }
+.figure { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; min-width: 0; }
+.figure svg { width: 100%; height: auto; display: block; }
+.figure svg text { font-family: var(--body); font-size: 14px; fill: var(--ink); }
+.figure svg .small { font-family: var(--mono); font-size: 11.5px; fill: var(--muted); }
+.figure svg .label { font-family: var(--display); font-size: 17px; font-weight: 800; letter-spacing: .04em; }
+.figure figcaption { margin-top: 12px; font-size: 14px; color: var(--muted); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; counter-reset: step; }
+.steps li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; }
+.steps li::before { counter-increment: step; content: counter(step); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--buoy); color: var(--buoy-ink); font-family: var(--display); font-weight: 900; font-size: 18px; }
+.steps b { display: block; }
+.steps p { color: var(--muted); font-size: 15.5px; }
+
+.apps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.app { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.app .glyph { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-family: var(--display); font-weight: 900; font-size: 22px; color: var(--buoy); background: color-mix(in srgb, var(--buoy) 14%, var(--card)); }
+.app b { font-size: 16px; }
+.app p { font-size: 14px; color: var(--muted); }
+.app .tag { font-family: var(--mono); font-size: 11.5px; color: var(--sea); }
+
+.levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.level { border-radius: 14px; padding: 18px; display: grid; gap: 8px; align-content: start; border: 1px solid var(--line); background: var(--card); min-width: 0; }
+.level .pill { justify-self: start; font-family: var(--mono); font-size: 12px; padding: 2px 9px; border-radius: 999px; }
+.level.look .pill { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.level.change .pill { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.level.shell .pill { background: color-mix(in srgb, var(--buoy) 16%, transparent); color: var(--buoy); }
+.level ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 15px; display: grid; gap: 4px; }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.fact { border-top: 3px solid var(--buoy); padding-top: 12px; display: grid; gap: 4px; }
+.fact b { font-family: var(--display); font-size: 24px; font-weight: 800; text-transform: uppercase; }
+.fact p { color: var(--muted); font-size: 15px; }
+.note { margin-top: 28px; padding: 16px 18px; border-radius: 12px; border: 1px dashed var(--line); color: var(--muted); font-size: 15px; }
+.soon { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+
+.closing { background: var(--water); color: var(--on-water); }
+.closing .lede { color: var(--on-water-muted); }
+.closing h2 { color: var(--on-water); }
+footer { background: var(--water); color: var(--on-water-muted); font-size: 14px; padding-block: 0 40px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-top: 1px solid rgb(255 255 255 / .1); padding-top: 22px; }
+footer a { color: var(--on-water); }
+
+@media (max-width: 900px) {
+  .hero-grid, .split { grid-template-columns: minmax(0, 1fr); }
+  .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .levels, .install { grid-template-columns: minmax(0, 1fr); }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  section { padding-block: 60px; }
+}
+@media (max-width: 480px) {
+  .apps, .facts { grid-template-columns: minmax(0, 1fr); }
+  body { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+
+
+<header class="hero">
+  <div class="wrap">
+    <nav class="nav" aria-label="Main">
+      <div class="brand"><span class="mark" aria-hidden="true"></span>Homeport</div>
+      <div class="links">
+        <a href="#how">How it works</a><a href="#signin">Sign-in</a><a href="#apps">Apps</a><a href="#ai">AI helpers</a>
+        <a href="https://github.com/moreno001-create/homeport">GitHub</a>
+      </div>
+    </nav>
+
+    <div class="hero-grid">
+      <div>
+        <p class="kicker">Self-hosting, made calm</p>
+        <h1>Your apps.<br>Your server.<br><span>One harbour.</span></h1>
+        <p class="lede">Homeport turns a fresh Ubuntu server or a Mac into your own cloud: install apps like Nextcloud and Vaultwarden in a click, give your family one sign-in for all of them, and let an AI helper keep things running, with you approving every change.</p>
+        <div class="chips">
+          <span class="chip">Ubuntu 26.04 LTS</span><span class="chip">macOS</span><span class="chip">Docker</span><span class="chip">Caddy · HTTPS</span><span class="chip">Single sign-on</span><span class="chip">MCP</span>
+        </div>
+      </div>
+
+      <svg class="harbour" viewBox="0 0 560 400" role="img" aria-label="Diagram: visitors arrive from the internet at Caddy, the lighthouse, which checks sign-in with Homeport and guides each visit to an app moored at its own domain.">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#173248"/><stop offset="1" stop-color="#0f2233"/></linearGradient>
+          <linearGradient id="beamg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffd8a8" stop-opacity=".55"/><stop offset="1" stop-color="#ffd8a8" stop-opacity="0"/></linearGradient>
+        </defs>
+        <rect x="0" y="0" width="560" height="400" rx="18" fill="url(#sky)"/>
+        <!-- water lines -->
+        <g stroke="#2a4a63" stroke-width="2" fill="none" stroke-linecap="round">
+          <path d="M20 330 Q60 322 100 330 T180 330"/><path d="M200 352 Q240 344 280 352 T360 352"/><path d="M380 338 Q420 330 460 338 T540 338"/>
+        </g>
+        <!-- internet -->
+        <text class="big" x="26" y="58">THE INTERNET</text>
+        <text x="26" y="78">phones · laptops · TVs</text>
+        <g fill="#e8f0f6"><circle cx="46" cy="118" r="6"/><circle cx="72" cy="136" r="6"/><circle cx="40" cy="152" r="6"/></g>
+        <!-- route lines -->
+        <path id="r-in" d="M80 136 C150 140 190 150 240 150" fill="none" stroke="#4d7894" stroke-width="2" stroke-dasharray="5 6"/>
+        <path id="r1" d="M296 150 C360 150 380 96 438 96" fill="none" stroke="#4d7894" stroke-width="2"/>
+        <path id="r2" d="M296 156 C360 158 380 186 438 186" fill="none" stroke="#4d7894" stroke-width="2"/>
+        <path id="r3" d="M296 162 C360 170 380 276 438 276" fill="none" stroke="#4d7894" stroke-width="2"/>
+        <circle class="packet" r="5" fill="#ff7a3d" style="offset-path: path('M80 136 C150 140 190 150 240 150')"/>
+        <circle class="packet" r="5" fill="#ff7a3d" style="offset-path: path('M296 150 C360 150 380 96 438 96'); animation-delay: -1.3s"/>
+        <circle class="packet" r="5" fill="#ff7a3d" style="offset-path: path('M296 162 C360 170 380 276 438 276'); animation-delay: -2.6s"/>
+        <!-- lighthouse = Caddy -->
+        <path class="beam" d="M268 150 L560 96 L560 204 Z" fill="url(#beamg)"/>
+        <rect x="250" y="138" width="36" height="22" rx="3" fill="#ff7a3d"/>
+        <path d="M254 160 L282 160 L290 316 L246 316 Z" fill="#e8f0f6"/>
+        <rect x="250" y="196" width="36" height="12" fill="#d9541a"/><rect x="248" y="250" width="40" height="12" fill="#d9541a"/>
+        <path d="M244 138 L268 118 L292 138 Z" fill="#e8f0f6"/>
+        <text class="big" x="214" y="346">CADDY</text>
+        <text x="200" y="366">HTTPS · sign-in check</text>
+        <!-- moored apps -->
+        <g>
+          <rect x="438" y="72" width="104" height="48" rx="9" fill="#173248" stroke="#3c6684"/>
+          <text class="big" x="450" y="96" style="font-size:16px">NEXTCLOUD</text><text x="450" y="112" style="font-size:11px">cloud.example.com</text>
+          <rect x="438" y="162" width="104" height="48" rx="9" fill="#173248" stroke="#3c6684"/>
+          <text class="big" x="450" y="186" style="font-size:16px">VAULTWARDEN</text><text x="450" y="202" style="font-size:11px">vault.example.com</text>
+          <rect x="438" y="252" width="104" height="48" rx="9" fill="#173248" stroke="#3c6684"/>
+          <text class="big" x="450" y="276" style="font-size:16px">JELLYFIN</text><text x="450" y="292" style="font-size:11px">media.example.com</text>
+        </g>
+        <text x="438" y="56" style="font-size:12px">apps, each in its own containers</text>
+      </svg>
+    </div>
+
+    <div class="install" id="install">
+      <div class="cmd">
+        <div class="os"><span>Ubuntu 26.04 server</span><button class="copy" type="button" data-copy="curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash">Copy</button></div>
+        <pre><b>$</b> curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash</pre>
+      </div>
+      <div class="cmd">
+        <div class="os"><span>Mac (as yourself, no sudo)</span><button class="copy" type="button" data-copy="curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash">Copy</button></div>
+        <pre><b>$</b> curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash</pre>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- MARK: How a visit works -->
+  <section id="how">
+    <div class="wrap split">
+      <div class="head" style="margin:0">
+        <p class="kicker">How it works</p>
+        <h2>Every visit, guided in safely</h2>
+        <p class="lede">Each app gets its own address and runs in its own containers, reachable only from the server itself. Caddy, the web server in front, is the single way in: it handles HTTPS and asks Homeport who's allowed through.</p>
+        <ol class="steps" style="margin-top:22px">
+          <li><div><b>Someone opens cloud.example.com</b><p>Caddy answers over HTTPS, with a certificate it got from Let's Encrypt on its own.</p></div></li>
+          <li><div><b>Caddy asks Homeport: may they come in?</b><p>Not signed in yet: they go to your portal to sign in once, then straight back to the page they wanted.</p></div></li>
+          <li><div><b>Homeport checks their groups</b><p>Each app is open to the groups you choose, like "family" or "work", or to anyone.</p></div></li>
+          <li><div><b>The app gets the visit, and their name</b><p>Apps that support it sign the person in automatically. A browser can't fake that name: Homeport strips it and sets it itself.</p></div></li>
+        </ol>
+      </div>
+      <figure class="figure" style="margin:0">
+        <svg viewBox="0 0 520 420" role="img" aria-label="Sequence: browser to Caddy, Caddy asks Homeport, Homeport says yes with the user's name, Caddy passes the request to the app.">
+          <g class="label">
+            <text x="40" y="34" text-anchor="middle">BROWSER</text><text x="190" y="34" text-anchor="middle">CADDY</text>
+            <text x="340" y="34" text-anchor="middle">HOMEPORT</text><text x="470" y="34" text-anchor="middle">APP</text>
+          </g>
+          <g stroke="var(--line)" stroke-width="2"><line x1="40" y1="46" x2="40" y2="400"/><line x1="190" y1="46" x2="190" y2="400"/><line x1="340" y1="46" x2="340" y2="400"/><line x1="470" y1="46" x2="470" y2="400"/></g>
+          <g fill="none" stroke-width="2.5" stroke-linecap="round">
+            <path d="M40 84 H184" stroke="var(--sea)"/><path d="M178 78 L186 84 L178 90" stroke="var(--sea)"/>
+            <path d="M190 140 H334" stroke="var(--buoy)"/><path d="M328 134 L336 140 L328 146" stroke="var(--buoy)"/>
+            <path d="M340 206 H196" stroke="var(--ok)"/><path d="M202 200 L194 206 L202 212" stroke="var(--ok)"/>
+            <path d="M190 276 H464" stroke="var(--sea)"/><path d="M458 270 L466 276 L458 282" stroke="var(--sea)"/>
+            <path d="M470 340 H46" stroke="var(--sea)" stroke-dasharray="6 6"/><path d="M52 334 L44 340 L52 346" stroke="var(--sea)"/>
+          </g>
+          <text x="52" y="74">GET cloud.example.com</text>
+          <text x="200" y="130">May they come in?</text><text class="small" x="200" y="160">/auth/verify, with their cookie</text>
+          <text x="210" y="196">Yes: it's alice (family)</text><text class="small" x="210" y="226">Remote-User: alice</text>
+          <text x="200" y="266">The request, plus who it is</text><text class="small" x="200" y="296">only to 127.0.0.1</text>
+          <text x="60" y="330">The page</text>
+          <rect x="250" y="362" width="224" height="38" rx="9" fill="color-mix(in srgb, var(--buoy) 12%, transparent)"/>
+          <text x="262" y="386" class="small" style="fill:var(--ink)">Not signed in → portal → back here</text>
+        </svg>
+        <figcaption>What happens on every request to an app that isn't public. Public apps (like a password manager whose phone app connects directly) skip the check and use their own accounts.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- MARK: Sign-in -->
+  <section id="signin">
+    <div class="wrap split">
+      <figure class="figure" style="margin:0">
+        <svg viewBox="0 0 520 340" role="img" aria-label="One Homeport account connects to many apps: by the sign-in check, or by Sign in with Homeport over OpenID Connect.">
+          <circle cx="260" cy="170" r="70" fill="var(--buoy)"/>
+          <text x="260" y="164" text-anchor="middle" class="label" style="fill:var(--buoy-ink);font-size:22px">ONE</text>
+          <text x="260" y="188" text-anchor="middle" class="label" style="fill:var(--buoy-ink);font-size:22px">ACCOUNT</text>
+          <g stroke="var(--line)" stroke-width="2.5">
+            <line x1="196" y1="130" x2="110" y2="66"/><line x1="324" y1="130" x2="410" y2="66"/>
+            <line x1="196" y1="210" x2="110" y2="276"/><line x1="324" y1="210" x2="410" y2="276"/>
+          </g>
+          <g>
+            <rect x="20" y="36" width="170" height="60" rx="12" fill="var(--card)" stroke="var(--line)"/>
+            <text x="36" y="62" class="label">NEXTCLOUD</text><text x="36" y="82" class="small">Log in with Homeport (OIDC)</text>
+            <rect x="330" y="36" width="170" height="60" rx="12" fill="var(--card)" stroke="var(--line)"/>
+            <text x="346" y="62" class="label">VAULTWARDEN</text><text x="346" y="82" class="small">single sign-on (OIDC)</text>
+            <rect x="20" y="246" width="170" height="60" rx="12" fill="var(--card)" stroke="var(--line)"/>
+            <text x="36" y="272" class="label">UPTIME KUMA</text><text x="36" y="292" class="small">behind the sign-in check</text>
+            <rect x="330" y="246" width="170" height="60" rx="12" fill="var(--card)" stroke="var(--line)"/>
+            <text x="346" y="272" class="label">YOUR PORTAL</text><text x="346" y="292" class="small">every app you may open</text>
+          </g>
+        </svg>
+        <figcaption>Groups decide who opens what. Removing someone from a group cuts them off everywhere, even in apps that keep their own sessions.</figcaption>
+      </figure>
+      <div class="head" style="margin:0">
+        <p class="kicker">Single sign-on</p>
+        <h2>One account for the whole household</h2>
+        <p class="lede">Add people once, put them in groups, and they sign in once. Apps that speak OpenID Connect, like Nextcloud and Vaultwarden, offer "Log in with Homeport" and create the account the first time someone uses it, bringing their groups along.</p>
+        <p class="lede">Passwords are stored as Argon2id hashes, sign-in links work only once, and wrong passwords are slowed down per address.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MARK: Apps -->
+  <section id="apps">
+    <div class="wrap">
+      <div class="head">
+        <p class="kicker">The catalog</p>
+        <h2>Install an app, get an address</h2>
+        <p class="lede">Pick an app and a domain. Homeport sets up its containers, makes its passwords, gets its certificate and finishes its setup, so it's ready to use, not ready to configure.</p>
+      </div>
+      <div class="apps">
+        <div class="app"><span class="glyph" aria-hidden="true">N</span><b>Nextcloud</b><p>Files, calendars, contacts and photos, with sync apps. Arrives with its database, cache and background jobs set up.</p><span class="tag">Log in with Homeport</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">V</span><b>Vaultwarden</b><p>A password manager that works with the Bitwarden apps and browser extensions.</p><span class="tag">single sign-on</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">J</span><b>Jellyfin</b><p>Your movies, shows and music on phones, TVs and browsers.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">U</span><b>Uptime Kuma</b><p>Watches your sites and services and tells you when one goes down.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">W</span><b>Who Am I</b><p>A tiny test page that shows who Homeport says you are.</p><span class="tag">uses your Homeport name</span></div>
+      </div>
+      <p class="note">More apps are on the way. Each one is a short manifest with a Docker Compose template, so adding an app to the catalog is a small, reviewable change.</p>
+    </div>
+  </section>
+
+  <!-- MARK: AI helpers -->
+  <section id="ai">
+    <div class="wrap">
+      <div class="head">
+        <p class="kicker">AI helpers</p>
+        <h2>A capable deckhand, on a short line</h2>
+        <p class="lede">Homeport gives AI agents a safe set of tools over MCP, the open protocol agents use. Connect opencode, Claude Code or any MCP client with <code>homeport mcp</code>, and ask it to install an app, find out why something is slow, or tidy up. It can look around freely; it can't change anything without you.</p>
+      </div>
+      <div class="levels">
+        <div class="level look"><span class="pill">look · runs straight away</span><h3>Look</h3>
+          <ul><li>List apps, their status and settings</li><li>Read app, Caddy and system logs</li><li>Check health: load, memory, disk</li><li>Check a domain's DNS and certificate</li></ul></div>
+        <div class="level change"><span class="pill">change · you approve each one</span><h3>Change</h3>
+          <ul><li>Install, update, restart or remove apps</li><li>Change who can open an app</li><li>Add domains, set people's groups</li><li>Run an app's own admin tool</li></ul></div>
+        <div class="level shell"><span class="pill">shell · off unless you turn it on</span><h3>Shell</h3>
+          <ul><li>Any command on the server</li><li>Each command needs your approval</li><li>Stops after two minutes</li></ul></div>
+      </div>
+
+      <div class="split" style="margin-top:44px">
+        <figure class="figure" style="margin:0">
+          <svg viewBox="0 0 520 300" role="img" aria-label="Agents share a memory: one agent leaves notes and unfinished work; the next agent reads it and carries on. Homeport adds its own record of every change.">
+            <g>
+              <rect x="16" y="24" width="140" height="56" rx="12" fill="var(--card)" stroke="var(--line)"/><text x="30" y="49" class="label">OPENCODE</text><text x="30" y="68" class="small">Monday night</text>
+              <rect x="364" y="24" width="140" height="56" rx="12" fill="var(--card)" stroke="var(--line)"/><text x="378" y="49" class="label">CLAUDE</text><text x="378" y="68" class="small">Tuesday morning</text>
+            </g>
+            <rect x="150" y="116" width="220" height="150" rx="14" fill="color-mix(in srgb, var(--sea) 10%, var(--card))" stroke="var(--sea)"/>
+            <text x="166" y="142" class="label">SHARED MEMORY</text>
+            <text x="166" y="168" class="small" style="fill:var(--ink)">In progress: Nextcloud slow;</text>
+            <text x="166" y="184" class="small" style="fill:var(--ink)">  memory raised, check cron next</text>
+            <text x="166" y="208" class="small">app: nextcloud · server · …</text>
+            <text x="166" y="232" class="small">Changes (from the audit log):</text>
+            <text x="166" y="248" class="small">restart_app nextcloud · approved</text>
+            <g fill="none" stroke-width="2.5" stroke-linecap="round">
+              <path d="M86 80 C86 130 120 150 150 160" stroke="var(--buoy)"/><path d="M142 152 L151 160 L141 166" stroke="var(--buoy)"/>
+              <path d="M370 160 C410 150 434 120 434 84" stroke="var(--ok)"/><path d="M427 92 L434 82 L441 92" stroke="var(--ok)"/>
+            </g>
+            <text x="40" y="128" class="small">leaves notes</text><text x="420" y="128" class="small">picks it up</text>
+          </svg>
+          <figcaption>Every agent reads the memory first and records what it did. Homeport keeps its own list of every change, so nothing depends on an agent remembering to write it down.</figcaption>
+        </figure>
+        <div class="head" style="margin:0">
+          <h3>Agents that hand over cleanly</h3>
+          <p class="lede">A shared notebook records what was done to which app, what each app's quirks are, and any work left half-finished. Switch from one agent to another, or come back next week, and the work carries on where it stopped.</p>
+          <p class="lede">Secrets never reach the AI: passwords, tokens and keys are replaced with dots in everything it sees, and every call is written to an audit log you can read in the admin panel.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MARK: Local and Claude -->
+  <section>
+    <div class="wrap split">
+      <div class="head" style="margin:0">
+        <p class="kicker">Local and cloud AI <span class="soon">coming next</span></p>
+        <h2>Small jobs at home, hard ones to Claude</h2>
+        <p class="lede">Homeport's own assistant will send everyday questions ("what's running?", "summarize this log") to a model on your own hardware, and hand anything tricky to Claude, along with everything done so far. It will watch how busy your machines are and respect your rules: local only, ask before using the cloud, or a monthly limit.</p>
+        <p class="lede">An Apple Silicon Mac makes a great model server: a small Linux box can run Homeport and the apps, while the Mac's memory does the thinking.</p>
+      </div>
+      <figure class="figure" style="margin:0">
+        <svg viewBox="0 0 520 300" role="img" aria-label="A router sends easy tasks to a local model and hard tasks to Claude, and can hand a task over mid-way.">
+          <rect x="196" y="20" width="128" height="52" rx="12" fill="var(--buoy)"/><text x="260" y="51" text-anchor="middle" class="label" style="fill:var(--buoy-ink)">YOUR REQUEST</text>
+          <path d="M260 72 V108" stroke="var(--line)" stroke-width="2.5"/>
+          <path d="M260 108 L300 140 L260 172 L220 140 Z" fill="var(--card)" stroke="var(--sea)" stroke-width="2"/><text x="260" y="145" text-anchor="middle" class="small" style="fill:var(--ink)">router</text>
+          <g fill="none" stroke-width="2.5" stroke-linecap="round">
+            <path d="M220 140 C160 140 120 170 120 210" stroke="var(--ok)"/><path d="M300 140 C360 140 400 170 400 210" stroke="var(--buoy)"/>
+            <path d="M190 245 H330" stroke="var(--sea)" stroke-dasharray="6 6"/><path d="M322 239 L331 245 L322 251" stroke="var(--sea)"/>
+          </g>
+          <rect x="40" y="210" width="160" height="70" rx="12" fill="var(--card)" stroke="var(--ok)"/><text x="56" y="238" class="label">LOCAL MODEL</text><text x="56" y="260" class="small">Ollama · LM Studio</text>
+          <rect x="320" y="210" width="160" height="70" rx="12" fill="var(--card)" stroke="var(--buoy)"/><text x="336" y="238" class="label">CLAUDE</text><text x="336" y="260" class="small">complex fixes, planning</text>
+          <text x="104" y="176" class="small">easy, machine idle</text><text x="330" y="176" class="small">hard, or local busy</text>
+          <text x="214" y="236" class="small">hand over</text>
+        </svg>
+        <figcaption>Planned design. Today, the AI tools work with any agent you connect, such as opencode with a local model or Claude.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- MARK: Under the hood -->
+  <section>
+    <div class="wrap">
+      <div class="head">
+        <p class="kicker">Under the hood</p>
+        <h2>Small, plain, and yours</h2>
+      </div>
+      <div class="facts">
+        <div class="fact"><b>One binary</b><p>The service, the command line and the admin panel are a single Go program of about 10 MB.</p></div>
+        <div class="fact"><b>Containers</b><p>Every app is a Docker Compose project with its own folder, listening only on 127.0.0.1.</p></div>
+        <div class="fact"><b>Caddy</b><p>Automatic HTTPS for every domain. Homeport writes the config, has Caddy check it, then reloads.</p></div>
+        <div class="fact"><b>Open standards</b><p>OpenID Connect for sign-in, MCP for AI agents. Nothing proprietary in the way.</p></div>
+      </div>
+      <p class="note">Homeport is early (version 0.4). It's tested on Ubuntu 26.04 virtual machines and on an Apple Silicon Mac; it hasn't yet run on a public server with real Let's Encrypt certificates, and the Mac installer is a preview. Try it on a spare machine first.</p>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="wrap">
+      <div class="head">
+        <p class="kicker">Get started</p>
+        <h2>Five minutes to your own cloud</h2>
+        <p class="lede">Point your domain at the server, run one command, and answer three questions: your domain, your name and a password. Running it again later updates Homeport.</p>
+      </div>
+      <div class="install light" style="padding:0">
+        <div class="cmd">
+          <div class="os"><span>Ubuntu 26.04 server</span><button class="copy" type="button" data-copy="curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash">Copy</button></div>
+          <pre><b>$</b> curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash</pre>
+        </div>
+        <div class="cmd">
+          <div class="os"><span>Mac (as yourself, no sudo)</span><button class="copy" type="button" data-copy="curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash">Copy</button></div>
+          <pre><b>$</b> curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Homeport · source code and releases on <a href="https://github.com/moreno001-create/homeport">GitHub</a></span>
+    <span>Built on Ubuntu, Docker, Caddy and open standards</span>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll(".copy").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const text = btn.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = "Copied";
+    } catch {
+      const pre = btn.closest(".cmd").querySelector("pre");
+      const range = document.createRange(); range.selectNodeContents(pre);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      btn.textContent = "Selected: press ⌘C";
+    }
+    setTimeout(() => (btn.textContent = "Copy"), 2200);
+  });
+});
+</script>
+
+</body>
+</html>

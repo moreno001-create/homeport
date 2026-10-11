@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Homeport installer for Ubuntu 26.04 LTS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install.sh | sudo bash
+#   curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash
 #
 # Installs Docker, Caddy (from Caddy's own repository, for a current version) and Homeport, then sets up the main
 # domain and the first admin. It asks at the terminal; for an unattended install, set these first:
@@ -19,7 +19,7 @@ step="starting"
 say() { step="$*"; printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; printf 'The whole log is in %s\n' "$LOG" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || { echo "Run this as root: curl -fsSL https://tinyurl.com/homeport-linux | sudo bash" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "Run this as root: curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash" >&2; exit 1; }
 # Everything also goes to a log, and a failure says which step it was in.
 exec > >(tee -a "$LOG") 2>&1
 echo "Homeport installer, $(date)"

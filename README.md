@@ -1,5 +1,7 @@
 # Homeport
 
+Website: https://moreno001-create.github.io/homeport/
+
 Your own apps, users and domains on one Ubuntu server, in the spirit of YunoHost, built on Ubuntu 26.04 LTS,
 Docker and Caddy. (Working name.)
 
@@ -34,11 +36,10 @@ homeport (CLI) ──/run/homeport/homeport.sock (root only)──> Homeport ser
 On a fresh Ubuntu 26.04 LTS server, with your main domain's DNS pointing at it:
 
 ```sh
-curl -fsSL https://tinyurl.com/homeport-linux | sudo bash
+curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash
 ```
 
-(The short link leads to `https://raw.githubusercontent.com/moreno001-create/homeport/main/install.sh`; use that
-directly if you'd rather not go through TinyURL.)
+(Served by GitHub Pages straight from this repository's `install.sh`.)
 
 It installs Docker, Caddy (from Caddy's own repository) and Homeport, then asks for the main domain, the first
 admin and their password. For an unattended install, set `HOMEPORT_DOMAIN`, `HOMEPORT_ADMIN`, `HOMEPORT_PASSWORD`
@@ -57,10 +58,10 @@ From source: `./build.sh 0.3.0`, copy `dist/` to the server, `sudo ./dist/instal
 Apple Silicon Macs make good home servers, with room for large local AI models. Run as yourself (not with sudo):
 
 ```sh
-curl -fsSL https://tinyurl.com/homeport-mac | bash
+curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash
 ```
 
-(Short for `https://raw.githubusercontent.com/moreno001-create/homeport/main/install-mac.sh`.)
+(Served by GitHub Pages straight from this repository's `install-mac.sh`.)
 
 It needs Homebrew; it installs Caddy, uses your Docker runtime (OrbStack, Docker Desktop or Colima; it installs
 Colima if there's none), and runs Caddy and Homeport as your user with launchd (`~/Library/LaunchAgents/dev.homeport.*`),

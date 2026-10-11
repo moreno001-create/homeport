@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Homeport installer for macOS (Apple Silicon or Intel), run as yourself (not with sudo):
 #
-#   curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install-mac.sh | bash
+#   curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash
 #
 # Sets up Caddy (Homebrew), a Docker runtime (uses OrbStack, Docker Desktop or Colima if one is there, else installs
 # Colima), and Homeport, all running as your user with launchd, so they start when you log in. macOS lets any user
