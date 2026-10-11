@@ -6,10 +6,11 @@
 # Sets up Caddy (Homebrew), a Docker runtime (uses OrbStack, Docker Desktop or Colima if one is there, else installs
 # Colima), and Homeport, all running as your user with launchd, so they start when you log in. macOS lets any user
 # serve on ports 80 and 443, so nothing needs root. Then it sets up the main domain and the first admin, and looks for
-# a local AI model runtime (Ollama or LM Studio) for Homeport's assistant.
+# a local AI model for Homeport's assistant: LM Studio's if it has one, else Ollama with a model that fits this Mac.
 #
 # Unattended: HOMEPORT_DOMAIN, HOMEPORT_ADMIN, HOMEPORT_PASSWORD, HOMEPORT_EMAIL, HOMEPORT_TLS=internal,
-# HOMEPORT_VERSION (a release tag), HOMEPORT_INSTALL_OLLAMA=yes. Running it again updates Homeport.
+# HOMEPORT_VERSION (a release tag). Local AI: HOMEPORT_LOCAL_AI=no (skip), HOMEPORT_LOCAL_MODEL (which model),
+# HOMEPORT_LOCAL_URL (a model server on another computer). Running it again updates Homeport.
 set -euo pipefail
 
 REPO="moreno001-create/homeport"
@@ -133,7 +134,7 @@ agent() { # agent NAME PROGRAM ARGS...
   <key>ProgramArguments</key><array>$args</array>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>$PATH_FOR_AGENTS</string>
-    <key>HOME</key><string>$HOME</string>
+    <key>HOME</key><string>$HOME</string>${AGENT_ENV:-}
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -152,20 +153,73 @@ for _ in $(seq 1 40); do [ -S "$STATE/homeport.sock" ] && break; sleep 0.5; done
 [ -S "$STATE/homeport.sock" ] || die "Homeport didn't start (see $STATE/logs/homeport.log)"
 
 # MARK: Local AI
-say "Local AI for Homeport's assistant"
-if command -v ollama >/dev/null || [ -d /Applications/Ollama.app ]; then
-  echo "Ollama is installed. Models: $(ollama list 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ' ')"
-elif command -v lms >/dev/null || [ -x "$HOME/.lmstudio/bin/lms" ] || [ -d "/Applications/LM Studio.app" ]; then
-  echo "LM Studio is installed: start its local server (lms server start) for Homeport's assistant."
-elif [ "${HOMEPORT_INSTALL_OLLAMA:-}" = yes ]; then
-  "$BREW" install ollama && "$BREW" services start ollama
-else
-  echo "No local model runtime found. For the assistant to use local models, install Ollama (brew install ollama) or LM Studio."
-fi
-gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
-echo "This Mac has ${gb} GB of memory: models up to about $(( gb * 6 / 10 )) GB fit comfortably."
+# A local model for the assistant chat, loaded and connected: LM Studio's if it has a model for it, else Ollama (from
+# Homebrew) with a model that fits this Mac's memory. HOMEPORT_LOCAL_AI=no skips it, HOMEPORT_LOCAL_MODEL picks the
+# model, and HOMEPORT_LOCAL_URL connects a model server on another computer instead.
+OLLAMA=http://127.0.0.1:11434
+LMSTUDIO=http://127.0.0.1:1234
+local_model=""
+mem_gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+LMS="$(command -v lms || ls "$HOME/.lmstudio/bin/lms" 2>/dev/null || true)"
+
+# lmstudio_pick: the biggest model LM Studio has that's trained for tools and fits in about 60% of memory.
+lmstudio_pick() {
+  "$LMS" ls --llm --json 2>/dev/null | /usr/bin/python3 -c '
+import json, sys
+fit = int(sys.argv[1]) * 0.6 * 2**30
+ok = [m for m in json.load(sys.stdin) if m.get("trainedForToolUse") and m.get("sizeBytes", 0) <= fit]
+if ok: print(max(ok, key=lambda m: m["sizeBytes"])["modelKey"])' "$mem_gb" 2>/dev/null
+}
+
+local_ai() {
+  if [ "${HOMEPORT_LOCAL_AI:-yes}" = no ]; then return 0; fi
+  local now model
+  # (Homeport before 0.7.1 can't connect a local model.)
+  if ! now="$(homeport assistant local 2>/dev/null)"; then echo "This Homeport version can't connect a local model yet."; return 1; fi
+  if [[ $now == "Local model: "* ]]; then local_model="${now#Local model: }"; echo "The assistant already uses $local_model"; return 0; fi
+  say "A local AI model for Homeport's assistant"
+  if [ -n "${HOMEPORT_LOCAL_URL:-}" ]; then
+    homeport assistant local "$HOMEPORT_LOCAL_URL" ${HOMEPORT_LOCAL_MODEL:+--model "$HOMEPORT_LOCAL_MODEL"} || return 1
+    local_model="$(homeport assistant local)"; local_model="${local_model#Local model: }"
+    return 0
+  fi
+  echo "This Mac has ${mem_gb} GB of memory."
+  if [ -n "$LMS" ] && model="${HOMEPORT_LOCAL_MODEL:-$(lmstudio_pick)}" && [ -n "$model" ] && "$LMS" ls --llm --json 2>/dev/null | grep -q "\"modelKey\":\"$model\""; then
+    echo "Using LM Studio's $model."
+    "$LMS" server start || return 1
+    if ! "$LMS" ps 2>/dev/null | grep -q "$model"; then "$LMS" load "$model" --context-length 16384 --yes || return 1; fi
+    homeport assistant local "$LMSTUDIO" --model "$model" || return 1
+    local_model="$model (LM Studio on this Mac)"
+    return 0
+  fi
+  if [ "$mem_gb" -ge 44 ]; then model=qwen3.6:35b-a3b    # a mixture of experts: big, but only 3B at work per word
+  elif [ "$mem_gb" -ge 22 ]; then model=qwen3.5:9b
+  elif [ "$mem_gb" -ge 7 ]; then model=qwen3.5:4b
+  else model=qwen3.5:2b; fi
+  model="${HOMEPORT_LOCAL_MODEL:-$model}"
+  command -v ollama >/dev/null || "$BREW" install ollama || return 1
+  if ! curl -sf "$OLLAMA/api/version" >/dev/null && [ ! -d /Applications/Ollama.app ]; then
+    # Its own agent, with room for Homeport's instructions and tools, and the model kept loaded a while after use.
+    AGENT_ENV='<key>OLLAMA_CONTEXT_LENGTH</key><string>16384</string><key>OLLAMA_KEEP_ALIVE</key><string>30m</string>' \
+      agent ollama "$(command -v ollama)" serve
+  elif ! curl -sf "$OLLAMA/api/version" >/dev/null; then
+    open -a Ollama
+  fi
+  for _ in $(seq 1 60); do curl -sf "$OLLAMA/api/version" >/dev/null && break; sleep 0.5; done
+  curl -sf "$OLLAMA/api/version" >/dev/null || { echo "Ollama didn't start."; return 1; }
+  echo "Downloading $model with Ollama:"
+  ollama pull "$model" || return 1
+  echo "Loading it…"
+  curl -sS --fail-with-body "$OLLAMA/api/generate" -d "{\"model\":\"$model\",\"keep_alive\":\"30m\"}" >/dev/null || return 1
+  homeport assistant local "$OLLAMA" --model "$model" || return 1
+  local_model="$model (Ollama on this Mac)"
+}
+local_ai_failed() {
+  printf '\033[33mThe local AI model isn'"'"'t set up (see above). Everything else works: run the installer again to retry, or connect one under Settings → Assistant chat.\033[0m\n'
+}
 
 if ! homeport status | grep -q "Not set up"; then
+  if ! local_ai; then local_ai_failed; fi
   say "Homeport is updated"
   homeport status
   exit 0
@@ -205,6 +259,7 @@ if [ -z "${HOMEPORT_DOMAIN:-}" ] || [ -z "${HOMEPORT_ADMIN:-}" ] || [ -z "${HOME
 fi
 printf '%s\n' "$HOMEPORT_PASSWORD" | homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
   --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}" >/dev/null
+if ! local_ai; then local_ai_failed; fi
 cat <<MSG
 
 $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
@@ -215,6 +270,7 @@ $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
   User name:           $HOMEPORT_ADMIN
   Password:            the one you just chose (change it with: homeport user passwd $HOMEPORT_ADMIN)
   This server:         ${ips:-unknown address}
+  Assistant's model:   ${local_model:-none yet (Settings → Assistant chat)}
 MSG
 if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
   cat <<MSG

@@ -84,7 +84,8 @@ curl -fsSL https://moreno001-create.github.io/homeport/install-mac.sh | bash
 It needs Homebrew; it installs Caddy, uses your Docker runtime (OrbStack, Docker Desktop or Colima; it installs
 Colima if there's none), and runs Caddy and Homeport as your user with launchd (`~/Library/LaunchAgents/dev.homeport.*`),
 so they start when you log in. Everything lives in `~/Library/Application Support/Homeport`, and `homeport` commands
-need no sudo. It also looks for Ollama or LM Studio for local models (`HOMEPORT_INSTALL_OLLAMA=yes` installs Ollama).
+need no sudo. It also sets up a local model for the assistant: LM Studio's if it has one trained for tools, else Ollama
+with a model that fits the Mac's memory.
 The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it from your router. If OrbStack holds
 80/443 (its HTTPS domains, or ports forwarded from its Linux machines), the installer says how to turn that off.
 
@@ -95,8 +96,12 @@ The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it fro
 - **Claude** with an Anthropic API key (Settings → Assistant chat; kept in `/var/lib/homeport/anthropic-api-key`,
   root-only). Default model `claude-opus-5-5` at medium effort. If a safety check declines a request, Anthropic re-runs
   it on its recommended fallback model (server-side fallbacks, Opus models).
-- **A local model** on any OpenAI-compatible server: LM Studio, Ollama, llama.cpp. Homeport doesn't run one itself;
-  a server without a strong graphics card points at a computer that has one (a Mac with Apple silicon works well).
+- **A local model** on any OpenAI-compatible server: LM Studio, Ollama, llama.cpp. The installer sets one up and
+  loads it: Ollama on the server with a model that fits its memory (`qwen3.5:2b` under 8 GB, `qwen3.5:4b`, `qwen3.5:9b`
+  from 24 GB, `qwen3.6:35b-a3b` from 48 GB). `HOMEPORT_LOCAL_AI=no` skips it, `HOMEPORT_LOCAL_MODEL` picks another
+  Ollama model, and `HOMEPORT_LOCAL_URL=http://192.168.1.20:1234` uses a model server on another computer instead
+  (a server without a strong graphics card can point at one that has one; a Mac with Apple silicon works well).
+  Change it later in Settings → Assistant chat, or with `homeport assistant local URL [--model NAME]`.
 - **Automatic** mode sends easy questions to the local model and troubleshooting or bigger jobs to Claude; the local
   model can also hand a conversation to Claude. Optional: ask before anything goes to Claude, and a monthly dollar
   limit (an estimate, in `/var/lib/homeport/assistant-usage.json`).

@@ -8,6 +8,9 @@
 #   HOMEPORT_DOMAIN=home.example.com HOMEPORT_ADMIN=alice HOMEPORT_PASSWORD='…' HOMEPORT_EMAIL=you@example.com
 #   HOMEPORT_TLS=internal   (Caddy's own certificates, for a test machine with no public address)
 #   HOMEPORT_VERSION=v0.3.0 (a release tag; default: the latest)
+# It also installs Ollama with a model that fits this server's memory, for the assistant chat:
+#   HOMEPORT_LOCAL_AI=no (skip it), HOMEPORT_LOCAL_MODEL=qwen3.5:9b (another Ollama model),
+#   HOMEPORT_LOCAL_URL=http://192.168.1.20:1234 (use a model server on another computer instead)
 # Running it again updates Homeport and leaves the setup alone.
 set -Eeuo pipefail
 shopt -s extglob lastpipe
@@ -30,7 +33,7 @@ live=false
 if [ -t 3 ] && [ "${TERM:-dumb}" != dumb ]; then live=true; fi
 TAIL=4          # lines of the running command's output under the bar
 step="starting" # the step being done, its share of the bar and when it began
-from=0 to=0 pct=0 began=$SECONDS
+from=0 to=0 pct=0 began=$SECONDS step_ok=true
 cmd_shown=""    # the command running
 lines=()        # its last lines of output
 seen=0          # lines of output so far in this step (to move the bar along)
@@ -83,9 +86,11 @@ note() {
 # say FROM TO "what": a new step, filling the bar from FROM% towards TO% as its commands print.
 say() {
   if $live && [ "$step" != starting ]; then
-    hide; printf '  \e[32mdone\e[0m  %s \e[2m(%ss)\e[0m\n' "$step" $((SECONDS - began)) >&3
+    hide
+    if $step_ok; then printf '  \e[32mdone\e[0m  ' >&3; else printf '  \e[31mfailed\e[0m  ' >&3; fi
+    printf '%s \e[2m(%ss)\e[0m\n' "$step" $((SECONDS - began)) >&3
   fi
-  from=$1 to=$2 pct=$1 step=$3 began=$SECONDS cmd_shown="" lines=() seen=0
+  from=$1 to=$2 pct=$1 step=$3 began=$SECONDS cmd_shown="" lines=() seen=0 step_ok=true
   printf '\n==> %s\n' "$step"
   if $live; then draw force; else printf '\n\033[1m==> %s\033[0m (%d%%)\n' "$step" "$pct" >&3; fi
 }
@@ -96,10 +101,18 @@ run() {
   cmd_shown="$*" lines=()
   echo "\$ $*"
   draw force
-  local line rc=0
-  "$@" <"${RUN_IN:-/dev/null}" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
-    line="${line##*$'\r'}"                         # progress meters: only their last state
+  local line rc=0 meter=false
+  "$@" <"${RUN_IN:-/dev/null}" 2>&1 | tr '\r' '\n' | while IFS= read -r line || [ -n "$line" ]; do
     line="${line//$'\e'\[*([0-9;?])[a-zA-Z]/}"    # colours
+    if [[ $line =~ ^[#[:space:]]*([0-9]{1,3})(\.[0-9]+)?%[[:space:]]*$ ]] && [ $((10#${BASH_REMATCH[1]})) -le 100 ]; then
+      # A progress meter (curl's "#### 45.2%"): the bar follows it, on one line under it, and it isn't logged.
+      pct=$((from + (to - from) * 10#${BASH_REMATCH[1]} / 100))
+      if $meter; then lines[${#lines[@]}-1]="$line"; else lines+=("$line"); meter=true; fi
+      if [ "${#lines[@]}" -gt "$TAIL" ]; then lines=("${lines[@]:1}"); fi
+      draw
+      continue
+    fi
+    meter=false
     printf '%s\n' "$line"
     if ! $live; then printf '%s\n' "$line" >&3; fi
     if [ -n "${line//[[:space:]]/}" ]; then lines+=("$line"); fi
@@ -168,12 +181,12 @@ case "$(uname -m)" in
   *) die "unsupported processor $(uname -m) (Homeport runs on x86-64 and ARM64)" ;;
 esac
 
-say 0 45 "Installing Docker and the packages Homeport needs"
+say 0 30 "Installing Docker and the packages Homeport needs"
 export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
 run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2
 
-say 45 65 "Installing Caddy"
+say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
 caddy_repo() {
   fetch "$CADDY_REPO/gpg.key" "$tmp/caddy.key" "Caddy's signing key" || return 1
@@ -192,7 +205,7 @@ if ! command -v caddy >/dev/null || ! caddy version | grep -q -E '^v2\.(8|9|[1-9
 fi
 note "Caddy $(caddy version | cut -d' ' -f1)"
 
-say 65 80 "Installing Homeport"
+say 38 44 "Installing Homeport"
 # A local build is only used when this script is run as a file next to it (curl | bash always downloads).
 here=/nonexistent
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -219,7 +232,7 @@ fi
 install -m 0755 "$tmp/homeport" /usr/local/bin/homeport
 note "$(homeport version)"
 
-say 80 92 "Starting Homeport"
+say 44 50 "Starting Homeport"
 cat > /etc/systemd/system/homeport.service <<'UNIT'
 [Unit]
 Description=Homeport (apps, users and domains for this server)
@@ -263,15 +276,111 @@ cmd_shown="waiting for the Homeport service to start"; draw force
 for _ in $(seq 1 40); do [ -S /run/homeport/homeport.sock ] && break; sleep 0.5; done
 [ -S /run/homeport/homeport.sock ] || die "the Homeport service didn't start (see: journalctl -u homeport)"
 
+# MARK: Local AI
+# A local model for the assistant chat: Ollama on this server with a model that fits its memory, downloaded, loaded and
+# connected. HOMEPORT_LOCAL_AI=no skips it, HOMEPORT_LOCAL_MODEL picks the model (an Ollama name), and
+# HOMEPORT_LOCAL_URL connects a model server on another computer (Ollama, LM Studio…) instead of installing one here.
+OLLAMA=http://127.0.0.1:11434
+local_model="" # what the assistant ended up with, for the summary
+
+# pick_model: an Ollama model that fits this machine's memory, and its download in tenths of a GB.
+pick_model() {
+  local gb=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1048576 ))
+  if [ "$gb" -ge 44 ]; then echo "qwen3.6:35b-a3b 226"   # a mixture of experts: big, but only 3B at work per word
+  elif [ "$gb" -ge 22 ]; then echo "qwen3.5:9b 66"
+  elif [ "$gb" -ge 7 ]; then echo "qwen3.5:4b 33"
+  else echo "qwen3.5:2b 27"; fi
+}
+gb() { printf -v "$1" '%d.%d GB' $(($2 / 1000000000)) $(($2 % 1000000000 / 100000000)); }
+
+# pull_model NAME: downloads a model through Ollama's API, the bar following the download.
+pull_model() {
+  local line status="" last="" err="" total got big=0 rc=0 a b
+  cmd_shown="ollama pull $1" lines=(); echo "\$ ollama pull $1"; draw force
+  curl -sSN "$OLLAMA/api/pull" -d "{\"model\":\"$1\"}" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
+    if [ "${line:0:1}" != "{" ]; then echo "$line"; continue; fi
+    if [[ $line =~ \"error\":\"([^\"]*)\" ]]; then err=${BASH_REMATCH[1]}; fi
+    if [[ $line =~ \"status\":\"([^\"]*)\" ]]; then status=${BASH_REMATCH[1]}; fi
+    total=0 got=0
+    if [[ $line =~ \"total\":([0-9]+) ]]; then total=${BASH_REMATCH[1]}; fi
+    if [[ $line =~ \"completed\":([0-9]+) ]]; then got=${BASH_REMATCH[1]}; fi
+    if [ "$status" != "$last" ]; then echo "$status"; last=$status; fi
+    if [ "$total" -gt 0 ] && [ "$total" -ge "$big" ]; then
+      big=$total; pct=$((from + (to - from) * got / total))
+      gb a "$got"; gb b "$total"; lines=("$a of $b")
+    elif [ -n "$status" ] && [ "$total" -eq 0 ]; then
+      lines=("$status")
+    fi
+    draw
+  done || rc=$?
+  if [ -n "$err" ]; then note "Ollama couldn't download $1: $err"; return 1; fi
+  [ "$rc" -eq 0 ] && [ "$status" = success ]
+}
+
+# local_ai FROM MID: sets up the local model, the bar going FROM → MID while Ollama installs, then on to 100.
+# Returns non-zero if it couldn't; Homeport works without it.
+local_ai() {
+  if [ "${HOMEPORT_LOCAL_AI:-yes}" = no ]; then echo "Local AI skipped (HOMEPORT_LOCAL_AI=no)."; return 0; fi
+  local now model size free need
+  # (Homeport before 0.7.1 can't connect a local model.)
+  if ! now="$(homeport assistant local 2>/dev/null)"; then note "This Homeport version can't connect a local model yet."; return 1; fi
+  if [[ $now == "Local model: "* ]]; then local_model="${now#Local model: }"; note "The assistant already uses $local_model"; return 0; fi
+  if [ -n "${HOMEPORT_LOCAL_URL:-}" ]; then
+    say "$1" 100 "Connecting the assistant to the model server at $HOMEPORT_LOCAL_URL"
+    run homeport assistant local "$HOMEPORT_LOCAL_URL" ${HOMEPORT_LOCAL_MODEL:+--model "$HOMEPORT_LOCAL_MODEL"} || return 1
+    local_model="$(homeport assistant local)"; local_model="${local_model#Local model: }"
+    return 0
+  fi
+  read -r model size <<<"$(pick_model)"
+  if [ -n "${HOMEPORT_LOCAL_MODEL:-}" ]; then model=$HOMEPORT_LOCAL_MODEL size=0; fi
+  free=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
+  need=$((size / 10 + 3))
+  if [ "$need" -gt "$free" ]; then note "Not enough disk space for the local AI model $model (it needs about $need GB; $free GB free)."; return 1; fi
+
+  say "$1" "$2" "Installing Ollama (runs AI models on this server)"
+  if ! command -v ollama >/dev/null; then
+    fetch https://ollama.com/install.sh "$tmp/ollama-install.sh" "Ollama's installer" || return 1
+    run sh "$tmp/ollama-install.sh" || return 1
+  fi
+  # Room for Homeport's instructions and tools (Ollama's default context is smaller), and the model stays loaded a
+  # while after each use.
+  mkdir -p /etc/systemd/system/ollama.service.d
+  printf '[Service]\nEnvironment=OLLAMA_CONTEXT_LENGTH=%s\nEnvironment=OLLAMA_KEEP_ALIVE=30m\n' \
+    "$([ "$size" -gt 0 ] && [ "$size" -le 27 ] && echo 8192 || echo 16384)" > /etc/systemd/system/ollama.service.d/homeport.conf
+  run systemctl daemon-reload || return 1
+  run systemctl enable ollama || return 1
+  run systemctl restart ollama || return 1
+  cmd_shown="waiting for Ollama to start"; draw force
+  for _ in $(seq 1 60); do curl -sf "$OLLAMA/api/version" >/dev/null && break; sleep 0.5; done
+  curl -sf "$OLLAMA/api/version" >/dev/null || { note "Ollama didn't start (see: journalctl -u ollama)"; return 1; }
+
+  if [ "$size" -gt 0 ]; then
+    say "$2" 97 "Downloading the local AI model $model ($((size / 10)).$((size % 10)) GB)"
+  else
+    say "$2" 97 "Downloading the local AI model $model"
+  fi
+  pull_model "$model" || return 1
+  say 97 100 "Loading $model and connecting the assistant to it"
+  run curl -sS --fail-with-body "$OLLAMA/api/generate" -d "{\"model\":\"$model\",\"keep_alive\":\"30m\"}" || return 1
+  run homeport assistant local "$OLLAMA" --model "$model" || return 1
+  local_model="$model (Ollama on this server)"
+}
+local_ai_failed() {
+  step_ok=false
+  note "The local AI model isn't set up (the log says why). Everything else works: run the installer again to retry, or connect one under Settings → Assistant chat."
+}
+
 if ! homeport status | grep -q "Not set up"; then
+  if ! local_ai 50 70; then local_ai_failed; fi
   say 100 100 "Homeport is updated"
   hide
   homeport status | show
+  if [ -n "$local_model" ]; then echo "Local AI: $local_model" | show; fi
   exit 0
 fi
 
 # MARK: First setup (like YunoHost's post-install)
-say 92 100 "Setting up this server"
+say 50 54 "Setting up this server"
 # A terminal to ask at? (/dev/tty can exist without being usable, e.g. over a non-interactive ssh or in CI.)
 tty_ok=false
 if { exec 5</dev/tty; } 2>/dev/null; then tty_ok=true; exec 5<&-; fi
@@ -326,6 +435,7 @@ fi
 RUN_IN="$tmp/password" run homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
   --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}"
 rm -f "$tmp/password"
+if ! local_ai 54 70; then local_ai_failed; fi
 say 100 100 "Done"
 hide
 show <<MSG
@@ -338,6 +448,7 @@ $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
   User name:           $HOMEPORT_ADMIN
   Password:            the one you just chose (change it with: sudo homeport user passwd $HOMEPORT_ADMIN)
   This server:         ${ips:-unknown address}
+  Assistant's model:   ${local_model:-none yet (Settings → Assistant chat)}
 MSG
 if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
   show <<MSG

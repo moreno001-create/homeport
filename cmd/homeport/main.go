@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -133,6 +134,7 @@ func usage() {
   homeport audit [N]           the last N tool calls
   homeport memory              the agents' shared notes and work in progress
   homeport assistant shell on|off
+  homeport assistant local [URL [--model NAME] | off]   the local model for the chat (Ollama, LM Studio…)
 
   homeport terminal on|off     a terminal in the admin panel (admins, then the Linux login)
 
@@ -953,8 +955,11 @@ func cmdTerminal(args []string) error {
 }
 
 func cmdAssistant(args []string) error {
+	if len(args) > 0 && args[0] == "local" {
+		return cmdAssistantLocal(args[1:])
+	}
 	if len(args) != 2 || args[0] != "shell" || (args[1] != "on" && args[1] != "off") {
-		return errors.New("usage: homeport assistant shell on|off")
+		return errors.New("usage: homeport assistant shell on|off, or homeport assistant local [URL [--model NAME] | off]")
 	}
 	on := args[1] == "on"
 	if err := call("PUT", "/settings", map[string]any{"assistantShell": on}, nil); err != nil {
@@ -964,6 +969,58 @@ func cmdAssistant(args []string) error {
 		fmt.Println("AI helpers may now ask to run shell commands (each one still needs approval).")
 	} else {
 		fmt.Println("Shell commands are off for AI helpers.")
+	}
+	return nil
+}
+
+// cmdAssistantLocal shows or sets the local model behind the assistant chat (an OpenAI-compatible server such as
+// Ollama or LM Studio). Setting it checks the server answers and has the model; the other chat settings are kept.
+func cmdAssistantLocal(args []string) error {
+	fs := flag.NewFlagSet("assistant local", flag.ExitOnError)
+	model := fs.String("model", "", "the model to use (default: the server's first chat model)")
+	pos := parse(fs, args)
+	var cur struct{ Settings state.ChatSettings }
+	if err := call("GET", "/chat-settings", nil, &cur); err != nil {
+		return err
+	}
+	st := cur.Settings
+	switch {
+	case len(pos) == 0:
+		if st.LocalURL == "" {
+			fmt.Println("No local model is set up.")
+		} else {
+			fmt.Printf("Local model: %s at %s\n", cmp.Or(st.LocalModel, "the server's first model"), st.LocalURL)
+		}
+		return nil
+	case len(pos) == 1 && pos[0] == "off":
+		st.LocalURL, st.LocalModel = "", ""
+	case len(pos) == 1:
+		var found struct {
+			LocalURL string
+			Models   []string
+		}
+		if err := call("POST", "/chat-settings/local-models", map[string]string{"localURL": pos[0]}, &found); err != nil {
+			return err
+		}
+		if len(found.Models) == 0 {
+			return fmt.Errorf("%s answers but has no chat model", found.LocalURL)
+		}
+		if *model == "" {
+			*model = found.Models[0]
+		} else if !slices.Contains(found.Models, *model) {
+			return fmt.Errorf("%s has no model %q (it has: %s)", found.LocalURL, *model, strings.Join(found.Models, ", "))
+		}
+		st.LocalURL, st.LocalModel = found.LocalURL, *model
+	default:
+		return errors.New("usage: homeport assistant local [URL [--model NAME] | off]")
+	}
+	if err := call("PUT", "/chat-settings", st, nil); err != nil {
+		return err
+	}
+	if st.LocalURL == "" {
+		fmt.Println("The assistant no longer uses a local model.")
+	} else {
+		fmt.Printf("The assistant uses %s at %s.\n", st.LocalModel, st.LocalURL)
 	}
 	return nil
 }
