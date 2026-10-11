@@ -31,16 +31,37 @@ homeport (CLI) ──/run/homeport/homeport.sock (root only)──> Homeport ser
 
 ## Install
 
+On a fresh Ubuntu 26.04 LTS server, with your main domain's DNS pointing at it:
+
 ```sh
-./build.sh 0.1.0                       # on a dev machine: dist/ has the binaries and the installer
-scp -r dist server: && ssh server
-sudo ./dist/install.sh                 # Docker, Caddy (from Caddy's repository), the service
-sudo homeport init --domain home.example.com --admin alice --email you@example.com
+curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install.sh | sudo bash
+```
+
+It installs Docker, Caddy (from Caddy's own repository) and Homeport, then asks for the main domain, the first
+admin and their password. For an unattended install, set `HOMEPORT_DOMAIN`, `HOMEPORT_ADMIN`, `HOMEPORT_PASSWORD`
+and optionally `HOMEPORT_EMAIL`, `HOMEPORT_TLS=internal` (test machines: Caddy's own certificates) and
+`HOMEPORT_VERSION` (a release tag). Running it again updates Homeport.
+
+```sh
+sudo homeport app catalog
 sudo homeport app install nextcloud --domain cloud.example.com
 ```
 
-Point each domain's DNS at the server first. For a test machine with no public address, use `--tls internal`
-(Caddy's own certificates).
+From source: `./build.sh 0.3.0`, copy `dist/` to the server, `sudo ./dist/install.sh`.
+
+## AI helpers
+
+Homeport's abilities are tools for AI agents, over MCP: `sudo homeport mcp` connects opencode, Claude Code or any
+MCP client (on the server, or over `ssh`).
+
+- **Look** tools (apps, logs, health, users, domains, Caddy config, domain checks) run straight away.
+- **Change** tools (install, update, restart, remove, access, domains, groups, a command inside an app) wait for an
+  admin: the admin panel's Assistant page, or `homeport approvals` / `homeport approve ID` / `homeport deny ID`.
+- **Shell** (any command as root) is off until `homeport assistant shell on`, and each command is approved.
+- Secrets are hidden from everything the AI sees; every call is in `/var/lib/homeport/audit.log` (`homeport audit`).
+- **Shared memory** (`homeport memory`, `/var/lib/homeport/assistant-memory.md`): what was done to what, notes per
+  app, and a hand-off of unfinished work, so the next agent carries on where the last one stopped. It also shows the
+  latest changes from the audit log, which agents can't forget to record.
 
 ## The catalog
 
@@ -68,5 +89,6 @@ works once), RS256 tokens signed with `/var/lib/homeport/oidc-signing-key.pem`. 
 
 ## Not done yet
 
+Homeport's own assistant (chat in the admin panel, Claude or a local model, routing easy tasks to the local one),
 LDAP for apps that can't do OIDC, email, backups, apps on a path (`example.com/app`), the YunoHost-style
 diagnosis page, updating Homeport itself from the panel, and more catalog apps.
