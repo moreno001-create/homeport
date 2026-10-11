@@ -34,8 +34,11 @@ homeport (CLI) ──/run/homeport/homeport.sock (root only)──> Homeport ser
 On a fresh Ubuntu 26.04 LTS server, with your main domain's DNS pointing at it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install.sh | sudo bash
+curl -fsSL https://tinyurl.com/homeport-linux | sudo bash
 ```
+
+(The short link leads to `https://raw.githubusercontent.com/moreno001-create/homeport/main/install.sh`; use that
+directly if you'd rather not go through TinyURL.)
 
 It installs Docker, Caddy (from Caddy's own repository) and Homeport, then asks for the main domain, the first
 admin and their password. For an unattended install, set `HOMEPORT_DOMAIN`, `HOMEPORT_ADMIN`, `HOMEPORT_PASSWORD`
@@ -54,8 +57,10 @@ From source: `./build.sh 0.3.0`, copy `dist/` to the server, `sudo ./dist/instal
 Apple Silicon Macs make good home servers, with room for large local AI models. Run as yourself (not with sudo):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install-mac.sh | bash
+curl -fsSL https://tinyurl.com/homeport-mac | bash
 ```
+
+(Short for `https://raw.githubusercontent.com/moreno001-create/homeport/main/install-mac.sh`.)
 
 It needs Homebrew; it installs Caddy, uses your Docker runtime (OrbStack, Docker Desktop or Colima; it installs
 Colima if there's none), and runs Caddy and Homeport as your user with launchd (`~/Library/LaunchAgents/dev.homeport.*`),
