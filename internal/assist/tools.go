@@ -46,7 +46,11 @@ func (a *Assistant) define() []Tool {
 					fmt.Fprintf(&b, "Homeport %s on %s (certificates: %s; shell tools: %v)\n%d users, %d domains, %d apps\n\n",
 						a.Version, s.MainDomain, s.TLS, s.AssistantShell, len(d.Users()), len(d.Domains()), len(d.Apps()))
 				})
-				for _, c := range [][]string{{"uptime"}, {"free", "-h"}, {"df", "-h", "/", "/var/lib"}} {
+				health := a.Platform.Health
+				if len(health) > 3 {
+					health = health[:3]
+				}
+				for _, c := range health {
 					out, _ := a.Runner.Output(ctx, "", c[0], c[1:]...)
 					fmt.Fprintf(&b, "$ %s\n%s\n", strings.Join(c, " "), strings.TrimSpace(out))
 				}
@@ -113,15 +117,18 @@ func (a *Assistant) define() []Tool {
 				if svc != "homeport" && svc != "caddy" && svc != "docker" {
 					return "", errors.New("service is homeport, caddy or docker")
 				}
-				return a.Runner.Output(ctx, "", "journalctl", "-u", svc, "-n", fmt.Sprint(args.Int("lines", 150, 2000)), "--no-pager", "-o", "short-iso")
+				if a.Platform.LogsCommand == nil {
+					return "", errors.New("service logs aren't available on this system")
+				}
+				c := a.Platform.LogsCommand(svc, args.Int("lines", 150, 2000))
+				return a.Runner.Output(ctx, "", c[0], c[1:]...)
 			}},
 
 		{Name: "system_health", Level: Look,
 			Description: "The server's health: load, memory, disk, Docker's disk use, and any failed system services.",
 			Run: func(ctx context.Context, _ Args) (string, error) {
 				var b strings.Builder
-				for _, c := range [][]string{{"uptime"}, {"free", "-h"}, {"df", "-h", "-x", "tmpfs", "-x", "overlay"},
-					{"docker", "system", "df"}, {"systemctl", "--failed", "--no-legend", "--no-pager"}} {
+				for _, c := range a.Platform.Health {
 					out, err := a.Runner.Output(ctx, "", c[0], c[1:]...)
 					if err != nil && out == "" {
 						out = err.Error()

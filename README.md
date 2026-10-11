@@ -49,6 +49,21 @@ sudo homeport app install nextcloud --domain cloud.example.com
 
 From source: `./build.sh 0.3.0`, copy `dist/` to the server, `sudo ./dist/install.sh`.
 
+### On a Mac
+
+Apple Silicon Macs make good home servers, with room for large local AI models. Run as yourself (not with sudo):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/moreno001-create/homeport/main/install-mac.sh | bash
+```
+
+It needs Homebrew; it installs Caddy, uses your Docker runtime (OrbStack, Docker Desktop or Colima; it installs
+Colima if there's none), and runs Caddy and Homeport as your user with launchd (`~/Library/LaunchAgents/dev.homeport.*`),
+so they start when you log in. Everything lives in `~/Library/Application Support/Homeport`, and `homeport` commands
+need no sudo. It also looks for Ollama or LM Studio for local models (`HOMEPORT_INSTALL_OLLAMA=yes` installs Ollama).
+The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it from your router. If OrbStack holds
+80/443 (its HTTPS domains, or ports forwarded from its Linux machines), the installer says how to turn that off.
+
 ## AI helpers
 
 Homeport's abilities are tools for AI agents, over MCP: `sudo homeport mcp` connects opencode, Claude Code or any

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"homeport/internal/apps"
+	"homeport/internal/platform"
 	"homeport/internal/runner"
 	"homeport/internal/state"
 )
@@ -91,6 +92,8 @@ type Assistant struct {
 	Runner    runner.Runner
 	Caddyfile string
 	Version   string
+	// Platform says how to read health and logs on this system.
+	Platform  platform.Platform
 	Audit     *Audit
 	Approvals *Approvals
 	Memory    *Memory

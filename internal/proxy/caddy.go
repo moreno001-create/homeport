@@ -24,6 +24,13 @@ var identityHeaders = []string{"Remote-User", "Remote-Name", "Remote-Email", "Re
 func Caddyfile(s state.Settings, apps []state.App) string {
 	var b strings.Builder
 	b.WriteString("# Written by Homeport. Changes here are replaced: use `homeport` or the admin panel instead.\n{\n\tadmin localhost:2019\n")
+	// Other ports, for a test instance beside something else that holds 80 and 443.
+	if p := os.Getenv("HOMEPORT_HTTP_PORT"); p != "" {
+		fmt.Fprintf(&b, "\thttp_port %s\n", p)
+	}
+	if p := os.Getenv("HOMEPORT_HTTPS_PORT"); p != "" {
+		fmt.Fprintf(&b, "\thttps_port %s\n", p)
+	}
 	switch {
 	case s.TLS == state.TLSInternal:
 		b.WriteString("\tlocal_certs\n")
@@ -66,8 +73,10 @@ func writeStripIdentity(b *strings.Builder) {
 
 // Caddy owns /etc/caddy/Caddyfile; Homeport replaces it and reloads Caddy.
 type Caddy struct {
-	Path   string // /etc/caddy/Caddyfile
+	Path   string // /etc/caddy/Caddyfile on Linux
 	Runner runner.Runner
+	// Reload makes Caddy load the new file (systemctl reload caddy on Linux, caddy reload on a Mac).
+	Reload []string
 }
 
 // Apply checks the new configuration with Caddy, puts it in place and reloads. A configuration Caddy rejects never
@@ -91,7 +100,11 @@ func (c Caddy) Apply(ctx context.Context, config string) error {
 	if err := os.Rename(tmp, c.Path); err != nil {
 		return err
 	}
-	if out, err := c.Runner.Output(ctx, "", "systemctl", "reload", "caddy"); err != nil {
+	reload := c.Reload
+	if len(reload) == 0 {
+		reload = []string{"systemctl", "reload", "caddy"}
+	}
+	if out, err := c.Runner.Output(ctx, "", reload[0], reload[1:]...); err != nil {
 		return fmt.Errorf("couldn't reload Caddy: %v\n%s", err, lastLines(out, 8))
 	}
 	return nil

@@ -27,6 +27,7 @@ import (
 
 	"homeport/internal/apps"
 	"homeport/internal/assist"
+	"homeport/internal/platform"
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
 	"homeport/internal/server"
@@ -35,10 +36,12 @@ import (
 
 var version = "dev" // set at build time
 
-const (
-	stateDir   = "/var/lib/homeport"
-	socketPath = "/run/homeport/homeport.sock"
-	caddyfile  = "/etc/caddy/Caddyfile"
+// Where Homeport keeps things, by system (see internal/platform).
+var (
+	plat       = platform.Current()
+	stateDir   = plat.StateDir
+	socketPath = plat.Socket
+	caddyfile  = plat.Caddyfile
 )
 
 func main() {
@@ -126,12 +129,16 @@ func usage() {
 // MARK: Service
 
 func serve() error {
+	// systemd makes this folder on Linux; on a Mac Homeport makes it (only its owner can read it).
+	if err := os.MkdirAll(filepath.Join(stateDir, "apps"), 0o700); err != nil {
+		return err
+	}
 	store, err := state.Open(filepath.Join(stateDir, "state.json"))
 	if err != nil {
 		return err
 	}
 	sys := runner.System{}
-	caddy := proxy.Caddy{Path: caddyfile, Runner: sys}
+	caddy := proxy.Caddy{Path: caddyfile, Runner: sys, Reload: plat.ReloadCaddy}
 	applyProxy := func(ctx context.Context) error {
 		var st state.Settings
 		var list []state.App
@@ -141,12 +148,13 @@ func serve() error {
 		}
 		return caddy.Apply(ctx, proxy.Caddyfile(st, list))
 	}
-	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy}
+	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
+		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot}
 	signer, err := server.LoadSigner(filepath.Join(stateDir, "oidc-signing-key.pem"))
 	if err != nil {
 		return fmt.Errorf("OIDC signing key: %w", err)
 	}
-	helper := &assist.Assistant{Store: store, Apps: manager, Runner: sys, Caddyfile: caddyfile, Version: version, ApplyProxy: applyProxy,
+	helper := &assist.Assistant{Store: store, Apps: manager, Runner: sys, Caddyfile: caddyfile, Version: version, ApplyProxy: applyProxy, Platform: plat,
 		Audit: &assist.Audit{Path: filepath.Join(stateDir, "audit.log")}, Approvals: &assist.Approvals{},
 		Memory: &assist.Memory{Path: filepath.Join(stateDir, "assistant-memory.md")}}
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper}
@@ -200,9 +208,9 @@ func call(method, path string, body, out any) error {
 	res, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) || strings.Contains(err.Error(), "permission denied") {
-			return errors.New("run this as root (sudo homeport …)")
+			return errors.New("run this as root (sudo homeport …), or as the user Homeport runs as on a Mac")
 		}
-		return fmt.Errorf("can't reach the Homeport service (is it running? systemctl status homeport): %w", err)
+		return fmt.Errorf("can't reach the Homeport service (is it running? %s): %w", plat.ServiceHint, err)
 	}
 	defer res.Body.Close()
 	data, _ := io.ReadAll(res.Body)
