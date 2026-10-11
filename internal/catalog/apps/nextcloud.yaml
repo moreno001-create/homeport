@@ -4,7 +4,7 @@ description: Files, calendars, contacts and photos in your own cloud, with deskt
 category: Files
 website: https://nextcloud.com
 signIn: own
-secrets: [db_password, admin_password]
+secrets: [db_password, admin_password, redis_password]
 notes: |
   Sign in as the admin who installed it, with the admin password in this app's secrets, then change it.
   The sync apps connect straight to this address, so it stays public; Nextcloud's own accounts protect it.
@@ -18,15 +18,23 @@ compose: |
         POSTGRES_PASSWORD: "{{secret "db_password"}}"
       volumes: ["{{.Data}}/db:/var/lib/postgresql/data"]
       restart: unless-stopped
+    redis:
+      image: redis:7-alpine
+      command: ["redis-server", "--requirepass", "{{secret "redis_password"}}"]
+      restart: unless-stopped
     app:
       image: nextcloud:stable-apache
-      depends_on: [db]
+      depends_on: [db, redis]
       ports: ["127.0.0.1:{{.Port}}:80"]
-      environment:
+      # Its own address leads back through this server's Caddy (home routers often can't loop back to a public address).
+      extra_hosts: ["{{.Domain}}:host-gateway"]
+      environment: &env
         POSTGRES_HOST: db
         POSTGRES_DB: nextcloud
         POSTGRES_USER: nextcloud
         POSTGRES_PASSWORD: "{{secret "db_password"}}"
+        REDIS_HOST: redis
+        REDIS_HOST_PASSWORD: "{{secret "redis_password"}}"
         NEXTCLOUD_ADMIN_USER: "{{.AdminUser}}"
         NEXTCLOUD_ADMIN_PASSWORD: "{{secret "admin_password"}}"
         NEXTCLOUD_TRUSTED_DOMAINS: "{{.Domain}}"
@@ -37,3 +45,28 @@ compose: |
         TZ: "{{.TimeZone}}"
       volumes: ["{{.Data}}/html:/var/www/html"]
       restart: unless-stopped
+    # Nextcloud's background jobs (clean-ups, previews, notifications), every 5 minutes.
+    cron:
+      image: nextcloud:stable-apache
+      entrypoint: /cron.sh
+      depends_on: [app]
+      extra_hosts: ["{{.Domain}}:host-gateway"]
+      environment: *env
+      volumes: ["{{.Data}}/html:/var/www/html"]
+      restart: unless-stopped
+afterInstall:
+  - service: app
+    user: www-data
+    run: [php, occ, background:cron]
+  - service: app
+    user: www-data
+    run: [php, occ, config:system:set, maintenance_window_start, --type=integer, --value=1]
+  # The first round of background jobs now, rather than in up to 5 minutes.
+  - service: app
+    user: www-data
+    run: [php, -f, /var/www/html/cron.php]
+  # New file types Nextcloud knows about: quick on a new install, slow on a big one, so only now.
+  - service: app
+    user: www-data
+    run: [php, occ, maintenance:repair, --include-expensive]
+    installOnly: true

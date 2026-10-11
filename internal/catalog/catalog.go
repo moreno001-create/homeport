@@ -39,6 +39,18 @@ type App struct {
 	// Notes are shown after installing (first sign-in, where the admin password is, and so on).
 	Notes   string `yaml:"notes"`
 	Compose string `yaml:"compose"`
+	// AfterInstall runs inside the app once it's up (after installs and updates). Apps often finish setting
+	// themselves up after their first start, so each step is retried for a few minutes until it works.
+	AfterInstall []Step `yaml:"afterInstall"`
+}
+
+// A Step is a command run in one of the app's containers.
+type Step struct {
+	Service string   `yaml:"service"`
+	User    string   `yaml:"user"`
+	Run     []string `yaml:"run"`
+	// InstallOnly: run it on the first install, not after updates (for steps that are slow on a big install).
+	InstallOnly bool `yaml:"installOnly"`
 }
 
 // Vars fill in a manifest's compose template.

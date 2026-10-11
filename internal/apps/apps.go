@@ -3,6 +3,7 @@
 package apps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -155,6 +156,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 			return undo(err)
 		}
 	}
+	m.afterInstall(ctx, entry, app.ID, true, log)
 	fmt.Fprintf(log, "Done: %s is at https://%s\n", entry.Name, app.Domain)
 	if entry.Notes != "" {
 		fmt.Fprintf(log, "\n%s\n", strings.TrimSpace(entry.Notes))
@@ -188,7 +190,29 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if entry, ok := catalog.Get(app.Catalog); ok {
+	entry, known := catalog.Get(app.Catalog)
+	if known {
+		// A newer manifest may need secrets this install doesn't have yet (a new Redis password, say).
+		var added bool
+		for _, name := range entry.Secrets {
+			if app.Secrets[name] == "" {
+				if app.Secrets == nil {
+					app.Secrets = map[string]string{}
+				}
+				app.Secrets[name], added = auth.NewSecret(32), true
+			}
+		}
+		if added {
+			err := m.Store.Update(func(d *state.Data) error {
+				if a, ok := d.App(id); ok {
+					a.Secrets = app.Secrets
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
 		// The manifest may have changed with a new Homeport: write the compose file again from it.
 		if err := m.writeCompose(entry, app, installer); err != nil {
 			return err
@@ -199,6 +223,9 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 	}
 	if err := m.compose(ctx, id, log, "up", "--detach", "--remove-orphans"); err != nil {
 		return fmt.Errorf("restarting the app failed: %w", err)
+	}
+	if known {
+		m.afterInstall(ctx, entry, id, false, log)
 	}
 	return m.Store.Update(func(d *state.Data) error {
 		if a, ok := d.App(id); ok {
@@ -236,6 +263,44 @@ func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writ
 	}
 	fmt.Fprintf(log, "Its data is kept in %s\n", m.dir(id))
 	return nil
+}
+
+// How long an after-install step may keep failing (the app still starting up) before it's given up on.
+var stepPatience, stepRetry = 10 * time.Minute, 5 * time.Second
+
+// afterInstall runs the manifest's steps in the running app. A step that never works is reported, not fatal: the app
+// is installed and running, and the step can be run by hand.
+func (m *Manager) afterInstall(ctx context.Context, entry catalog.App, id string, firstInstall bool, log io.Writer) {
+	for _, step := range entry.AfterInstall {
+		if step.InstallOnly && !firstInstall {
+			continue
+		}
+		args := []string{"exec", "-T"}
+		if step.User != "" {
+			args = append(args, "--user", step.User)
+		}
+		args = append(append(args, step.Service), step.Run...)
+		deadline := time.Now().Add(stepPatience)
+		for attempt := 1; ; attempt++ {
+			var out bytes.Buffer
+			err := m.compose(ctx, id, &out, args...)
+			if err == nil {
+				log.Write(out.Bytes())
+				break
+			}
+			if time.Now().After(deadline) || ctx.Err() != nil {
+				fmt.Fprintf(log, "%sThis setup step didn't work (%v); the app is running, but you may want to run it by hand.\n", out.String(), err)
+				break
+			}
+			if attempt == 1 {
+				fmt.Fprintf(log, "Waiting for %s to finish starting up…\n", entry.Name)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(stepRetry):
+			}
+		}
+	}
 }
 
 // SetAccess changes who may open an app.

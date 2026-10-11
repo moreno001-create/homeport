@@ -60,6 +60,8 @@ func writeStripIdentity(b *strings.Builder) {
 	for _, h := range identityHeaders {
 		fmt.Fprintf(b, "\trequest_header -%s\n", h)
 	}
+	// Browsers should only ever use HTTPS here (unless the app sets its own policy).
+	b.WriteString("\theader ?Strict-Transport-Security \"max-age=31536000\"\n")
 }
 
 // Caddy owns /etc/caddy/Caddyfile; Homeport replaces it and reloads Caddy.
