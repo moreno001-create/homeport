@@ -64,15 +64,32 @@ type Access struct {
 }
 
 type App struct {
-	ID        string            `json:"id"`        // instance id, also the folder name (e.g. "nextcloud", "nextcloud-2")
-	Catalog   string            `json:"catalog"`   // which catalog entry it was installed from
-	Name      string            `json:"name"`      // shown in the portal
-	Domain    string            `json:"domain"`    // where it's served
-	Port      int               `json:"port"`      // its web port on 127.0.0.1
+	ID        string            `json:"id"`      // instance id, also the folder name (e.g. "nextcloud", "nextcloud-2")
+	Catalog   string            `json:"catalog"` // which catalog entry it was installed from
+	Name      string            `json:"name"`    // shown in the portal
+	Domain    string            `json:"domain"`  // where it's served
+	Port      int               `json:"port"`    // its web port on 127.0.0.1
 	Access    Access            `json:"access"`
 	Secrets   map[string]string `json:"secrets,omitempty"`
 	Installed time.Time         `json:"installed"`
 	Updated   time.Time         `json:"updated,omitempty"`
+	// OIDC is set for apps that sign people in with Homeport over OpenID Connect (client id = app id; the client
+	// secret is Secrets["oidc_client_secret"]).
+	OIDC *OIDCClient `json:"oidc,omitempty"`
+}
+
+type OIDCClient struct {
+	RedirectURIs []string `json:"redirectUris"`
+}
+
+// RefreshToken lets an app renew a sign-in without the person. Only its hash is stored.
+type RefreshToken struct {
+	Hash     string    `json:"hash"`
+	User     string    `json:"user"`
+	Client   string    `json:"client"`
+	Scope    string    `json:"scope"`
+	AuthTime time.Time `json:"authTime"`
+	Expires  time.Time `json:"expires"`
 }
 
 // Session is a signed-in browser. Only a hash of its token is stored.
@@ -86,11 +103,12 @@ type Session struct {
 }
 
 type data struct {
-	Settings Settings  `json:"settings"`
-	Users    []User    `json:"users"`
-	Domains  []Domain  `json:"domains"`
-	Apps     []App     `json:"apps"`
-	Sessions []Session `json:"sessions"`
+	Settings Settings       `json:"settings"`
+	Users    []User         `json:"users"`
+	Domains  []Domain       `json:"domains"`
+	Apps     []App          `json:"apps"`
+	Sessions []Session      `json:"sessions"`
+	Refresh  []RefreshToken `json:"refresh,omitempty"`
 }
 
 // Store is the server's state, safe for use from many goroutines.
@@ -180,6 +198,7 @@ func (v *Data) DeleteUser(name string) bool {
 			v.d.Users = append(v.d.Users[:i], v.d.Users[i+1:]...)
 			// Signed out everywhere.
 			v.d.Sessions = filter(v.d.Sessions, func(s Session) bool { return s.User != name })
+			v.d.Refresh = filter(v.d.Refresh, func(r RefreshToken) bool { return r.User != name })
 			return true
 		}
 	}
@@ -235,6 +254,7 @@ func (v *Data) AddApp(a App) { v.d.Apps = append(v.d.Apps, a) }
 func (v *Data) DeleteApp(id string) bool {
 	n := len(v.d.Apps)
 	v.d.Apps = filter(v.d.Apps, func(a App) bool { return a.ID != id })
+	v.DeleteRefreshOfClient(id)
 	return len(v.d.Apps) != n
 }
 
@@ -268,9 +288,32 @@ func (v *Data) DeleteSession(tokenHash string) {
 	v.d.Sessions = filter(v.d.Sessions, func(s Session) bool { return s.TokenHash != tokenHash && s.Parent != tokenHash })
 }
 
-// DeleteSessionsOf signs a user out of every browser (after a password change, say).
+// DeleteSessionsOf signs a user out of every browser and app (after a password change, say).
 func (v *Data) DeleteSessionsOf(user string) {
 	v.d.Sessions = filter(v.d.Sessions, func(s Session) bool { return s.User != user })
+	v.d.Refresh = filter(v.d.Refresh, func(r RefreshToken) bool { return r.User != user })
+}
+
+func (v *Data) AddRefresh(r RefreshToken) {
+	now := time.Now()
+	v.d.Refresh = filter(v.d.Refresh, func(x RefreshToken) bool { return x.Expires.After(now) })
+	v.d.Refresh = append(v.d.Refresh, r)
+}
+
+// TakeRefresh uses up a refresh token (each one works once; a new one is issued with it).
+func (v *Data) TakeRefresh(hash string) (RefreshToken, bool) {
+	for i, r := range v.d.Refresh {
+		if r.Hash == hash {
+			v.d.Refresh = append(v.d.Refresh[:i], v.d.Refresh[i+1:]...)
+			return r, r.Expires.After(time.Now())
+		}
+	}
+	return RefreshToken{}, false
+}
+
+// DeleteRefreshOfClient forgets an app's refresh tokens (it was removed).
+func (v *Data) DeleteRefreshOfClient(client string) {
+	v.d.Refresh = filter(v.d.Refresh, func(r RefreshToken) bool { return r.Client != client })
 }
 
 func filter[T any](in []T, keep func(T) bool) []T {

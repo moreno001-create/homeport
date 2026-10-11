@@ -5,19 +5,36 @@ category: Security
 website: https://github.com/dani-garcia/vaultwarden
 signIn: own
 secrets: [admin_token]
+oidc:
+  redirectPaths: [/identity/connect/oidc-signin]
 notes: |
-  Sign-ups are closed. Invite people from the admin page at /admin, using the admin token in this app's secrets.
-  The Bitwarden apps connect straight to this address, so it stays public; Vaultwarden's own accounts protect it.
+  People sign in with their Homeport account ("Use single sign-on", identifier "homeport"); it needs an email address.
+  Signing in the first time makes their vault: anyone whose groups may open Vaultwarden can have one.
+  They still choose a master password, which encrypts their vault; Homeport never sees it.
+  The admin page is at /admin, with the admin token in this app's secrets. The Bitwarden apps connect straight to
+  this address, so it stays public.
 compose: |
   services:
     app:
       image: vaultwarden/server:latest
       ports: ["127.0.0.1:{{.Port}}:80"]
+      extra_hosts: ["{{.MainDomain}}:host-gateway"]
       environment:
         DOMAIN: "https://{{.Domain}}"
         SIGNUPS_ALLOWED: "false"
         INVITATIONS_ALLOWED: "true"
         ADMIN_TOKEN: "{{secret "admin_token"}}"
+        SSO_ENABLED: "true"
+        SSO_ONLY: "false"
+        SSO_AUTHORITY: "{{.Issuer}}"
+        SSO_CLIENT_ID: "{{.ClientID}}"
+        SSO_CLIENT_SECRET: "{{secret "oidc_client_secret"}}"
+        SSO_SCOPES: "email profile"
+        SSO_PKCE: "true"
+        SSO_SIGNUPS_MATCH_EMAIL: "true"
+        SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
         TZ: "{{.TimeZone}}"
-      volumes: ["{{.Data}}/data:/data"]
+      volumes:
+        - "{{.Data}}/data:/data"
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
       restart: unless-stopped

@@ -52,7 +52,7 @@ func newRig(t *testing.T) *rig {
 	})
 	fr := &fakeRunner{}
 	m := &apps.Manager{Store: store, Root: filepath.Join(dir, "apps"), Runner: fr, Apply: func(context.Context) error { return nil }}
-	s := &Server{Store: store, Apps: m, Version: "test", ApplyProxy: func(context.Context) error { return nil }}
+	s := &Server{Store: store, Apps: m, Version: "test", ApplyProxy: func(context.Context) error { return nil }, Signer: NewTestSigner()}
 	return &rig{t: t, srv: s, h: s.Handler(), runner: fr}
 }
 

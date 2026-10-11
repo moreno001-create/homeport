@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -34,14 +35,16 @@ type Manager struct {
 	TimeZone string
 	// Apply rewrites the proxy configuration after a change.
 	Apply func(ctx context.Context) error
+	// Where the system's trusted certificates and Caddy's own root (test servers) are; defaults for Ubuntu.
+	SystemCA, CaddyRoot string
 
 	mu sync.Mutex // one install, update or removal at a time
 }
 
 type InstallRequest struct {
-	Catalog string       `json:"catalog"`
-	ID      string       `json:"id,omitempty"` // defaults to the catalog id (with -2, -3… if taken)
-	Domain  string       `json:"domain"`
+	Catalog string        `json:"catalog"`
+	ID      string        `json:"id,omitempty"` // defaults to the catalog id (with -2, -3… if taken)
+	Domain  string        `json:"domain"`
 	Access  *state.Access `json:"access,omitempty"` // defaults by the app's sign-in style
 }
 
@@ -51,8 +54,25 @@ func project(id string) string { return "hp-" + id }
 
 func (m *Manager) compose(ctx context.Context, id string, log io.Writer, args ...string) error {
 	full := append([]string{"compose", "-p", project(id), "-f", "compose.yaml"}, args...)
-	fmt.Fprintf(log, "$ docker %s\n", strings.Join(full, " "))
+	fmt.Fprintf(log, "$ docker %s\n", m.redact(id, strings.Join(full, " ")))
 	return m.Runner.Stream(ctx, m.dir(id), log, "docker", full...)
+}
+
+// redact hides the app's secrets in text that goes into logs (commands can carry them, like an OIDC client secret).
+func (m *Manager) redact(id, text string) string {
+	if m.Store == nil {
+		return text
+	}
+	m.Store.Read(func(d *state.Data) {
+		if a, ok := d.App(id); ok {
+			for _, v := range a.Secrets {
+				if len(v) >= 8 {
+					text = strings.ReplaceAll(text, v, "••••••")
+				}
+			}
+		}
+	})
+	return text
 }
 
 // Install sets up a new app from the catalog and starts it. installer is the admin doing it (some apps make them
@@ -121,11 +141,11 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 			return errors.New("no free ports left for apps")
 		}
 		secrets := map[string]string{}
-		for _, name := range entry.Secrets {
+		for _, name := range entry.AllSecrets() {
 			secrets[name] = auth.NewSecret(32)
 		}
 		app = state.App{ID: id, Catalog: entry.ID, Name: entry.Name, Domain: domain, Port: port, Access: access,
-			Secrets: secrets, Installed: time.Now()}
+			Secrets: secrets, Installed: time.Now(), OIDC: oidcClient(entry, domain)}
 		d.AddApp(app)
 		return nil
 	})
@@ -156,7 +176,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 			return undo(err)
 		}
 	}
-	m.afterInstall(ctx, entry, app.ID, true, log)
+	m.afterInstall(ctx, entry, app, installer, true, log)
 	fmt.Fprintf(log, "Done: %s is at https://%s\n", entry.Name, app.Domain)
 	if entry.Notes != "" {
 		fmt.Fprintf(log, "\n%s\n", strings.TrimSpace(entry.Notes))
@@ -164,17 +184,74 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 	return app, nil
 }
 
+// oidcClient is the OIDC registration an app gets from its manifest, on its domain.
+func oidcClient(entry catalog.App, domain string) *state.OIDCClient {
+	if entry.OIDC == nil {
+		return nil
+	}
+	c := &state.OIDCClient{}
+	for _, p := range entry.OIDC.RedirectPaths {
+		c.RedirectURIs = append(c.RedirectURIs, "https://"+domain+p)
+	}
+	return c
+}
+
+// vars are the values a manifest's templates are filled with.
+func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
+	var st state.Settings
+	m.Store.Read(func(d *state.Data) { st = *d.Settings() })
+	tz := m.TimeZone
+	if tz == "" {
+		tz = "UTC"
+	}
+	home := filepath.Dir(m.Root)
+	return catalog.Vars{ID: app.ID, Domain: app.Domain, Port: app.Port, Data: filepath.Join(m.dir(app.ID), "data"),
+		Secrets: app.Secrets, AdminUser: installer.Name, AdminEmail: installer.Email, TimeZone: tz,
+		MainDomain: st.MainDomain, Issuer: "https://" + st.MainDomain, ClientID: app.ID,
+		CABundle: filepath.Join(home, "ca-bundle.crt"), CALocal: filepath.Join(home, "ca-local.crt"),
+		InternalTLS: st.TLS == state.TLSInternal}
+}
+
+// writeCA puts the certificates apps should trust where they can mount them: the system's, plus Caddy's own root on
+// a server using Caddy's certificates (so apps can reach Homeport over HTTPS there too).
+func (m *Manager) writeCA(v catalog.Vars) error {
+	sys := m.SystemCA
+	if sys == "" {
+		sys = "/etc/ssl/certs/ca-certificates.crt"
+	}
+	root := m.CaddyRoot
+	if root == "" {
+		root = "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt"
+	}
+	bundle, _ := os.ReadFile(sys)
+	var local []byte
+	if v.InternalTLS {
+		local, _ = os.ReadFile(root)
+	}
+	if len(local) > 0 {
+		bundle = append(append(bundle, '\n'), local...)
+	}
+	for path, b := range map[string][]byte{v.CABundle: bundle, v.CALocal: local} {
+		if err := os.WriteFile(path, b, 0o644); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, 0o644); err != nil { // readable by the apps' own users, despite the service's umask
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Manager) writeCompose(entry catalog.App, app state.App, installer state.User) error {
 	dir := m.dir(app.ID)
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o750); err != nil {
 		return err
 	}
-	tz := m.TimeZone
-	if tz == "" {
-		tz = "UTC"
+	v := m.vars(app, installer)
+	if err := m.writeCA(v); err != nil {
+		return err
 	}
-	text, err := entry.Render(catalog.Vars{ID: app.ID, Domain: app.Domain, Port: app.Port, Data: filepath.Join(dir, "data"),
-		Secrets: app.Secrets, AdminUser: installer.Name, AdminEmail: installer.Email, TimeZone: tz})
+	text, err := entry.Render(v)
 	if err != nil {
 		return err
 	}
@@ -192,20 +269,24 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 	}
 	entry, known := catalog.Get(app.Catalog)
 	if known {
-		// A newer manifest may need secrets this install doesn't have yet (a new Redis password, say).
-		var added bool
-		for _, name := range entry.Secrets {
+		// A newer manifest may need secrets this install doesn't have yet (a new Redis password, say), or sign in
+		// with Homeport now.
+		var changed bool
+		for _, name := range entry.AllSecrets() {
 			if app.Secrets[name] == "" {
 				if app.Secrets == nil {
 					app.Secrets = map[string]string{}
 				}
-				app.Secrets[name], added = auth.NewSecret(32), true
+				app.Secrets[name], changed = auth.NewSecret(32), true
 			}
 		}
-		if added {
+		if c := oidcClient(entry, app.Domain); (c == nil) != (app.OIDC == nil) || (c != nil && !slices.Equal(c.RedirectURIs, app.OIDC.RedirectURIs)) {
+			app.OIDC, changed = c, true
+		}
+		if changed {
 			err := m.Store.Update(func(d *state.Data) error {
 				if a, ok := d.App(id); ok {
-					a.Secrets = app.Secrets
+					a.Secrets, a.OIDC = app.Secrets, app.OIDC
 				}
 				return nil
 			})
@@ -225,7 +306,7 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 		return fmt.Errorf("restarting the app failed: %w", err)
 	}
 	if known {
-		m.afterInstall(ctx, entry, id, false, log)
+		m.afterInstall(ctx, entry, app, installer, false, log)
 	}
 	return m.Store.Update(func(d *state.Data) error {
 		if a, ok := d.App(id); ok {
@@ -270,16 +351,23 @@ var stepPatience, stepRetry = 10 * time.Minute, 5 * time.Second
 
 // afterInstall runs the manifest's steps in the running app. A step that never works is reported, not fatal: the app
 // is installed and running, and the step can be run by hand.
-func (m *Manager) afterInstall(ctx context.Context, entry catalog.App, id string, firstInstall bool, log io.Writer) {
+func (m *Manager) afterInstall(ctx context.Context, entry catalog.App, app state.App, installer state.User, firstInstall bool, log io.Writer) {
+	id := app.ID
+	v := m.vars(app, installer)
 	for _, step := range entry.AfterInstall {
 		if step.InstallOnly && !firstInstall {
+			continue
+		}
+		run, err := entry.RenderStep(step, v)
+		if err != nil {
+			fmt.Fprintf(log, "A setup step couldn't be prepared: %v\n", err)
 			continue
 		}
 		args := []string{"exec", "-T"}
 		if step.User != "" {
 			args = append(args, "--user", step.User)
 		}
-		args = append(append(args, step.Service), step.Run...)
+		args = append(append(args, step.Service), run...)
 		deadline := time.Now().Add(stepPatience)
 		for attempt := 1; ; attempt++ {
 			var out bytes.Buffer

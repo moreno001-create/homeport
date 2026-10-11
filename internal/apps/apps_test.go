@@ -19,7 +19,9 @@ type slowStart struct {
 	calls    []string
 }
 
-func (s *slowStart) Output(ctx context.Context, dir, name string, args ...string) (string, error) { return "", nil }
+func (s *slowStart) Output(ctx context.Context, dir, name string, args ...string) (string, error) {
+	return "", nil
+}
 
 func (s *slowStart) Stream(ctx context.Context, dir string, w io.Writer, name string, args ...string) error {
 	line := strings.Join(args, " ")
@@ -38,15 +40,35 @@ func (s *slowStart) Stream(ctx context.Context, dir string, w io.Writer, name st
 func TestAfterInstallWaitsForTheApp(t *testing.T) {
 	stepRetry = time.Millisecond
 	r := &slowStart{failures: 3}
-	m := &Manager{Root: t.TempDir(), Runner: r}
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	m := &Manager{Store: store, Root: t.TempDir(), Runner: r}
 	entry := catalog.App{ID: "x", Name: "X", AfterInstall: []catalog.Step{{Service: "app", User: "www-data", Run: []string{"php", "occ", "background:cron"}}}}
 	var log bytes.Buffer
-	m.afterInstall(context.Background(), entry, "x", true, &log)
+	m.afterInstall(context.Background(), entry, state.App{ID: "x"}, state.User{}, true, &log)
 	if !strings.Contains(log.String(), "ok") || strings.Contains(log.String(), "didn't work") {
 		t.Fatalf("the step should succeed after the app finishes starting:\n%s", log.String())
 	}
 	if !strings.Contains(r.calls[len(r.calls)-1], "exec -T --user www-data app php occ background:cron") {
 		t.Fatalf("unexpected command: %s", r.calls[len(r.calls)-1])
+	}
+}
+
+func TestSecretsStayOutOfLogs(t *testing.T) {
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	_ = store.Update(func(d *state.Data) error {
+		d.AddApp(state.App{ID: "x", Secrets: map[string]string{"oidc_client_secret": "Sup3rS3cretValue"}})
+		return nil
+	})
+	r := &slowStart{}
+	m := &Manager{Store: store, Root: t.TempDir(), Runner: r}
+	entry := catalog.App{ID: "x", Name: "X", AfterInstall: []catalog.Step{{Service: "app", Run: []string{"configure", `--secret={{secret "oidc_client_secret"}}`}}}}
+	var log bytes.Buffer
+	m.afterInstall(context.Background(), entry, state.App{ID: "x", Secrets: map[string]string{"oidc_client_secret": "Sup3rS3cretValue"}}, state.User{}, true, &log)
+	if strings.Contains(log.String(), "Sup3rS3cretValue") || !strings.Contains(log.String(), "--secret=••••••") {
+		t.Fatalf("the secret must be hidden in the log:\n%s", log.String())
+	}
+	if !strings.Contains(r.calls[0], "--secret=Sup3rS3cretValue") {
+		t.Fatalf("but the command itself must get it: %s", r.calls[0])
 	}
 }
 

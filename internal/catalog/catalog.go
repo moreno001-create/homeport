@@ -42,6 +42,22 @@ type App struct {
 	// AfterInstall runs inside the app once it's up (after installs and updates). Apps often finish setting
 	// themselves up after their first start, so each step is retried for a few minutes until it works.
 	AfterInstall []Step `yaml:"afterInstall"`
+	// OIDC: the app signs people in with Homeport over OpenID Connect. Installing registers it as a client
+	// (client id = its id, secret "oidc_client_secret" made for it).
+	OIDC *OIDC `yaml:"oidc"`
+}
+
+type OIDC struct {
+	// RedirectPaths are where the app receives the sign-in on its own domain, e.g. /apps/user_oidc/code.
+	RedirectPaths []string `yaml:"redirectPaths"`
+}
+
+// AllSecrets is the manifest's secrets plus the OIDC client secret if it uses OIDC.
+func (a App) AllSecrets() []string {
+	if a.OIDC != nil {
+		return append(append([]string(nil), a.Secrets...), "oidc_client_secret")
+	}
+	return a.Secrets
 }
 
 // A Step is a command run in one of the app's containers.
@@ -63,6 +79,14 @@ type Vars struct {
 	AdminUser  string            // the admin who installed it
 	AdminEmail string
 	TimeZone   string
+	MainDomain string // where the portal and the OIDC provider are
+	Issuer     string // https://<main domain>
+	ClientID   string // the app's OIDC client id
+	// CABundle is the certificates apps should trust (the system's, plus Caddy's own on test servers), to mount at
+	// /etc/ssl/certs/ca-certificates.crt. CALocal is Caddy's own root alone (empty with Let's Encrypt).
+	CABundle    string
+	CALocal     string
+	InternalTLS bool
 }
 
 // All lists the catalog, sorted by name.
@@ -107,8 +131,7 @@ func Get(id string) (App, bool) {
 	return App{}, false
 }
 
-// Render fills in the compose template. Unknown secrets are an error, so a typo can't ship an empty password.
-func (a App) Render(v Vars) (string, error) {
+func (a App) fill(text string, v Vars) (string, error) {
 	t, err := template.New(a.ID).Option("missingkey=error").Funcs(template.FuncMap{
 		"secret": func(name string) (string, error) {
 			s, ok := v.Secrets[name]
@@ -117,7 +140,7 @@ func (a App) Render(v Vars) (string, error) {
 			}
 			return s, nil
 		},
-	}).Parse(a.Compose)
+	}).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", a.ID, err)
 	}
@@ -125,6 +148,29 @@ func (a App) Render(v Vars) (string, error) {
 	if err := t.Execute(&buf, v); err != nil {
 		return "", fmt.Errorf("%s: %w", a.ID, err)
 	}
+	return buf.String(), nil
+}
+
+// RenderStep fills in an after-install step's command.
+func (a App) RenderStep(s Step, v Vars) ([]string, error) {
+	out := make([]string, len(s.Run))
+	for i, arg := range s.Run {
+		x, err := a.fill(arg, v)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = x
+	}
+	return out, nil
+}
+
+// Render fills in the compose template. Unknown secrets are an error, so a typo can't ship an empty password.
+func (a App) Render(v Vars) (string, error) {
+	text, err := a.fill(a.Compose, v)
+	if err != nil {
+		return "", err
+	}
+	buf := bytes.NewBufferString(text)
 	// Must be valid YAML with at least one service.
 	var parsed struct {
 		Services map[string]any `yaml:"services"`

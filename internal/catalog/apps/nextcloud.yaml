@@ -5,9 +5,12 @@ category: Files
 website: https://nextcloud.com
 signIn: own
 secrets: [db_password, admin_password, redis_password]
+oidc:
+  redirectPaths: [/apps/user_oidc/code, /index.php/apps/user_oidc/code]
 notes: |
-  Sign in as the admin who installed it, with the admin password in this app's secrets, then change it.
-  The sync apps connect straight to this address, so it stays public; Nextcloud's own accounts protect it.
+  Everyone signs in with their Homeport account ("Log in with Homeport"); their Nextcloud account is made the first time.
+  Nextcloud's own administrator is "admin", with the admin password in this app's secrets.
+  The sync apps connect straight to this address, so it stays public; Nextcloud's own sign-in protects it.
 compose: |
   services:
     db:
@@ -27,7 +30,7 @@ compose: |
       depends_on: [db, redis]
       ports: ["127.0.0.1:{{.Port}}:80"]
       # Its own address leads back through this server's Caddy (home routers often can't loop back to a public address).
-      extra_hosts: ["{{.Domain}}:host-gateway"]
+      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
       environment: &env
         POSTGRES_HOST: db
         POSTGRES_DB: nextcloud
@@ -35,7 +38,7 @@ compose: |
         POSTGRES_PASSWORD: "{{secret "db_password"}}"
         REDIS_HOST: redis
         REDIS_HOST_PASSWORD: "{{secret "redis_password"}}"
-        NEXTCLOUD_ADMIN_USER: "{{.AdminUser}}"
+        NEXTCLOUD_ADMIN_USER: admin
         NEXTCLOUD_ADMIN_PASSWORD: "{{secret "admin_password"}}"
         NEXTCLOUD_TRUSTED_DOMAINS: "{{.Domain}}"
         TRUSTED_PROXIES: "172.16.0.0/12 192.168.0.0/16 10.0.0.0/8"
@@ -43,16 +46,21 @@ compose: |
         OVERWRITEHOST: "{{.Domain}}"
         PHP_UPLOAD_LIMIT: 16G
         TZ: "{{.TimeZone}}"
-      volumes: ["{{.Data}}/html:/var/www/html"]
+      volumes:
+        - "{{.Data}}/html:/var/www/html"
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
+        - "{{.CALocal}}:/etc/homeport/ca-local.crt:ro"
       restart: unless-stopped
     # Nextcloud's background jobs (clean-ups, previews, notifications), every 5 minutes.
     cron:
       image: nextcloud:stable-apache
       entrypoint: /cron.sh
       depends_on: [app]
-      extra_hosts: ["{{.Domain}}:host-gateway"]
+      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
       environment: *env
-      volumes: ["{{.Data}}/html:/var/www/html"]
+      volumes:
+        - "{{.Data}}/html:/var/www/html"
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
       restart: unless-stopped
 afterInstall:
   - service: app
@@ -65,6 +73,27 @@ afterInstall:
   - service: app
     user: www-data
     run: [php, -f, /var/www/html/cron.php]
+  # Sign in with Homeport (OpenID Connect). Groups come along, so Nextcloud sharing can use them.
+  - service: app
+    user: www-data
+    run: [sh, -c, "php occ app:install user_oidc || php occ app:enable user_oidc"]
+  - service: app
+    user: www-data
+    # Nextcloud has its own list of trusted certificates: on a server using Caddy's own, add Caddy's root to it.
+    run: [sh, -c, "if [ -s /etc/homeport/ca-local.crt ]; then php occ security:certificates:import /etc/homeport/ca-local.crt; fi"]
+  - service: app
+    user: www-data
+    # Homeport is reached through this server's own private address, which Nextcloud refuses by default.
+    run: [php, occ, config:system:set, allow_local_remote_servers, --type=boolean, --value=true]
+  - service: app
+    user: www-data
+    run: [php, occ, user_oidc:provider, Homeport, "--clientid={{.ClientID}}", "--clientsecret={{secret \"oidc_client_secret\"}}",
+      "--discoveryuri={{.Issuer}}/.well-known/openid-configuration", "--scope=openid profile email groups",
+      --unique-uid=0, --mapping-uid=preferred_username, --mapping-display-name=name, --mapping-email=email,
+      --group-provisioning=1, --mapping-groups=groups, --send-id-token-hint=1]
+  - service: app
+    user: www-data
+    run: [php, occ, config:app:set, user_oidc, allow_multiple_user_backends, --value=1]
   # New file types Nextcloud knows about: quick on a new install, slow on a big one, so only now.
   - service: app
     user: www-data

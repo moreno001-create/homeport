@@ -8,6 +8,9 @@ Docker and Caddy. (Working name.)
   anyone into an app. Access is per app, by group. Apps that trust it get the user in `Remote-User`,
   `Remote-Name`, `Remote-Email` and `Remote-Groups` (headers a browser sends with those names are removed first).
 - **Domains and HTTPS**: Caddy gets Let's Encrypt certificates for every domain on its own.
+- **Sign in with Homeport (OpenID Connect)**: Homeport is an OIDC provider on the main domain, so apps can use
+  Homeport accounts directly. Nextcloud ("Log in with Homeport", groups included) and Vaultwarden (single sign-on)
+  are set up for it on install. An app only gets people whose groups may open it.
 - **Admin panel** at `https://<main domain>/admin`, and the `homeport` command for the same things over SSH.
 
 ## How it fits together
@@ -54,7 +57,16 @@ orb create ubuntu:resolute homeport-test             # an Ubuntu 26.04 machine i
 ./build.sh && orb run -m homeport-test -u root bash dist/install.sh
 ```
 
+## OpenID Connect
+
+Discovery at `https://<main domain>/.well-known/openid-configuration`; code flow with PKCE, refresh tokens (each
+works once), RS256 tokens signed with `/var/lib/homeport/oidc-signing-key.pem`. Scopes `openid profile email groups`;
+`sub` and `preferred_username` are the user name, `groups` includes `admins` for admins. A manifest opts in with
+`oidc: redirectPaths: [...]`; Homeport registers the app (client id = app id, secret `oidc_client_secret`) and fills in
+`{{.Issuer}}` and `{{.ClientID}}`. Apps reach the main domain through `host-gateway` and trust
+`/var/lib/homeport/ca-bundle.crt` (the system's roots plus Caddy's own on a `--tls internal` server).
+
 ## Not done yet
 
-OIDC and LDAP for apps that can use them, email, backups, apps on a path (`example.com/app`), the YunoHost-style
+LDAP for apps that can't do OIDC, email, backups, apps on a path (`example.com/app`), the YunoHost-style
 diagnosis page, updating Homeport itself from the panel, and more catalog apps.

@@ -33,11 +33,14 @@ type Server struct {
 	Version string
 	// ApplyProxy rewrites Caddy's configuration (after settings or domain changes).
 	ApplyProxy func(ctx context.Context) error
+	// Signer signs OpenID Connect tokens for apps.
+	Signer *Signer
 
 	jobs     jobs
 	mu       sync.Mutex
-	handoffs map[string]handoff        // one-time codes that carry a sign-in to an app's domain
-	bad      map[string][]time.Time    // failed sign-ins by address
+	handoffs map[string]handoff     // one-time codes that carry a sign-in to an app's domain
+	bad      map[string][]time.Time // failed sign-ins by address
+	codes    map[string]authCode    // OIDC authorization codes
 }
 
 // A handoff carries a signed-in portal session to one app domain, once, within a minute.
@@ -61,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sso/continue", s.continueTo)
 	mux.HandleFunc("GET /admin", s.adminPage)
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assets()))
+	s.oidcRoutes(mux)
 	s.api(mux, s.browserAdmin)
 	return securityHeaders(mux)
 }

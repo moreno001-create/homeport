@@ -16,11 +16,27 @@ func TestEveryAppRenders(t *testing.T) {
 	}
 	for _, a := range all {
 		secrets := map[string]string{}
-		for _, s := range a.Secrets {
+		for _, s := range a.AllSecrets() {
 			secrets[s] = "s3cret-" + s
 		}
-		out, err := a.Render(Vars{ID: a.ID, Domain: a.ID + ".example.com", Port: 18000, Data: "/var/lib/homeport/apps/" + a.ID + "/data",
-			Secrets: secrets, AdminUser: "alice", TimeZone: "UTC"})
+		v := Vars{ID: a.ID, Domain: a.ID + ".example.com", Port: 18000, Data: "/var/lib/homeport/apps/" + a.ID + "/data",
+			Secrets: secrets, AdminUser: "alice", TimeZone: "UTC", MainDomain: "home.example.com", Issuer: "https://home.example.com",
+			ClientID: a.ID, CABundle: "/var/lib/homeport/ca-bundle.crt", CALocal: "/var/lib/homeport/ca-local.crt"}
+		for _, step := range a.AfterInstall {
+			run, err := a.RenderStep(step, v)
+			if err != nil {
+				t.Errorf("%s: step %v: %v", a.ID, step.Run, err)
+			}
+			for _, arg := range run {
+				if strings.Contains(arg, "{{") || strings.Contains(arg, "<no value>") {
+					t.Errorf("%s: step argument not filled in: %q", a.ID, arg)
+				}
+			}
+		}
+		if a.OIDC != nil && len(a.OIDC.RedirectPaths) == 0 {
+			t.Errorf("%s: OIDC needs at least one redirect path", a.ID)
+		}
+		out, err := a.Render(v)
 		if err != nil {
 			t.Errorf("%s: %v", a.ID, err)
 			continue

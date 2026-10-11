@@ -120,7 +120,11 @@ func serve() error {
 		return caddy.Apply(ctx, proxy.Caddyfile(st, list))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy}
-	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy}
+	signer, err := server.LoadSigner(filepath.Join(stateDir, "oidc-signing-key.pem"))
+	if err != nil {
+		return fmt.Errorf("OIDC signing key: %w", err)
+	}
+	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
