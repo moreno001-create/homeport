@@ -10,47 +10,149 @@
 #   HOMEPORT_VERSION=v0.3.0 (a release tag; default: the latest)
 # Running it again updates Homeport and leaves the setup alone.
 set -Eeuo pipefail
+shopt -s extglob lastpipe
 
 REPO="moreno001-create/homeport"
 CADDY_REPO="${HOMEPORT_CADDY_REPO:-https://dl.cloudsmith.io/public/caddy/stable}"
 LOG=/var/log/homeport-install.log
 
-step="starting"
-say() { step="$*"; printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; printf 'The whole log is in %s\n' "$LOG" >&2; exit 1; }
-
 [ "$(id -u)" -eq 0 ] || { echo "Run this as root: curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash" >&2; exit 1; }
-# Everything also goes to a log, and a failure says which step it was in.
-# (The terminal's own output is kept as fds 3 and 4, and the installer waits for tee at the end, so the last lines
-# always appear before the command prompt comes back.)
+
+# MARK: Output
+# On a terminal: a progress bar, the command running and its last lines of output. Everything goes to the log in full.
+# (No tee or other helper process: on Ubuntu 26.04, sudo-rs can leave a helper paused after the password questions,
+# and an installer waiting for it never finishes.) Without a terminal, every line is printed as it comes.
 exec 3>&1 4>&2
-exec > >(tee -a "$LOG") 2>&1
-tee_pid=$!
+exec >>"$LOG" 2>&1
 echo "Homeport installer, $(date)"
-trap 'printf "\n\033[31mThe installer stopped during: %s\033[0m\nThe whole log is in %s\n" "$step" "$LOG" >&2' ERR
+
+live=false
+if [ -t 3 ] && [ "${TERM:-dumb}" != dumb ]; then live=true; fi
+TAIL=4          # lines of the running command's output under the bar
+step="starting" # the step being done, its share of the bar and when it began
+from=0 to=0 pct=0 began=$SECONDS
+cmd_shown=""    # the command running
+lines=()        # its last lines of output
+seen=0          # lines of output so far in this step (to move the bar along)
+drawn=0         # lines of the block on screen now
+last_draw=0
+
+term_cols() { local c; c="$(stty size <&3 2>/dev/null)" || c=""; c="${c##* }"; COLS="${c:-80}"; [ "$COLS" -ge 20 ] || COLS=80; }
+COLS=80
+if $live; then term_cols; trap term_cols WINCH; printf '\e[?25l' >&3; fi
+
+# clip VAR TEXT WIDTH: TEXT cut to fit WIDTH columns (long lines would wrap and break the redrawing).
+clip() { local _c="$2"; if [ "${#_c}" -gt "$3" ]; then _c="${_c:0:$3-3}..."; fi; printf -v "$1" '%s' "$_c"; }
+
+# draw [force]: (re)draws the bar and the lines under it, at most ~12 times a second unless forced.
+draw() {
+  if ! $live; then return 0; fi
+  local now=${EPOCHREALTIME/./}
+  if [ "${1:-}" != force ] && [ $((now - last_draw)) -lt 80000 ]; then return 0; fi
+  last_draw=$now
+  local w=$((COLS - 1)) barw=$((COLS - 30)) i fill bar="" out="" s
+  if [ "$barw" -gt 40 ]; then barw=40; fi
+  if [ "$barw" -lt 10 ]; then barw=10; fi
+  fill=$((pct * barw / 100))
+  for ((i = 0; i < barw; i++)); do if [ "$i" -lt "$fill" ]; then bar+="█"; else bar+="░"; fi; done
+  if [ "$drawn" -gt 0 ]; then out+=$'\e['"$drawn"'A'; fi
+  clip s "$step" $((w - barw - 7))
+  out+=$'\r\e[J\e[1m'"$bar"$(printf ' %3d%%' "$pct")$'\e[0m  '"$s"$'\n'
+  if [ -n "$cmd_shown" ]; then clip s "  \$ $cmd_shown" "$w"; else s=""; fi
+  out+=$'\e[36m'"$s"$'\e[0m\n'
+  for ((i = 0; i < TAIL; i++)); do
+    clip s "    ${lines[i]:-}" "$w"
+    out+=$'\e[2m'"$s"$'\e[0m\n'
+  done
+  printf '%s' "$out" >&3
+  drawn=$((TAIL + 2))
+}
+
+# hide: takes the block off the screen, to print above it or ask a question.
+hide() {
+  if $live && [ "$drawn" -gt 0 ]; then printf '\e[%dA\r\e[J' "$drawn" >&3; fi
+  drawn=0
+}
+
+# note TEXT: a line worth seeing, printed above the bar (and into the log).
+note() {
+  echo "$*"
+  if $live; then hide; printf '  %s\n' "$*" >&3; draw force; else printf '%s\n' "$*" >&3; fi
+}
+
+# say FROM TO "what": a new step, filling the bar from FROM% towards TO% as its commands print.
+say() {
+  if $live && [ "$step" != starting ]; then
+    hide; printf '  \e[32mdone\e[0m  %s \e[2m(%ss)\e[0m\n' "$step" $((SECONDS - began)) >&3
+  fi
+  from=$1 to=$2 pct=$1 step=$3 began=$SECONDS cmd_shown="" lines=() seen=0
+  printf '\n==> %s\n' "$step"
+  if $live; then draw force; else printf '\n\033[1m==> %s\033[0m (%d%%)\n' "$step" "$pct" >&3; fi
+}
+
+# run CMD…: runs a command with its output into the log and under the bar. Its input is /dev/null (under curl | bash,
+# the script itself is on stdin), or the file RUN_IN names.
+run() {
+  cmd_shown="$*" lines=()
+  echo "\$ $*"
+  draw force
+  local line rc=0
+  "$@" <"${RUN_IN:-/dev/null}" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
+    line="${line##*$'\r'}"                         # progress meters: only their last state
+    line="${line//$'\e'\[*([0-9;?])[a-zA-Z]/}"    # colours
+    printf '%s\n' "$line"
+    if ! $live; then printf '%s\n' "$line" >&3; fi
+    if [ -n "${line//[[:space:]]/}" ]; then lines+=("$line"); fi
+    if [ "${#lines[@]}" -gt "$TAIL" ]; then lines=("${lines[@]:1}"); fi
+    seen=$((seen + 1))
+    pct=$((from + (to - from) * seen / (seen + 60)))
+    draw
+  done || rc=$?
+  return "$rc"
+}
+
+# failure: the step it stopped in and the last lines of the log, on the terminal.
+reported=false
+failed() {
+  if $reported; then return; fi
+  reported=true
+  hide
+  { printf '\n\033[31mThe installer stopped during: %s\033[0m\n' "$step"
+    printf 'Last lines of the log:\n'; tail -n 15 "$LOG" | sed 's/^/  /'
+    printf 'The whole log is in %s\n' "$LOG"; } >&4
+}
+die() { printf 'Error: %s\n' "$*"; hide; printf '\033[31mError:\033[0m %s\n' "$*" >&4; failed; exit 1; }
+trap failed ERR
 tmp="$(mktemp -d)"
-finish() { rm -rf "$tmp"; exec 1>&3 2>&4; wait "$tee_pid" 2>/dev/null || true; }
-trap finish EXIT
+# (Also for exits the ERR trap doesn't see, like an unset variable.)
+cleanup() { local rc=$?; rm -rf "$tmp"; if [ "$rc" -ne 0 ]; then failed; fi; if $live; then printf '\e[?25h' >&3; fi; }
+trap cleanup EXIT
+
+# show: prints what's on stdin (a heredoc) on the terminal and into the log.
+show() { local m; m="$(cat)"; printf '%s\n' "$m"; printf '%s\n' "$m" >&3; }
+
+if $live; then printf '\n\e[1mHomeport installer\e[0m \e[2m(the whole log: %s)\e[0m\n\n' "$LOG" >&3; fi
 
 # fetch URL FILE WHAT: download, retrying a few times, and say plainly what failed.
 fetch() {
   local code
+  cmd_shown="curl $1"; echo "\$ curl $1"; draw force
   code="$(curl -sSL --retry 3 --retry-delay 2 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)" || code="${code:-no answer}"
   case "$code" in
     2??) return 0 ;;
-    401|403) echo "Couldn't download $3: $1 refused it (HTTP $code). A proxy or filter on this network, or the server limiting this address, can cause that." ;;
-    *) echo "Couldn't download $3 from $1 (HTTP $code)." ;;
+    401|403) note "Couldn't download $3: $1 refused it (HTTP $code). A proxy or filter on this network, or the server limiting this address, can cause that." ;;
+    *) note "Couldn't download $3 from $1 (HTTP $code)." ;;
   esac
   return 1
 }
 
 # apt-get update; if Caddy's repository (from an earlier run) refuses, drop it and use Ubuntu's Caddy.
 apt_update() {
-  apt-get update -q && return 0
+  run apt-get update -q && return 0
   if [ -f /etc/apt/sources.list.d/caddy-stable.list ]; then
-    echo "Caddy's package repository refused the update; removing it (Ubuntu's own Caddy will be used)."
+    note "Caddy's package repository refused the update; removing it (Ubuntu's own Caddy will be used)."
     rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    apt-get update -q && return 0
+    run apt-get update -q && return 0
   fi
   return 1
 }
@@ -58,7 +160,7 @@ apt_update() {
 [ "${ID:-}" = ubuntu ] || die "Homeport is for Ubuntu (this is ${PRETTY_NAME:-unknown})"
 case "${VERSION_ID:-}" in
   26.04) ;;
-  *) echo "Warning: Homeport is made for Ubuntu 26.04 LTS; this is ${PRETTY_NAME}. Continuing anyway." ;;
+  *) note "Warning: Homeport is made for Ubuntu 26.04 LTS; this is ${PRETTY_NAME}. Continuing anyway." ;;
 esac
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
@@ -66,31 +168,31 @@ case "$(uname -m)" in
   *) die "unsupported processor $(uname -m) (Homeport runs on x86-64 and ARM64)" ;;
 esac
 
-say "Installing Docker and the packages Homeport needs"
+say 0 45 "Installing Docker and the packages Homeport needs"
 export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
-apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2
+run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2
 
-say "Installing Caddy"
+say 45 65 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
 caddy_repo() {
   fetch "$CADDY_REPO/gpg.key" "$tmp/caddy.key" "Caddy's signing key" || return 1
-  gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg "$tmp/caddy.key" || return 1
+  run gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg "$tmp/caddy.key" || return 1
   fetch "$CADDY_REPO/debian.deb.txt" "$tmp/caddy.list" "Caddy's package list" || return 1
   cp "$tmp/caddy.list" /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -q || return 1
+  run apt-get update -q || return 1
 }
 if ! command -v caddy >/dev/null || ! caddy version | grep -q -E '^v2\.(8|9|[1-9][0-9])'; then
   if ! caddy_repo; then
-    echo "Using Ubuntu's own (older) Caddy instead of Caddy's repository."
+    note "Using Ubuntu's own (older) Caddy instead of Caddy's repository."
     rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     apt_update || die "apt-get update failed"
   fi
-  apt-get install -y -q caddy
+  run apt-get install -y -q caddy
 fi
-caddy version
+note "Caddy $(caddy version | cut -d' ' -f1)"
 
-say "Installing Homeport"
+say 65 80 "Installing Homeport"
 # A local build is only used when this script is run as a file next to it (curl | bash always downloads).
 here=/nonexistent
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -115,8 +217,9 @@ else
   fi
 fi
 install -m 0755 "$tmp/homeport" /usr/local/bin/homeport
-homeport version
+note "$(homeport version)"
 
+say 80 92 "Starting Homeport"
 cat > /etc/systemd/system/homeport.service <<'UNIT'
 [Unit]
 Description=Homeport (apps, users and domains for this server)
@@ -146,30 +249,34 @@ LockPersonality=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
-systemctl daemon-reload
-systemctl enable --now docker caddy
-systemctl enable homeport
-systemctl restart homeport
+run systemctl daemon-reload
+run systemctl enable --now docker caddy
+run systemctl enable homeport
+run systemctl restart homeport
 
 if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then
-  say "Opening ports 80 and 443 in the firewall"
-  ufw allow 80/tcp && ufw allow 443/tcp
+  note "Opening ports 80 and 443 in the firewall"
+  run ufw allow 80/tcp && run ufw allow 443/tcp
 fi
 
+cmd_shown="waiting for the Homeport service to start"; draw force
 for _ in $(seq 1 40); do [ -S /run/homeport/homeport.sock ] && break; sleep 0.5; done
 [ -S /run/homeport/homeport.sock ] || die "the Homeport service didn't start (see: journalctl -u homeport)"
 
 if ! homeport status | grep -q "Not set up"; then
-  say "Homeport is updated"
-  homeport status
+  say 100 100 "Homeport is updated"
+  hide
+  homeport status | show
   exit 0
 fi
 
 # MARK: First setup (like YunoHost's post-install)
-say "Setting up this server"
+say 92 100 "Setting up this server"
 # A terminal to ask at? (/dev/tty can exist without being usable, e.g. over a non-interactive ssh or in CI.)
 tty_ok=false
 if { exec 5</dev/tty; } 2>/dev/null; then tty_ok=true; exec 5<&-; fi
+# The questions replace the bar until they're answered.
+if $tty_ok; then hide; if $live; then printf '\e[?25h' >&3; fi; fi
 ask() { # ask VAR "question" [default] [secret]
   local var=$1 q=$2 def=${3:-} secret=${4:-} val=""
   if [ -n "${!var:-}" ]; then return 0; fi
@@ -179,11 +286,11 @@ ask() { # ask VAR "question" [default] [secret]
     printf '%s: ' "$q" >/dev/tty; read -r -s val </dev/tty; echo >/dev/tty
   else
     printf '%s%s: ' "$q" "${def:+ [$def]}" >/dev/tty; read -r val </dev/tty
-    printf '%s: %s\n' "$q" "${val:-$def}" >>"$LOG"   # into the log only (never passwords)
+    printf '%s: %s\n' "$q" "${val:-$def}"   # into the log only (never passwords)
   fi
   printf -v "$var" '%s' "${val:-$def}"
 }
-ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v -E '^(172\.(1[6-9]|2[0-9]|3[01])|127)\.' | tr '\n' ' ')"
+ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v -E '^(172\.(1[6-9]|2[0-9]|3[01])|127)\.' | tr '\n' ' ')" || ips=""
 first_ip="${ips%% *}"
 shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
 # With no domain yet, <ip>.sslip.io works on this network with no setup: every device resolves it to this machine.
@@ -197,11 +304,13 @@ ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test ma
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; printf 'Again: ' >/dev/tty; read -r -s p2 </dev/tty; echo >/dev/tty
-  if [ "$HOMEPORT_PASSWORD" != "$p2" ]; then echo "They didn't match; try again."; HOMEPORT_PASSWORD=""; fi
+  if [ "$HOMEPORT_PASSWORD" != "$p2" ]; then echo "They didn't match; try again." >/dev/tty; HOMEPORT_PASSWORD=""; fi
 done
+if $tty_ok && $live; then printf '\e[?25l\n' >&3; draw force; fi
 
 if [ -z "${HOMEPORT_DOMAIN:-}" ] || [ -z "${HOMEPORT_ADMIN:-}" ] || [ -z "${HOMEPORT_PASSWORD:-}" ]; then
-  cat <<MSG
+  hide
+  show <<MSG
 
 Homeport is installed. Finish setting it up with:
 
@@ -212,9 +321,14 @@ MSG
   exit 0
 fi
 
-printf '%s\n' "$HOMEPORT_PASSWORD" | homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
-  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}" >/dev/null
-cat <<MSG
+# The password goes to homeport init on its input, from a file only root can read (never on a command line).
+( umask 077; printf '%s\n' "$HOMEPORT_PASSWORD" > "$tmp/password" )
+RUN_IN="$tmp/password" run homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
+  --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}"
+rm -f "$tmp/password"
+say 100 100 "Done"
+hide
+show <<MSG
 
 $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
 
@@ -226,17 +340,17 @@ $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
   This server:         ${ips:-unknown address}
 MSG
 if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
-  cat <<MSG
+  show <<MSG
 
   Certificates: Caddy's own test certificates, so your browser warns the first time; choose to continue.
 MSG
   case "$HOMEPORT_DOMAIN" in
-    *.sslip.io|*.nip.io) cat <<MSG
+    *.sslip.io|*.nip.io) show <<MSG
   $HOMEPORT_DOMAIN already leads to this machine from every device on this network: nothing to set up.
   Install apps on names under it, like cloud.$HOMEPORT_DOMAIN.
 MSG
     ;;
-    *) cat <<MSG
+    *) show <<MSG
   Until DNS knows $HOMEPORT_DOMAIN, tell the computer you browse from where it is: add this line to its hosts file
   (Mac/Linux: sudo nano /etc/hosts; Windows: C:\Windows\System32\drivers\etc\hosts, as administrator):
 
@@ -247,13 +361,13 @@ MSG
     ;;
   esac
 else
-  cat <<MSG
+  show <<MSG
 
   Certificates: Let's Encrypt. $HOMEPORT_DOMAIN must point (DNS) at this server's public address, and ports 80 and
   443 must reach it; the certificate arrives within a minute of the first visit. Trouble: sudo journalctl -u caddy
 MSG
 fi
-cat <<MSG
+show <<MSG
 
   Next: install apps from the admin panel (Apps), or: sudo homeport app catalog
   Connect an AI agent (opencode, Claude Code…): sudo homeport mcp
