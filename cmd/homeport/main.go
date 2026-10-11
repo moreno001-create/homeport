@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,8 @@ import (
 
 	"homeport/internal/apps"
 	"homeport/internal/assist"
+	"homeport/internal/certs"
+	"homeport/internal/dyndns"
 	"homeport/internal/platform"
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
@@ -109,6 +112,10 @@ func usage() {
 
   homeport domain list | add DOMAIN | remove DOMAIN
   homeport domain main DOMAIN [--tls internal|letsencrypt]   move the portal and admin panel
+  homeport domain free desec|duckdns NAME    a free NAME.dedyn.io or NAME.duckdns.org, kept pointed here
+  homeport domain cert DOMAIN auto|letsencrypt|internal      where its certificate comes from
+  homeport domain cert DOMAIN custom --cert FULLCHAIN.pem --key KEY.pem
+  homeport domain certs                      the certificate each site really has
 
   homeport app catalog
   homeport app list
@@ -148,12 +155,21 @@ func serve() error {
 	applyProxy := func(ctx context.Context) error {
 		var st state.Settings
 		var list []state.App
-		store.Read(func(d *state.Data) { st, list = *d.Settings(), d.Apps() })
+		own := map[string]proxy.SiteTLS{}
+		store.Read(func(d *state.Data) {
+			st, list = *d.Settings(), d.Apps()
+			for _, x := range d.Domains() {
+				if x.Cert != "" {
+					cert, key := certs.Paths(plat.CertDir, x.Name)
+					own[x.Name] = proxy.SiteTLS{Mode: x.Cert, CertFile: cert, KeyFile: key}
+				}
+			}
+		})
 		if st.MainDomain == "" {
 			return nil // not set up yet: leave Caddy alone
 		}
 		writeLoginBanner(st.MainDomain)
-		return caddy.Apply(ctx, proxy.CaddyfileWith(st, list, localAddrs()))
+		return caddy.Apply(ctx, proxy.CaddyfileFor(st, list, localAddrs(), own))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, LocalAddrs: localAddrs}
@@ -166,7 +182,8 @@ func serve() error {
 		Memory: &assist.Memory{Path: filepath.Join(stateDir, "assistant-memory.md")}}
 	chat := &assist.Chat{A: helper, KeyFile: filepath.Join(stateDir, "anthropic-api-key"), UsageFile: filepath.Join(stateDir, "assistant-usage.json")}
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
-		Chat: chat, LocalAddrs: localAddrs}
+		Chat: chat, LocalAddrs: localAddrs, CertDir: plat.CertDir, HTTPSAddr: "127.0.0.1:" + cmp.Or(os.Getenv("HOMEPORT_HTTPS_PORT"), "443"),
+		DynDNS: &dyndns.Updater{Store: store, Dir: filepath.Join(stateDir, "dyndns")}}
 	if plat.Name == "linux" {
 		srv.SetTerminal = func(ctx context.Context, on bool) error { return terminal.Set(ctx, sys, on) }
 	}
@@ -176,6 +193,7 @@ func serve() error {
 	if err := applyProxy(ctx); err != nil {
 		log.Printf("Caddy configuration: %v", err)
 	}
+	go srv.DynDNS.Run(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- web.ListenAndServe() }()
@@ -339,6 +357,18 @@ func readPassword(prompt string) (string, error) {
 	return string(a), nil
 }
 
+// readSecret reads a token without showing it (or a line from stdin when it isn't a terminal).
+func readSecret(prompt string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		return strings.TrimSpace(line), err
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	return strings.TrimSpace(string(b)), err
+}
+
 func groupsFlag(s string) []string {
 	var out []string
 	for _, g := range strings.Split(s, ",") {
@@ -499,8 +529,9 @@ func cmdDomain(args []string) error {
 	switch args[0] {
 	case "list":
 		var ds []struct {
-			Name, App string
-			Main      bool
+			Name, App, Cert string
+			Main, OwnCert   bool
+			DynDNS          *state.DynDNS
 		}
 		if err := call("GET", "/domains", nil, &ds); err != nil {
 			return err
@@ -511,9 +542,97 @@ func cmdDomain(args []string) error {
 			if d.Main {
 				use = "portal and admin panel"
 			}
-			rows = append(rows, []string{d.Name, use})
+			cert := d.Cert
+			if !d.OwnCert {
+				cert += " (server setting)"
+			}
+			free := ""
+			if dd := d.DynDNS; dd != nil {
+				free = dd.Provider + ": " + cmp.Or(strings.Trim(dd.IPv4+" "+dd.IPv6, " "), "not updated yet")
+				if dd.Error != "" {
+					free = dd.Provider + ": " + dd.Error
+				}
+			}
+			rows = append(rows, []string{d.Name, use, cert, free})
 		}
-		table("DOMAIN\tUSED FOR", rows)
+		table("DOMAIN\tUSED FOR\tCERTIFICATE\tFREE DOMAIN", rows)
+		return nil
+	case "free":
+		if len(args) != 3 {
+			return errors.New("usage: homeport domain free desec|duckdns NAME")
+		}
+		where := map[string]string{"desec": "https://desec.io (Token management)", "duckdns": "https://www.duckdns.org (after making NAME there)"}[args[1]]
+		if where == "" {
+			return errors.New(`the provider is "desec" or "duckdns"`)
+		}
+		token, err := readSecret("Token from " + where + ": ")
+		if err != nil {
+			return err
+		}
+		var out map[string]string
+		if err := call("POST", "/domains/free", map[string]string{"provider": args[1], "name": args[2], "token": token}, &out); err != nil {
+			return err
+		}
+		fmt.Printf("%s points here now, and Homeport keeps it that way. Its apps can use subdomains like cloud.%s.\n", out["name"], out["name"])
+		return nil
+	case "cert":
+		fs := flag.NewFlagSet("domain cert", flag.ExitOnError)
+		certFile := fs.String("cert", "", "the certificate with its chain (PEM)")
+		keyFile := fs.String("key", "", "its private key (PEM)")
+		pos := parse(fs, args[1:])
+		if len(pos) != 2 {
+			return errors.New("usage: homeport domain cert DOMAIN auto|letsencrypt|internal|custom [--cert FILE --key FILE]")
+		}
+		body := map[string]string{"mode": pos[1]}
+		if pos[1] == "auto" {
+			body["mode"] = ""
+		}
+		if pos[1] == "custom" {
+			if *certFile == "" || *keyFile == "" {
+				return errors.New("custom needs --cert FULLCHAIN.pem and --key KEY.pem")
+			}
+			c, err := os.ReadFile(*certFile)
+			if err != nil {
+				return err
+			}
+			k, err := os.ReadFile(*keyFile)
+			if err != nil {
+				return err
+			}
+			body["cert"], body["key"] = string(c), string(k)
+		}
+		if err := call("PUT", "/domains/"+pos[0]+"/certificate", body, nil); err != nil {
+			return err
+		}
+		fmt.Println("Done. Caddy is using it now (a new Let's Encrypt certificate can take a minute).")
+		return nil
+	case "certs", "certificates":
+		var cs []struct {
+			Name, Cert string
+			DNS        []string
+			Live       struct {
+				Issuer   string
+				NotAfter time.Time
+				Trusted  bool
+				Error    string
+			}
+		}
+		if err := call("GET", "/certificates", nil, &cs); err != nil {
+			return err
+		}
+		var rows [][]string
+		for _, c := range cs {
+			got := c.Live.Error
+			if got == "" {
+				trust := "trusted"
+				if !c.Live.Trusted {
+					trust = "not trusted by browsers"
+				}
+				got = fmt.Sprintf("%s, until %s, %s", c.Live.Issuer, c.Live.NotAfter.Format("2 Jan 2006"), trust)
+			}
+			rows = append(rows, []string{c.Name, c.Cert, cmp.Or(strings.Join(c.DNS, " "), "no DNS"), got})
+		}
+		table("DOMAIN\tCHOSEN\tDNS\tSERVED", rows)
 		return nil
 	case "add":
 		if len(args) != 2 {

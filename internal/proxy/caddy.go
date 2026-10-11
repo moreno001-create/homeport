@@ -27,6 +27,17 @@ func Caddyfile(s state.Settings, apps []state.App) string { return CaddyfileWith
 // CaddyfileWith also serves the portal and admin panel on this machine's own addresses (localAddrs), with Caddy's
 // own certificates, so they can be reached by IP before DNS is set up.
 func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) string {
+	return CaddyfileFor(s, apps, localAddrs, nil)
+}
+
+// SiteTLS is one domain's certificate, when it doesn't follow the server's setting.
+type SiteTLS struct {
+	Mode              state.CertMode
+	CertFile, KeyFile string // an uploaded certificate (Mode custom)
+}
+
+// CaddyfileFor also gives domains their own certificates (by domain name).
+func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs map[string]SiteTLS) string {
 	var b strings.Builder
 	b.WriteString("# Written by Homeport. Changes here are replaced: use `homeport` or the admin panel instead.\n{\n\tadmin localhost:2019\n")
 	// Other ports, for a test instance beside something else that holds 80 and 443.
@@ -36,16 +47,16 @@ func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) stri
 	if p := os.Getenv("HOMEPORT_HTTPS_PORT"); p != "" {
 		fmt.Fprintf(&b, "\thttps_port %s\n", p)
 	}
-	switch {
-	case s.TLS == state.TLSInternal:
-		b.WriteString("\tlocal_certs\n")
-	case s.ACMEEmail != "":
+	// With Caddy's own certificates for the server, each site says so itself (rather than local_certs for all), so
+	// one domain can still have Let's Encrypt.
+	if s.ACMEEmail != "" {
 		fmt.Fprintf(&b, "\temail %s\n", s.ACMEEmail)
 	}
 	b.WriteString("}\n")
 
 	if s.MainDomain != "" {
 		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
+		writeTLS(&b, s, certs[s.MainDomain])
 		writeHomeport(&b, s)
 		if len(localAddrs) > 0 {
 			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
@@ -58,6 +69,7 @@ func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) stri
 			continue
 		}
 		fmt.Fprintf(&b, "\n# %s (%s)\n%s {\n", a.Name, a.ID, a.Domain)
+		writeTLS(&b, s, certs[a.Domain])
 		writeStripIdentity(&b)
 		// Homeport answers its own sign-in hand-off on every app domain, so sign-in works across unrelated domains.
 		fmt.Fprintf(&b, "\thandle /.homeport/* {\n\t\treverse_proxy %s\n\t}\n", Upstream)
@@ -69,6 +81,23 @@ func CaddyfileWith(s state.Settings, apps []state.App, localAddrs []string) stri
 		fmt.Fprintf(&b, "\t\treverse_proxy 127.0.0.1:%d\n\t}\n}\n", a.Port)
 	}
 	return b.String()
+}
+
+// writeTLS says where a site's certificate comes from; Let's Encrypt is Caddy's own default, so it needs nothing.
+func writeTLS(b *strings.Builder, s state.Settings, t SiteTLS) {
+	mode := t.Mode
+	if mode == "" {
+		mode = state.CertLetsEncrypt
+		if s.TLS == state.TLSInternal {
+			mode = state.CertInternal
+		}
+	}
+	switch mode {
+	case state.CertInternal:
+		b.WriteString("\ttls internal\n")
+	case state.CertCustom:
+		fmt.Fprintf(b, "\ttls %q %q\n", t.CertFile, t.KeyFile)
+	}
 }
 
 // writeHomeport finishes a site for the portal and admin panel, with the web terminal when it's on (admins only; Homeport

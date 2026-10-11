@@ -10,6 +10,7 @@ func current() Platform {
 		StateDir:    "/var/lib/homeport",
 		Socket:      "/run/homeport/homeport.sock",
 		Caddyfile:   "/etc/caddy/Caddyfile",
+		CertDir:     "/etc/caddy/homeport-certs",
 		SystemCA:    "/etc/ssl/certs/ca-certificates.crt",
 		CaddyRoot:   "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt",
 		ReloadCaddy: []string{"systemctl", "reload", "caddy"},

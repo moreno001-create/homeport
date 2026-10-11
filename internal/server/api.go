@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 	"homeport/internal/apps"
 	"homeport/internal/auth"
 	"homeport/internal/catalog"
+	"homeport/internal/certs"
+	"homeport/internal/dyndns"
 	"homeport/internal/state"
 )
 
@@ -62,6 +65,9 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("GET /api/domains", guard(s.listDomains))
 	mux.HandleFunc("POST /api/domains", guard(s.addDomain))
 	mux.HandleFunc("DELETE /api/domains/{name}", guard(s.deleteDomain))
+	mux.HandleFunc("PUT /api/domains/{name}/certificate", guard(s.setCertificate))
+	mux.HandleFunc("POST /api/domains/free", guard(s.freeDomain))
+	mux.HandleFunc("GET /api/certificates", guard(s.listCertificates))
 	mux.HandleFunc("GET /api/catalog", guard(s.listCatalog))
 	mux.HandleFunc("GET /api/apps", guard(s.listApps))
 	mux.HandleFunc("POST /api/apps", guard(s.installApp))
@@ -511,15 +517,19 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
 	type row struct {
-		Name  string    `json:"name"`
-		Main  bool      `json:"main"`
-		App   string    `json:"app,omitempty"`
-		Added time.Time `json:"added"`
+		Name   string         `json:"name"`
+		Main   bool           `json:"main"`
+		App    string         `json:"app,omitempty"`
+		Added  time.Time      `json:"added"`
+		Cert   state.CertMode `json:"cert"` // where its certificate comes from (the server's setting if it has none)
+		Own    bool           `json:"ownCert"`
+		DynDNS *state.DynDNS  `json:"dyndns,omitempty"`
 	}
 	out := []row{}
 	s.Store.Read(func(d *state.Data) {
 		for _, x := range d.Domains() {
-			rw := row{Name: x.Name, Main: x.Name == d.Settings().MainDomain, Added: x.Added}
+			rw := row{Name: x.Name, Main: x.Name == d.Settings().MainDomain, Added: x.Added, Cert: effectiveCert(*d.Settings(), x),
+				Own: x.Cert != "", DynDNS: x.DynDNS}
 			if a, ok := d.AppOn(x.Name); ok {
 				rw.App = a.Name
 			}
@@ -575,7 +585,171 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if s.CertDir != "" {
+		certs.Remove(s.CertDir, name)
+	}
+	if s.DynDNS != nil {
+		s.DynDNS.Forget(name)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// effectiveCert is where a domain's certificate comes from.
+func effectiveCert(st state.Settings, d state.Domain) state.CertMode {
+	if d.Cert != "" {
+		return d.Cert
+	}
+	if st.TLS == state.TLSInternal {
+		return state.CertInternal
+	}
+	return state.CertLetsEncrypt
+}
+
+// setCertificate picks one domain's certificate: "letsencrypt", "internal", "custom" (with the PEM certificate chain
+// and key) or "" (follow the server's setting).
+func (s *Server) setCertificate(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var in struct {
+		Mode state.CertMode `json:"mode"`
+		Cert string         `json:"cert"`
+		Key  string         `json:"key"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	switch in.Mode {
+	case "", state.CertLetsEncrypt, state.CertInternal:
+	case state.CertCustom:
+		if s.CertDir == "" {
+			writeError(w, http.StatusBadRequest, errors.New("uploaded certificates aren't set up on this server"))
+			return
+		}
+		if _, err := certs.Check([]byte(in.Cert), []byte(in.Key), name, time.Now()); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, errors.New(`the certificate is "letsencrypt", "internal", "custom" or "" (the server's setting)`))
+		return
+	}
+	var found bool
+	s.Store.Read(func(d *state.Data) { _, found = d.Domain(name) })
+	if !found {
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s isn't one of the domains", name))
+		return
+	}
+	if in.Mode == state.CertCustom {
+		if err := certs.Save(s.CertDir, name, []byte(in.Cert), []byte(in.Key)); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	var before state.CertMode
+	err := s.Store.Update(func(d *state.Data) error {
+		x, ok := d.Domain(name)
+		if !ok {
+			return state.ErrNotFound
+		}
+		before, x.Cert = x.Cert, in.Mode
+		return nil
+	})
+	if err == nil {
+		if err = s.ApplyProxy(r.Context()); err != nil {
+			// Caddy didn't take it: put the old choice back so the next change doesn't trip on it.
+			s.Store.Update(func(d *state.Data) error {
+				if x, ok := d.Domain(name); ok {
+					x.Cert = before
+				}
+				return nil
+			})
+			s.ApplyProxy(r.Context())
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if in.Mode != state.CertCustom && s.CertDir != "" {
+		certs.Remove(s.CertDir, name)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listCertificates looks at the certificate each served domain (the main one and the apps') really has, the way a
+// browser would, and where its DNS points.
+func (s *Server) listCertificates(w http.ResponseWriter, r *http.Request) {
+	type row struct {
+		Name string         `json:"name"`
+		Cert state.CertMode `json:"cert"`
+		DNS  []string       `json:"dns"` // the addresses its name resolves to
+		Live certs.Status   `json:"live"`
+	}
+	var out []row
+	s.Store.Read(func(d *state.Data) {
+		st := *d.Settings()
+		served := map[string]bool{st.MainDomain: true}
+		for _, a := range d.Apps() {
+			served[a.Domain] = true
+		}
+		for _, x := range d.Domains() {
+			if served[x.Name] {
+				out = append(out, row{Name: x.Name, Cert: effectiveCert(st, x)})
+			}
+		}
+	})
+	addr := s.HTTPSAddr
+	if addr == "" {
+		addr = "127.0.0.1:443"
+	}
+	var wg sync.WaitGroup
+	for i := range out {
+		wg.Add(1)
+		go func(x *row) {
+			defer wg.Done()
+			x.Live = certs.Live(r.Context(), addr, x.Name, nil)
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			x.DNS, _ = net.DefaultResolver.LookupHost(ctx, x.Name)
+			if x.DNS == nil {
+				x.DNS = []string{}
+			}
+		}(&out[i])
+	}
+	wg.Wait()
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if out == nil {
+		out = []row{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// freeDomain sets up a free domain from deSEC (name.dedyn.io) or DuckDNS (name.duckdns.org) with the token from the
+// admin's account there, and keeps it pointed at this server.
+func (s *Server) freeDomain(w http.ResponseWriter, r *http.Request) {
+	if s.DynDNS == nil {
+		writeError(w, http.StatusBadRequest, errors.New("free domains aren't set up on this server"))
+		return
+	}
+	var in struct {
+		Provider string `json:"provider"`
+		Name     string `json:"name"`
+		Token    string `json:"token"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	name, err := dyndns.FullName(in.Provider, in.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.DynDNS.Register(r.Context(), in.Provider, name, in.Token); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"name": name})
 }
 
 // MARK: Apps

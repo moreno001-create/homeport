@@ -38,8 +38,46 @@ func TestCaddyfile(t *testing.T) {
 	if n := strings.Count(c, "request_header -Remote-User"); n != 3 {
 		t.Errorf("identity headers stripped on %d sites, want 3", n)
 	}
-	if !strings.Contains(Caddyfile(state.Settings{MainDomain: "a.test", TLS: state.TLSInternal}, nil), "local_certs") {
+	if !strings.Contains(Caddyfile(state.Settings{MainDomain: "a.test", TLS: state.TLSInternal}, nil), "a.test {\n\ttls internal\n") {
 		t.Error("internal TLS should use Caddy's own certificates")
+	}
+}
+
+func TestCertificatePerDomain(t *testing.T) {
+	s := state.Settings{MainDomain: "home.test", TLS: state.TLSInternal}
+	apps := []state.App{
+		{ID: "a", Name: "A", Domain: "a.example.com", Port: 18000},
+		{ID: "b", Name: "B", Domain: "b.example.com", Port: 18001},
+		{ID: "c", Name: "C", Domain: "c.home.test", Port: 18002},
+	}
+	c := CaddyfileFor(s, apps, nil, map[string]SiteTLS{
+		"a.example.com": {Mode: state.CertLetsEncrypt},
+		"b.example.com": {Mode: state.CertCustom, CertFile: "/etc/caddy/homeport-certs/b.example.com/cert.pem", KeyFile: "/etc/caddy/homeport-certs/b.example.com/key.pem"},
+	})
+	site := func(d string) string {
+		i := strings.Index(c, d+" {")
+		j := strings.Index(c[i:], "\n}\n")
+		return c[i : i+j]
+	}
+	if strings.Contains(site("a.example.com"), "tls ") {
+		t.Errorf("Let's Encrypt for one domain on an internal server needs no tls line:\n%s", site("a.example.com"))
+	}
+	if !strings.Contains(site("b.example.com"), `tls "/etc/caddy/homeport-certs/b.example.com/cert.pem" "/etc/caddy/homeport-certs/b.example.com/key.pem"`) {
+		t.Errorf("uploaded certificate not used:\n%s", site("b.example.com"))
+	}
+	for _, d := range []string{"home.test", "c.home.test"} {
+		if !strings.Contains(site(d), "tls internal") {
+			t.Errorf("%s should follow the server's setting:\n%s", d, site(d))
+		}
+	}
+	if strings.Contains(c, "local_certs") {
+		t.Error("local_certs would override the per-domain choice")
+	}
+	// A Let's Encrypt server: only the domain that asks gets Caddy's own certificate.
+	s.TLS = state.TLSLetsEncrypt
+	c = CaddyfileFor(s, apps, nil, map[string]SiteTLS{"a.example.com": {Mode: state.CertInternal}})
+	if n := strings.Count(c, "tls internal"); n != 1 || !strings.Contains(site("a.example.com"), "tls internal") {
+		t.Errorf("want tls internal on a.example.com only:\n%s", c)
 	}
 }
 

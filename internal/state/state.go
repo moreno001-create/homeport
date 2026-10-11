@@ -80,6 +80,29 @@ func (u User) InGroup(g string) bool {
 type Domain struct {
 	Name  string    `json:"name"`
 	Added time.Time `json:"added"`
+	// Cert is where this domain's certificate comes from; empty follows the server's setting (Settings.TLS).
+	Cert CertMode `json:"cert,omitempty"`
+	// DynDNS is set for a free domain from a dynamic DNS service, which Homeport keeps pointed at this server.
+	DynDNS *DynDNS `json:"dyndns,omitempty"`
+}
+
+// CertMode picks one domain's certificate.
+type CertMode string
+
+const (
+	CertLetsEncrypt CertMode = "letsencrypt" // Caddy gets it from Let's Encrypt
+	CertInternal    CertMode = "internal"    // Caddy's own certificate authority
+	CertCustom      CertMode = "custom"      // one the admin uploaded
+)
+
+// DynDNS is a free domain kept pointed at this server's public address. Its token isn't here: it's kept in its own
+// root-only file.
+type DynDNS struct {
+	Provider string    `json:"provider"` // "desec" or "duckdns"
+	IPv4     string    `json:"ipv4,omitempty"`
+	IPv6     string    `json:"ipv6,omitempty"`
+	Updated  time.Time `json:"updated,omitempty"` // last successful update
+	Error    string    `json:"error,omitempty"`   // the last update's error, if it failed
 }
 
 // Access says who may open an app: everyone on the internet, or signed-in users in one of the groups.
@@ -239,6 +262,15 @@ func (v *Data) HasDomain(name string) bool {
 		}
 	}
 	return false
+}
+
+func (v *Data) Domain(name string) (*Domain, bool) {
+	for i := range v.d.Domains {
+		if v.d.Domains[i].Name == name {
+			return &v.d.Domains[i], true
+		}
+	}
+	return nil, false
 }
 
 func (v *Data) AddDomain(d Domain) { v.d.Domains = append(v.d.Domains, d) }

@@ -17,6 +17,7 @@ import (
 	"homeport/internal/apps"
 	"homeport/internal/assist"
 	"homeport/internal/auth"
+	"homeport/internal/dyndns"
 	"homeport/internal/state"
 )
 
@@ -45,6 +46,12 @@ type Server struct {
 	// LocalAddrs are this machine's own network addresses: the portal and admin panel answer on them too, so
 	// https://192.168.1.50/admin works before any DNS is set up.
 	LocalAddrs func() []string
+	// CertDir holds uploaded certificates (where Caddy can read them).
+	CertDir string
+	// DynDNS gives free domains and keeps them pointed here (nil: not offered).
+	DynDNS *dyndns.Updater
+	// HTTPSAddr is where Caddy serves HTTPS on this machine, for looking at each domain's certificate.
+	HTTPSAddr string
 
 	jobs     jobs
 	mu       sync.Mutex

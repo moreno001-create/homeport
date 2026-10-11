@@ -13,6 +13,8 @@ type Platform struct {
 	Socket string
 	// Caddyfile is the Caddy configuration Homeport writes.
 	Caddyfile string
+	// CertDir holds certificates admins upload, where Caddy can read them.
+	CertDir string
 	// SystemCA is the system's trusted certificates; CaddyRoot is Caddy's own root (used with --tls internal).
 	SystemCA, CaddyRoot string
 	// ReloadCaddy is the command that makes Caddy load the new configuration.

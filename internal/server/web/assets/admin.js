@@ -118,18 +118,25 @@ const views = {
   async domains() {
     const domains = await api("GET", "/domains");
     const input = h("input", { name: "name", placeholder: "cloud.example.com", autocapitalize: "none", spellcheck: "false", required: true });
+    // Each served domain's real certificate is looked up after the page shows (it connects to each one).
+    const live = {};
+    api("GET", "/certificates").then(list => list.forEach(c => live[c.name] && live[c.name].replaceChildren(liveText(c)))).catch(() => {});
     return [
-      h("div", { class: "head" }, h("h1", {}, "Domains")),
+      h("div", { class: "head" }, h("h1", {}, "Domains"), h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free domain")),
       h("form", { class: "card row", onsubmit: async e => { e.preventDefault(); try { await api("POST", "/domains", { name: input.value.trim() }); toast("Added " + input.value.trim()); route(); } catch (err) { toast(err.message); } } },
         h("label", {}, "Add a domain", input), h("button", { class: "primary", type: "submit" }, "Add")),
       h("div", { class: "list" }, h("table", {},
-        h("thead", {}, h("tr", {}, ["Domain", "Used for", "Added", ""].map(t => h("th", {}, t)))),
+        h("thead", {}, h("tr", {}, ["Domain", "Used for", "Certificate", "Added", ""].map(t => h("th", {}, t)))),
         h("tbody", {}, domains.map(d => h("tr", {},
-          h("td", {}, h("b", {}, d.name)),
+          h("td", {}, h("b", {}, d.name), d.dyndns && h("div", { class: "muted small" }, freeText(d.dyndns))),
           h("td", {}, d.main ? "Portal and admin panel" : d.app || h("span", { class: "muted" }, "nothing yet")),
+          h("td", {}, certNames[d.cert] || d.cert, !d.ownCert && h("span", { class: "muted small" }, " (server setting)"),
+            (d.main || d.app) && (live[d.name] = h("div", { class: "small muted" }, "Checking…"))),
           h("td", {}, when(d.added)),
-          h("td", { class: "actions" }, !d.main && !d.app && h("button", { class: "danger", onclick: async () => { try { await api("DELETE", "/domains/" + d.name); toast("Removed " + d.name); route(); } catch (err) { toast(err.message); } } }, "Remove"))))))),
-      h("p", { class: "muted small" }, "Point each domain's DNS (an A and AAAA record) at this server. Subdomains of a domain listed here are added for you when you install an app on one."),
+          h("td", { class: "actions" },
+            h("button", { onclick: () => certDialog(d) }, "Certificate"),
+            !d.main && !d.app && h("button", { class: "danger", onclick: async () => { try { await api("DELETE", "/domains/" + d.name); toast("Removed " + d.name); route(); } catch (err) { toast(err.message); } } }, "Remove"))))))),
+      h("p", { class: "muted small" }, "Point each domain's DNS (an A and AAAA record) at this server. Subdomains of a domain listed here are added for you when you install an app on one. Let's Encrypt needs ports 80 and 443 open to this server from the internet (forward them on a home router)."),
     ];
   },
 
@@ -247,6 +254,81 @@ function accessDialog(a) {
     h("label", { class: "check" }, pub, "Anyone (no Homeport sign-in in front)"),
     h("label", {}, "Or only these groups (comma-separated; \"all\" is every user)", groups),
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Save"))));
+}
+
+const certNames = { letsencrypt: "Let's Encrypt", internal: "Caddy's own", custom: "Uploaded" };
+
+// What a browser gets from a domain right now.
+function liveText(c) {
+  if (c.live.error) return h("span", { class: "pill unknown" }, c.dns.length ? c.live.error : "No DNS for this name yet");
+  const days = Math.floor((new Date(c.live.notAfter) - Date.now()) / 86400000);
+  return [h("span", { class: "pill " + (c.live.trusted ? (days < 14 ? "partly" : "done") : "partly") },
+    c.live.trusted ? (days < 0 ? "Expired" : "Valid") : "Not trusted by browsers"),
+    " ", c.live.issuer + ", until " + when(c.live.notAfter)];
+}
+
+function freeText(dd) {
+  const who = dd.provider === "desec" ? "deSEC" : "DuckDNS";
+  if (dd.error) return "Free from " + who + ": " + dd.error;
+  return "Free from " + who + (dd.ipv4 || dd.ipv6 ? ", pointed at " + [dd.ipv4, dd.ipv6].filter(Boolean).join(" and ") : "");
+}
+
+function certDialog(d) {
+  const opt = (value, label) => h("option", { value, selected: (d.ownCert ? d.cert : "") === value }, label);
+  const mode = h("select", {}, opt("", "The server's setting (Settings)"), opt("letsencrypt", "Let's Encrypt (free, renewed for you)"),
+    opt("internal", "Caddy's own (private network; browsers warn)"), opt("custom", "Upload my own"));
+  const cert = h("textarea", { rows: "5", placeholder: "-----BEGIN CERTIFICATE-----", spellcheck: "false" });
+  const key = h("textarea", { rows: "5", placeholder: "-----BEGIN PRIVATE KEY-----", spellcheck: "false" });
+  const upload = h("div", { class: "stack" },
+    h("label", {}, "Certificate with its chain (fullchain.pem)", cert),
+    h("label", {}, "Private key (key.pem)", key),
+    h("p", { class: "muted small" }, "It's checked first: it must be for " + d.name + " and in date. You renew it yourself."));
+  const show = () => (upload.hidden = mode.value !== "custom");
+  mode.addEventListener("change", show);
+  show();
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    try {
+      await api("PUT", "/domains/" + d.name + "/certificate", mode.value === "custom" ? { mode: "custom", cert: cert.value, key: key.value } : { mode: mode.value });
+      dialog.close(); toast("Saved. A new Let's Encrypt certificate can take a minute."); route();
+    } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, "Certificate for " + d.name),
+    h("label", {}, "Where it comes from", mode),
+    upload,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Save"))));
+}
+
+function freeDomainDialog() {
+  const provider = h("select", {}, h("option", { value: "desec" }, "deSEC: name.dedyn.io"), h("option", { value: "duckdns" }, "DuckDNS: name.duckdns.org"));
+  const name = h("input", { required: true, placeholder: "myhome", autocapitalize: "none", spellcheck: "false" });
+  const suffix = h("span", { class: "muted" });
+  const token = h("input", { type: "password", required: true, autocomplete: "off" });
+  const help = h("p", { class: "muted small" });
+  const show = () => {
+    const desec = provider.value === "desec";
+    suffix.textContent = desec ? ".dedyn.io" : ".duckdns.org";
+    help.replaceChildren(desec
+      ? "Make a free account at desec.io, then under Token management make a token and paste it here. Homeport makes the name in your account."
+      : "Sign in at duckdns.org, add the name there, then paste the token shown at the top of the page.",
+      " Homeport points the name at this server and keeps it up to date when your address changes. Apps get subdomains of it, like cloud." + (name.value.trim() || "myhome") + suffix.textContent + ".");
+  };
+  provider.addEventListener("change", show);
+  name.addEventListener("input", show);
+  show();
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    try {
+      const out = await api("POST", "/domains/free", { provider: provider.value, name: name.value.trim(), token: token.value });
+      dialog.close(); toast(out.name + " points here now"); route();
+    } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, "Get a free domain"),
+    h("label", {}, "From", provider),
+    h("label", {}, "Name", h("span", { class: "suffixed" }, name, suffix)),
+    h("label", {}, "Token", token),
+    help,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Get it"))));
 }
 
 async function secretsDialog(a) {

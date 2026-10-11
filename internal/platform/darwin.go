@@ -31,6 +31,7 @@ func withStateDir(p Platform, d string) Platform {
 		p.Socket = filepath.Join(os.TempDir(), fmt.Sprintf("homeport-%d.sock", os.Getuid()))
 	}
 	p.Caddyfile = filepath.Join(d, "Caddyfile")
+	p.CertDir = filepath.Join(d, "certs")
 	p.ReloadCaddy = []string{"caddy", "reload", "--config", p.Caddyfile, "--adapter", "caddyfile", "--address", "localhost:2019"}
 	logs := filepath.Join(d, "logs")
 	p.LogsCommand = func(svc string, n int) []string {

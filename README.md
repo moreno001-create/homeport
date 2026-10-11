@@ -9,7 +9,12 @@ Docker and Caddy. (Working name.)
 - **One sign-in** (single sign-on) for every app: a portal on the main domain, and Caddy asks Homeport before letting
   anyone into an app. Access is per app, by group. Apps that trust it get the user in `Remote-User`,
   `Remote-Name`, `Remote-Email` and `Remote-Groups` (headers a browser sends with those names are removed first).
-- **Domains and HTTPS**: Caddy gets Let's Encrypt certificates for every domain on its own.
+- **Domains and HTTPS**: Caddy gets Let's Encrypt certificates for every domain on its own. Each domain can instead
+  use Caddy's own certificates or one you upload (`homeport domain cert`), and the Domains page shows the certificate
+  each site really serves and when it runs out.
+- **Free domains**, like YunoHost's nohost.me: `name.dedyn.io` from [deSEC](https://desec.io) or `name.duckdns.org`
+  from [DuckDNS](https://www.duckdns.org), with a token from your free account there (`homeport domain free`).
+  Homeport keeps the name pointed at your public address when it changes, and apps get subdomains of it.
 - **Sign in with Homeport (OpenID Connect)**: Homeport is an OIDC provider on the main domain, so apps can use
   Homeport accounts directly. Nextcloud ("Log in with Homeport", groups included) and Vaultwarden (single sign-on)
   are set up for it on install. An app only gets people whose groups may open it.
