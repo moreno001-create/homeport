@@ -133,12 +133,50 @@ const views = {
     ];
   },
 
+  async assistant() {
+    const [pending, audit, mem] = await Promise.all([api("GET", "/approvals"), api("GET", "/audit?limit=60"), api("GET", "/memory")]);
+    const list = pending.length
+      ? h("div", { class: "list" }, h("table", {}, h("tbody", {}, pending.map(p => h("tr", {},
+          h("td", {}, h("b", {}, p.summary), h("div", { class: "muted small" }, p.client + " · " + p.tool + " · waits until " + new Date(p.expires).toLocaleTimeString())),
+          h("td", { class: "actions" },
+            h("button", { class: "primary", onclick: () => decide(p, "approve") }, "Approve"),
+            h("button", { class: "danger", onclick: () => decide(p, "deny") }, "Decline")))))))
+      : h("p", { class: "muted" }, "Nothing is waiting for approval.");
+    clearTimeout(window.approvalTimer);
+    window.approvalTimer = setTimeout(() => { if (location.hash === "#assistant" && !dialog.open) route(); }, 4000);
+    return [
+      h("div", { class: "head" }, h("h1", {}, "Assistant")),
+      h("p", { class: "muted" }, "AI helpers (Homeport's assistant, or agents like opencode and Claude Code connected with ", h("code", {}, "homeport mcp"),
+        ") can look around freely, but every change waits for your approval here or with ", h("code", {}, "homeport approve"), "."),
+      h("h2", {}, "Waiting for approval"), list,
+      h("h2", {}, "Shared memory"),
+      h("p", { class: "muted small" }, "What the helpers have done and learned, and work in progress, so the next one carries on. Kept in /var/lib/homeport/assistant-memory.md."),
+      h("pre", { class: "log" }, mem.memory),
+      h("h2", {}, "Recent activity"),
+      audit.length ? h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["When", "Who", "What", "Outcome"].map(t => h("th", {}, t)))),
+        h("tbody", {}, audit.map(e => h("tr", {},
+          h("td", { class: "small" }, new Date(e.time).toLocaleString()),
+          h("td", { class: "small" }, e.client),
+          h("td", {}, h("b", {}, e.tool), h("div", { class: "muted small mono" }, (e.args || "").slice(0, 140))),
+          h("td", {}, h("span", { class: "pill " + (e.ok ? "done" : "failed") }, e.decision + (e.by ? " by " + e.by : "")),
+            e.error ? h("div", { class: "muted small" }, e.error.slice(0, 160)) : null))))))
+        : h("p", { class: "muted" }, "No tool calls yet."),
+    ];
+    async function decide(p, d) {
+      try { await api("POST", "/approvals/" + p.id + "/" + d); toast(d === "approve" ? "Approved: running now" : "Declined"); route(); }
+      catch (err) { toast(err.message); route(); }
+    }
+  },
+
   async settings() {
     const o = await api("GET", "/overview");
     const tls = h("select", { name: "tls" },
       h("option", { value: "letsencrypt", selected: o.settings.tls !== "internal" }, "Let's Encrypt (public server)"),
       h("option", { value: "internal", selected: o.settings.tls === "internal" }, "Caddy's own certificates (test or private network)"));
     const email = h("input", { name: "email", type: "email", value: o.settings.acmeEmail || "", placeholder: "you@example.com" });
+    const shell = h("input", { type: "checkbox", checked: !!o.settings.assistantShell });
+    const minutes = h("input", { type: "number", min: "1", max: "240", value: o.settings.approvalMinutes || 10 });
     return [
       h("div", { class: "head" }, h("h1", {}, "Settings")),
       h("form", { class: "card stack", onsubmit: async e => {
@@ -148,6 +186,14 @@ const views = {
         h("h2", {}, "Certificates"),
         h("label", {}, "Where certificates come from", tls),
         h("label", {}, "Email for Let's Encrypt notices", email),
+        h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
+      h("form", { class: "card stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api("PUT", "/settings", { assistantShell: shell.checked, approvalMinutes: +minutes.value }); toast("Saved"); } catch (err) { toast(err.message); }
+      } },
+        h("h2", {}, "AI helpers"),
+        h("label", { class: "check" }, shell, "Let helpers ask to run shell commands as root (each one still needs your approval)"),
+        h("label", {}, "Minutes a change waits for approval before it's dropped", minutes),
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
     ];
   },

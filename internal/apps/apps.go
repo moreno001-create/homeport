@@ -512,3 +512,12 @@ func parentDomain(d *state.Data, domain string) (string, bool) {
 	}
 	return "", false
 }
+
+// Dir is the app's folder (compose.yaml and data/).
+func (m *Manager) Dir(id string) string { return m.dir(id) }
+
+// ComposeOutput runs a docker compose command for the app and returns what it printed.
+func (m *Manager) ComposeOutput(ctx context.Context, id string, args ...string) (string, error) {
+	full := append([]string{"compose", "-p", project(id), "-f", "compose.yaml"}, args...)
+	return m.Runner.Output(ctx, m.dir(id), "docker", full...)
+}

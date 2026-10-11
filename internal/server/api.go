@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +70,73 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("PUT /api/apps/{id}/access", guard(s.setAccess))
 	mux.HandleFunc("GET /api/apps/{id}/secrets", guard(s.appSecrets))
 	mux.HandleFunc("GET /api/jobs/{id}", guard(s.getJob))
+	mux.HandleFunc("GET /api/approvals", guard(s.listApprovals))
+	mux.HandleFunc("POST /api/approvals/{id}/{decision}", guard(s.decideApproval))
+	mux.HandleFunc("GET /api/audit", guard(s.auditLog))
+	mux.HandleFunc("GET /api/memory", guard(s.memory))
+}
+
+// MARK: AI helpers
+
+func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	client := "mcp"
+	if c := headerSafe(r.Header.Get("X-Homeport-Client")); c != "" {
+		if len(c) > 40 {
+			c = c[:40]
+		}
+		client = "mcp:" + c
+	}
+	out := s.Assist.HandleMCP(r.Context(), client, body)
+	if out == nil {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
+}
+
+func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Assist.Approvals.Pending())
+}
+
+func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
+	d := r.PathValue("decision")
+	if d != "approve" && d != "deny" {
+		writeError(w, http.StatusNotFound, errors.New("approve or deny"))
+		return
+	}
+	if err := s.Assist.Approvals.Decide(r.PathValue("id"), d == "approve", actor(r).Name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) auditLog(w http.ResponseWriter, r *http.Request) {
+	n := 100
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 1000 {
+		n = v
+	}
+	entries, err := s.Assist.Audit.Recent(n)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) memory(w http.ResponseWriter, r *http.Request) {
+	text, err := s.Assist.Memory.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"memory": text})
 }
 
 func decode(r *http.Request, v any) error {
@@ -100,8 +169,10 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ACMEEmail *string        `json:"acmeEmail"`
-		TLS       *state.TLSMode `json:"tls"`
+		ACMEEmail       *string        `json:"acmeEmail"`
+		TLS             *state.TLSMode `json:"tls"`
+		AssistantShell  *bool          `json:"assistantShell"`
+		ApprovalMinutes *int           `json:"approvalMinutes"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -122,6 +193,15 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.TLS != nil {
 			st.TLS = *in.TLS
+		}
+		if in.AssistantShell != nil {
+			st.AssistantShell = *in.AssistantShell
+		}
+		if in.ApprovalMinutes != nil {
+			if *in.ApprovalMinutes < 1 || *in.ApprovalMinutes > 240 {
+				return errors.New("approvals can wait 1 to 240 minutes")
+			}
+			st.ApprovalMinutes = *in.ApprovalMinutes
 		}
 		return nil
 	})

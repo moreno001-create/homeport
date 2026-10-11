@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"homeport/internal/apps"
+	"homeport/internal/assist"
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
 	"homeport/internal/server"
@@ -60,6 +62,18 @@ func main() {
 		err = cmdApp(args)
 	case "status":
 		err = cmdStatus()
+	case "mcp":
+		err = cmdMCP()
+	case "approvals":
+		err = cmdApprovals()
+	case "approve", "deny":
+		err = cmdDecide(cmd, args)
+	case "audit":
+		err = cmdAudit(args)
+	case "memory":
+		err = cmdMemory()
+	case "assistant":
+		err = cmdAssistant(args)
 	case "version", "--version":
 		fmt.Println("homeport", version)
 	case "help", "-h", "--help":
@@ -97,6 +111,14 @@ func usage() {
   homeport app secrets ID
   homeport app remove ID [--purge]
 
+  AI helpers (MCP):
+  homeport mcp                 connect an agent (opencode, Claude Code…) over stdin/stdout
+  homeport approvals           changes waiting for approval
+  homeport approve ID | deny ID
+  homeport audit [N]           the last N tool calls
+  homeport memory              the agents' shared notes and work in progress
+  homeport assistant shell on|off
+
   homeport serve      (run by systemd)
 `)
 }
@@ -124,7 +146,10 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("OIDC signing key: %w", err)
 	}
-	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer}
+	helper := &assist.Assistant{Store: store, Apps: manager, Runner: sys, Caddyfile: caddyfile, Version: version, ApplyProxy: applyProxy,
+		Audit: &assist.Audit{Path: filepath.Join(stateDir, "audit.log")}, Approvals: &assist.Approvals{},
+		Memory: &assist.Memory{Path: filepath.Join(stateDir, "assistant-memory.md")}}
+	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -528,4 +553,143 @@ func cmdApp(args []string) error {
 		return follow(path, nil, "DELETE")
 	}
 	return fmt.Errorf("unknown app command %q", sub)
+}
+
+// MARK: AI helpers
+
+// cmdMCP carries MCP between an agent (stdin/stdout, one JSON-RPC message per line) and the service. Calls run side by
+// side, since a change can wait minutes for an admin's approval.
+func cmdMCP() error {
+	client := "agent"
+	var mu sync.Mutex
+	out := bufio.NewWriter(os.Stdout)
+	reply := func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		out.Write(b)
+		out.WriteByte('\n')
+		out.Flush()
+	}
+	var wg sync.WaitGroup
+	in := bufio.NewScanner(os.Stdin)
+	in.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	for in.Scan() {
+		line := append([]byte(nil), in.Bytes()...)
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		// The agent's name (from initialize) goes in the audit log.
+		var peek struct {
+			Method string `json:"method"`
+			Params struct {
+				ClientInfo struct{ Name string } `json:"clientInfo"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(line, &peek) == nil && peek.Method == "initialize" && peek.Params.ClientInfo.Name != "" {
+			client = peek.Params.ClientInfo.Name
+		}
+		name := client
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, _ := http.NewRequest("POST", "http://homeport/api/mcp", bytes.NewReader(line))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Homeport-Client", name)
+			res, err := client0().Do(req)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "homeport mcp:", err)
+				return
+			}
+			defer res.Body.Close()
+			b, _ := io.ReadAll(res.Body)
+			if res.StatusCode == http.StatusOK && len(bytes.TrimSpace(b)) > 0 {
+				reply(bytes.TrimSpace(b))
+			}
+		}()
+	}
+	wg.Wait()
+	return in.Err()
+}
+
+// client0 is the socket client without a timeout (approvals can take minutes).
+func client0() *http.Client { return client }
+
+func cmdApprovals() error {
+	var list []assist.Approval
+	if err := call("GET", "/approvals", nil, &list); err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		fmt.Println("Nothing is waiting for approval.")
+		return nil
+	}
+	for _, a := range list {
+		fmt.Printf("%s  %s asks: %s\n    (%s, waits until %s)  homeport approve %s | homeport deny %s\n",
+			a.ID, a.Client, a.Summary, a.Tool, a.Expires.Format("15:04"), a.ID, a.ID)
+	}
+	return nil
+}
+
+func cmdDecide(cmd string, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: homeport %s ID (see homeport approvals)", cmd)
+	}
+	if err := call("POST", "/approvals/"+args[0]+"/"+cmd, nil, nil); err != nil {
+		return err
+	}
+	if cmd == "approve" {
+		fmt.Println("Approved: it runs now.")
+	} else {
+		fmt.Println("Declined.")
+	}
+	return nil
+}
+
+func cmdAudit(args []string) error {
+	n := "30"
+	if len(args) == 1 {
+		n = args[0]
+	}
+	var entries []assist.AuditEntry
+	if err := call("GET", "/audit?limit="+n, nil, &entries); err != nil {
+		return err
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		status := "ok"
+		if !e.OK {
+			status = "error: " + e.Error
+		}
+		by := ""
+		if e.By != "" {
+			by = " by " + e.By
+		}
+		fmt.Printf("%s  %-14s %-6s %-20s %s%s, %s  %s\n", e.Time.Format("01-02 15:04:05"), e.Client, e.Level, e.Tool, e.Decision, by, status, string(e.Args))
+	}
+	return nil
+}
+
+func cmdMemory() error {
+	var m map[string]string
+	if err := call("GET", "/memory", nil, &m); err != nil {
+		return err
+	}
+	fmt.Print(m["memory"])
+	return nil
+}
+
+func cmdAssistant(args []string) error {
+	if len(args) != 2 || args[0] != "shell" || (args[1] != "on" && args[1] != "off") {
+		return errors.New("usage: homeport assistant shell on|off")
+	}
+	on := args[1] == "on"
+	if err := call("PUT", "/settings", map[string]any{"assistantShell": on}, nil); err != nil {
+		return err
+	}
+	if on {
+		fmt.Println("AI helpers may now ask to run shell commands (each one still needs approval).")
+	} else {
+		fmt.Println("Shell commands are off for AI helpers.")
+	}
+	return nil
 }

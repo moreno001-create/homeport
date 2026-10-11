@@ -27,6 +27,10 @@ type Settings struct {
 	MainDomain string  `json:"mainDomain"`
 	ACMEEmail  string  `json:"acmeEmail,omitempty"`
 	TLS        TLSMode `json:"tls"`
+	// AssistantShell lets AI helpers ask to run shell commands on the server (each one still needs approval).
+	AssistantShell bool `json:"assistantShell,omitempty"`
+	// ApprovalMinutes is how long a change waits for an admin before it's dropped (default 10).
+	ApprovalMinutes int `json:"approvalMinutes,omitempty"`
 }
 
 type User struct {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"homeport/internal/apps"
+	"homeport/internal/assist"
 	"homeport/internal/auth"
 	"homeport/internal/state"
 )
@@ -35,6 +36,8 @@ type Server struct {
 	ApplyProxy func(ctx context.Context) error
 	// Signer signs OpenID Connect tokens for apps.
 	Signer *Signer
+	// Assist runs tools for AI helpers (MCP on the root socket, approvals and audit in the admin panel).
+	Assist *assist.Assistant
 
 	jobs     jobs
 	mu       sync.Mutex
@@ -78,6 +81,8 @@ func (s *Server) LocalHandler() http.Handler {
 		}
 	})
 	mux.HandleFunc("POST /api/init", s.initServer)
+	// MCP for AI agents (`homeport mcp` carries it over stdin/stdout). Root-only, like the rest of this socket.
+	mux.HandleFunc("POST /api/mcp", s.mcp)
 	return mux
 }
 
