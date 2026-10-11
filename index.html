@@ -105,7 +105,7 @@ section + section { border-top: 1px solid var(--line); }
 .steps b { display: block; }
 .steps p { color: var(--muted); font-size: 15.5px; }
 
-.apps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
 .app { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
 .app .glyph { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-family: var(--display); font-weight: 900; font-size: 22px; color: var(--buoy); background: color-mix(in srgb, var(--buoy) 14%, var(--card)); }
 .app b { font-size: 16px; }
@@ -314,10 +314,23 @@ footer a { color: var(--on-water); }
         <div class="app"><span class="glyph" aria-hidden="true">N</span><b>Nextcloud</b><p>Files, calendars, contacts and photos, with sync apps. Arrives with its database, cache and background jobs set up.</p><span class="tag">Log in with Homeport</span></div>
         <div class="app"><span class="glyph" aria-hidden="true">V</span><b>Vaultwarden</b><p>A password manager that works with the Bitwarden apps and browser extensions.</p><span class="tag">single sign-on</span></div>
         <div class="app"><span class="glyph" aria-hidden="true">J</span><b>Jellyfin</b><p>Your movies, shows and music on phones, TVs and browsers.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">I</span><b>Immich</b><p>Your photo and video library, backed up from your phone, with face and object search.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">A</span><b>Audiobookshelf</b><p>Audiobooks and podcasts, with phone apps that remember where you stopped.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">N</span><b>Navidrome</b><p>Your music collection, streamed to any Subsonic-compatible app.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">H</span><b>Home Assistant</b><p>Runs your smart home: lights, sensors and automations, all on your own server.</p><span class="tag">its own accounts</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">A</span><b>AdGuard Home</b><p>Blocks ads and trackers for every device on your network.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">P</span><b>Paperless-ngx</b><p>Scans and files your paper documents, and finds them again by their text.</p><span class="tag">uses your Homeport name</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">S</span><b>Stirling PDF</b><p>Merge, split, convert and sign PDFs without uploading them anywhere.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">A</span><b>Actual Budget</b><p>Envelope budgeting for your household, private and fast.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">F</span><b>FreshRSS</b><p>Follow websites and news feeds in one reader.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">M</span><b>Memos</b><p>Quick notes and thoughts, like a private timeline.</p><span class="tag">behind the sign-in check</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">M</span><b>Mealie</b><p>Recipes, meal plans and shopping lists for the family.</p><span class="tag">Log in with Homeport</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">F</span><b>Forgejo</b><p>Your own Git hosting, with issues and pull requests.</p><span class="tag">Log in with Homeport</span></div>
+        <div class="app"><span class="glyph" aria-hidden="true">S</span><b>Syncthing</b><p>Keeps folders in sync between your computers and phones, directly.</p><span class="tag">behind the sign-in check</span></div>
         <div class="app"><span class="glyph" aria-hidden="true">U</span><b>Uptime Kuma</b><p>Watches your sites and services and tells you when one goes down.</p><span class="tag">behind the sign-in check</span></div>
         <div class="app"><span class="glyph" aria-hidden="true">W</span><b>Who Am I</b><p>A tiny test page that shows who Homeport says you are.</p><span class="tag">uses your Homeport name</span></div>
       </div>
-      <p class="note">More apps are on the way. Each one is a short manifest with a Docker Compose template, so adding an app to the catalog is a small, reviewable change.</p>
+      <p class="note">Eighteen apps so far, with more on the way. Each one is a short manifest with a Docker Compose template, so adding an app to the catalog is a small, reviewable change.</p>
     </div>
   </section>
 
@@ -373,9 +386,9 @@ footer a { color: var(--on-water); }
   <section>
     <div class="wrap split">
       <div class="head" style="margin:0">
-        <p class="kicker">Local and cloud AI <span class="soon">coming next</span></p>
+        <p class="kicker">Local and cloud AI <span class="soon">new in 0.6</span></p>
         <h2>Small jobs at home, hard ones to Claude</h2>
-        <p class="lede">Homeport's own assistant will send everyday questions ("what's running?", "summarize this log") to a model on your own hardware, and hand anything tricky to Claude, along with everything done so far. It will watch how busy your machines are and respect your rules: local only, ask before using the cloud, or a monthly limit.</p>
+        <p class="lede">The admin panel has its own assistant chat. It sends everyday questions ("what's running?", "who can open Immich?") to a model on your own hardware, and hands anything tricky to Claude, along with everything done so far. It follows your rules: local only, ask before using the cloud, or a monthly limit. Changes still wait for your OK, with an Approve button right in the chat.</p>
         <p class="lede">An Apple Silicon Mac makes a great model server: a small Linux box can run Homeport and the apps, while the Mac's memory does the thinking.</p>
       </div>
       <figure class="figure" style="margin:0">
@@ -392,7 +405,7 @@ footer a { color: var(--on-water); }
           <text x="104" y="176" class="small">easy, machine idle</text><text x="330" y="176" class="small">hard, or local busy</text>
           <text x="214" y="236" class="small">hand over</text>
         </svg>
-        <figcaption>Planned design. Today, the AI tools work with any agent you connect, such as opencode with a local model or Claude.</figcaption>
+        <figcaption>The local model can also hand a conversation to Claude when it gets out of its depth.</figcaption>
       </figure>
     </div>
   </section>

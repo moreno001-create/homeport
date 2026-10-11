@@ -1,0 +1,18 @@
+id: stirling-pdf
+name: Stirling-PDF
+description: Merge, split, compress, convert, sign and edit PDFs in the browser, without sending them anywhere.
+category: Documents & productivity
+website: https://www.stirlingpdf.com
+signIn: gate
+compose: |
+  services:
+    app:
+      image: docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        SECURITY_ENABLELOGIN: "false"
+        SYSTEM_DEFAULTLOCALE: en-US
+      volumes:
+        - "{{.Data}}/trainingData:/usr/share/tessdata"
+        - "{{.Data}}/configs:/configs"
+      restart: unless-stopped

@@ -37,6 +37,8 @@ type Manager struct {
 	Apply func(ctx context.Context) error
 	// Where the system's trusted certificates and Caddy's own root (test servers) are; defaults for Ubuntu.
 	SystemCA, CaddyRoot string
+	// LocalAddrs are this machine's network addresses (the first is HostIP in manifests).
+	LocalAddrs func() []string
 
 	mu sync.Mutex // one install, update or removal at a time
 }
@@ -209,7 +211,16 @@ func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 		Secrets: app.Secrets, AdminUser: installer.Name, AdminEmail: installer.Email, TimeZone: tz,
 		MainDomain: st.MainDomain, Issuer: "https://" + st.MainDomain, ClientID: app.ID,
 		CABundle: filepath.Join(home, "ca-bundle.crt"), CALocal: filepath.Join(home, "ca-local.crt"),
-		InternalTLS: st.TLS == state.TLSInternal}
+		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP()}
+}
+
+func (m *Manager) hostIP() string {
+	if m.LocalAddrs != nil {
+		if a := m.LocalAddrs(); len(a) > 0 {
+			return a[0]
+		}
+	}
+	return "0.0.0.0"
 }
 
 // writeCA puts the certificates apps should trust where they can mount them: the system's, plus Caddy's own root on
@@ -425,19 +436,26 @@ func (m *Manager) Status(ctx context.Context, id string) string {
 		if line == "" {
 			continue
 		}
-		// Newer Compose prints one object per line; older ones a single array.
-		var many []struct{ State string }
-		var one struct{ State string }
-		if json.Unmarshal([]byte(line), &many) == nil {
-			for _, c := range many {
-				total++
-				if c.State == "running" {
-					running++
-				}
+		// Newer Compose prints one object per line; older ones a single array. A one-time setup container that finished
+		// cleanly (exited 0) doesn't count.
+		type ctr struct {
+			State    string
+			ExitCode int
+		}
+		var list []ctr
+		var one ctr
+		if json.Unmarshal([]byte(line), &list) != nil {
+			if json.Unmarshal([]byte(line), &one) != nil {
+				continue
 			}
-		} else if json.Unmarshal([]byte(line), &one) == nil {
+			list = []ctr{one}
+		}
+		for _, c := range list {
+			if c.State == "exited" && c.ExitCode == 0 {
+				continue
+			}
 			total++
-			if one.State == "running" {
+			if c.State == "running" {
 				running++
 			}
 		}

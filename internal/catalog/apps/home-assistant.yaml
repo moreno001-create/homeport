@@ -1,0 +1,28 @@
+id: home-assistant
+name: Home Assistant
+description: Control and automate your smart home (lights, sensors, thermostats) from one place, with phone apps.
+category: Home & network
+website: https://www.home-assistant.io
+signIn: own
+notes: |
+  Open it to create your Home Assistant account. Its phone apps connect straight to this address, so it stays public;
+  Home Assistant's own accounts protect it. It runs in a container on Docker's network, so devices it finds by
+  broadcast on your network may need adding by address.
+compose: |
+  services:
+    # Writes a first configuration that trusts Caddy as the proxy in front (Home Assistant refuses proxied visits
+    # otherwise). It runs once; an existing configuration is left alone.
+    setup:
+      image: busybox:latest
+      volumes: ["{{.Data}}/config:/config"]
+      command: ["sh", "-c", "[ -f /config/configuration.yaml ] || printf 'default_config:\n\nhttp:\n  use_x_forwarded_for: true\n  trusted_proxies:\n    - 172.16.0.0/12\n    - 192.168.0.0/16\n    - 10.0.0.0/8\n    - 127.0.0.1\n' > /config/configuration.yaml"]
+    app:
+      image: ghcr.io/home-assistant/home-assistant:stable
+      depends_on:
+        setup:
+          condition: service_completed_successfully
+      ports: ["127.0.0.1:{{.Port}}:8123"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/config:/config"]
+      restart: unless-stopped

@@ -151,7 +151,7 @@ func serve() error {
 		return caddy.Apply(ctx, proxy.CaddyfileWith(st, list, localAddrs()))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
-		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot}
+		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, LocalAddrs: localAddrs}
 	signer, err := server.LoadSigner(filepath.Join(stateDir, "oidc-signing-key.pem"))
 	if err != nil {
 		return fmt.Errorf("OIDC signing key: %w", err)
@@ -159,8 +159,9 @@ func serve() error {
 	helper := &assist.Assistant{Store: store, Apps: manager, Runner: sys, Caddyfile: caddyfile, Version: version, ApplyProxy: applyProxy, Platform: plat,
 		Audit: &assist.Audit{Path: filepath.Join(stateDir, "audit.log")}, Approvals: &assist.Approvals{},
 		Memory: &assist.Memory{Path: filepath.Join(stateDir, "assistant-memory.md")}}
+	chat := &assist.Chat{A: helper, KeyFile: filepath.Join(stateDir, "anthropic-api-key"), UsageFile: filepath.Join(stateDir, "assistant-usage.json")}
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
-		LocalAddrs: localAddrs}
+		Chat: chat, LocalAddrs: localAddrs}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -21,7 +21,7 @@ func TestEveryAppRenders(t *testing.T) {
 		}
 		v := Vars{ID: a.ID, Domain: a.ID + ".example.com", Port: 18000, Data: "/var/lib/homeport/apps/" + a.ID + "/data",
 			Secrets: secrets, AdminUser: "alice", TimeZone: "UTC", MainDomain: "home.example.com", Issuer: "https://home.example.com",
-			ClientID: a.ID, CABundle: "/var/lib/homeport/ca-bundle.crt", CALocal: "/var/lib/homeport/ca-local.crt"}
+			ClientID: a.ID, CABundle: "/var/lib/homeport/ca-bundle.crt", CALocal: "/var/lib/homeport/ca-local.crt", HostIP: "192.168.4.27"}
 		for _, step := range a.AfterInstall {
 			run, err := a.RenderStep(step, v)
 			if err != nil {

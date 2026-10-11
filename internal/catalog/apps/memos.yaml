@@ -1,0 +1,15 @@
+id: memos
+name: Memos
+description: Quick private notes and thoughts, like a personal timeline, with Markdown and tags.
+category: Dev & tools
+website: https://usememos.com
+signIn: gate
+notes: |
+  Open it to create the first (admin) account. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: docker.io/neosmemo/memos:stable
+      ports: ["127.0.0.1:{{.Port}}:5230"]
+      volumes: ["{{.Data}}/data:/var/opt/memos"]
+      restart: unless-stopped

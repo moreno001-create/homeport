@@ -1,0 +1,45 @@
+id: paperless-ngx
+name: Paperless-ngx
+description: Scan, store and search all your paperwork, with text recognition and automatic tagging.
+category: Documents & productivity
+website: https://docs.paperless-ngx.com
+signIn: headers
+secrets: [db_password, secret_key, admin_password]
+notes: |
+  People are signed in with their Homeport account. The admin who installed it is Paperless's administrator (password in
+  this app's secrets, for its phone apps). Drop files into the consume folder inside the app's data folder to import them.
+compose: |
+  services:
+    redis:
+      image: docker.io/library/redis:7
+      restart: unless-stopped
+    db:
+      image: docker.io/library/postgres:17
+      environment:
+        POSTGRES_DB: paperless
+        POSTGRES_USER: paperless
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      restart: unless-stopped
+    app:
+      image: ghcr.io/paperless-ngx/paperless-ngx:latest
+      depends_on: [db, redis]
+      ports: ["127.0.0.1:{{.Port}}:8000"]
+      environment:
+        PAPERLESS_REDIS: redis://redis:6379
+        PAPERLESS_DBHOST: db
+        PAPERLESS_DBPASS: "{{secret "db_password"}}"
+        PAPERLESS_URL: "https://{{.Domain}}"
+        PAPERLESS_SECRET_KEY: "{{secret "secret_key"}}"
+        PAPERLESS_ADMIN_USER: "{{.AdminUser}}"
+        PAPERLESS_ADMIN_PASSWORD: "{{secret "admin_password"}}"
+        PAPERLESS_ENABLE_HTTP_REMOTE_USER: "true"
+        PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME: HTTP_REMOTE_USER
+        PAPERLESS_LOGOUT_REDIRECT_URL: "https://{{.MainDomain}}/"
+        PAPERLESS_TIME_ZONE: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/data:/usr/src/paperless/data"
+        - "{{.Data}}/media:/usr/src/paperless/media"
+        - "{{.Data}}/export:/usr/src/paperless/export"
+        - "{{.Data}}/consume:/usr/src/paperless/consume"
+      restart: unless-stopped

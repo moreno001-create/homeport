@@ -31,6 +31,25 @@ type Settings struct {
 	AssistantShell bool `json:"assistantShell,omitempty"`
 	// ApprovalMinutes is how long a change waits for an admin before it's dropped (default 10).
 	ApprovalMinutes int `json:"approvalMinutes,omitempty"`
+	// Chat is how the admin panel's assistant chat picks a model.
+	Chat ChatSettings `json:"chat"`
+}
+
+// ChatSettings choose the models behind the assistant chat. The Anthropic API key isn't here: it's kept in its own
+// root-only file and never sent back to the browser.
+type ChatSettings struct {
+	// Mode is "auto" (the local model for easy things, Claude for hard ones), "local" or "claude".
+	Mode string `json:"mode,omitempty"`
+	// AskBeforeCloud makes the chat ask before anything is sent to Claude.
+	AskBeforeCloud bool `json:"askBeforeCloud,omitempty"`
+	// MonthlyCapUSD stops Claude for the rest of the month once its estimated cost reaches this (0: no cap).
+	MonthlyCapUSD float64 `json:"monthlyCapUSD,omitempty"`
+	// LocalURL is an OpenAI-compatible server (LM Studio, Ollama…), e.g. http://192.168.1.20:1234/v1.
+	LocalURL   string `json:"localURL,omitempty"`
+	LocalModel string `json:"localModel,omitempty"`
+	// ClaudeModel and Effort tune Claude (defaults claude-opus-5-5, medium).
+	ClaudeModel string `json:"claudeModel,omitempty"`
+	Effort      string `json:"effort,omitempty"`
 }
 
 type User struct {

@@ -74,6 +74,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("POST /api/approvals/{id}/{decision}", guard(s.decideApproval))
 	mux.HandleFunc("GET /api/audit", guard(s.auditLog))
 	mux.HandleFunc("GET /api/memory", guard(s.memory))
+	s.chatRoutes(mux, guard)
 }
 
 // MARK: AI helpers

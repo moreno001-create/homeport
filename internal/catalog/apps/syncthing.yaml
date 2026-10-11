@@ -1,0 +1,34 @@
+id: syncthing
+name: Syncthing
+description: Keeps folders in sync between your computers and phones, directly and privately.
+category: Dev & tools
+website: https://syncthing.net
+signIn: gate
+notes: |
+  Only the groups you allow can open its settings page. Devices sync with it directly on port 22000, which must be
+  reachable on your network. Synced folders live in the app's data folder.
+compose: |
+  services:
+    app:
+      image: docker.io/syncthing/syncthing:latest
+      hostname: homeport-syncthing
+      ports:
+        - "127.0.0.1:{{.Port}}:8384"
+        - "22000:22000/tcp"
+        - "22000:22000/udp"
+        - "21027:21027/udp"
+      environment:
+        STGUIADDRESS: "0.0.0.0:8384"
+        PUID: "1000"
+        PGID: "1000"
+      volumes: ["{{.Data}}/sync:/var/syncthing"]
+      restart: unless-stopped
+afterInstall:
+  # Its settings page normally only answers to "localhost"; Caddy (and Homeport's sign-in) are in front of it here.
+  - service: app
+    run:
+      - sh
+      - -c
+      - >-
+        k=$(sed -n "s:.*<apikey>\(.*\)</apikey>.*:\1:p" /var/syncthing/config/config.xml) &&
+        syncthing cli --gui-address 127.0.0.1:8384 --gui-apikey "$k" config gui insecure-skip-host-check set true

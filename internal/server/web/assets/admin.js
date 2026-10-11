@@ -134,6 +134,11 @@ const views = {
   },
 
   async assistant() {
+    const [list, cfg] = await Promise.all([api("GET", "/chat"), api("GET", "/chat-settings")]);
+    return chatView(list, cfg);
+  },
+
+  async activity() {
     const [pending, audit, mem] = await Promise.all([api("GET", "/approvals"), api("GET", "/audit?limit=60"), api("GET", "/memory")]);
     const list = pending.length
       ? h("div", { class: "list" }, h("table", {}, h("tbody", {}, pending.map(p => h("tr", {},
@@ -143,9 +148,9 @@ const views = {
             h("button", { class: "danger", onclick: () => decide(p, "deny") }, "Decline")))))))
       : h("p", { class: "muted" }, "Nothing is waiting for approval.");
     clearTimeout(window.approvalTimer);
-    window.approvalTimer = setTimeout(() => { if (location.hash === "#assistant" && !dialog.open) route(); }, 4000);
+    window.approvalTimer = setTimeout(() => { if (location.hash === "#activity" && !dialog.open) route(); }, 4000);
     return [
-      h("div", { class: "head" }, h("h1", {}, "Assistant")),
+      h("div", { class: "head" }, h("h1", {}, "Approvals and activity"), h("a", { class: "button", href: "#assistant" }, "Back to the chat")),
       h("p", { class: "muted" }, "AI helpers (Homeport's assistant, or agents like opencode and Claude Code connected with ", h("code", {}, "homeport mcp"),
         ") can look around freely, but every change waits for your approval here or with ", h("code", {}, "homeport approve"), "."),
       h("h2", {}, "Waiting for approval"), list,
@@ -170,7 +175,7 @@ const views = {
   },
 
   async settings() {
-    const o = await api("GET", "/overview");
+    const [o, cfg] = await Promise.all([api("GET", "/overview"), api("GET", "/chat-settings")]);
     const tls = h("select", { name: "tls" },
       h("option", { value: "letsencrypt", selected: o.settings.tls !== "internal" }, "Let's Encrypt (public server)"),
       h("option", { value: "internal", selected: o.settings.tls === "internal" }, "Caddy's own certificates (test or private network)"));
@@ -195,6 +200,7 @@ const views = {
         h("label", { class: "check" }, shell, "Let helpers ask to run shell commands as root (each one still needs your approval)"),
         h("label", {}, "Minutes a change waits for approval before it's dropped", minutes),
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
+      chatSettingsForm(cfg),
     ];
   },
 };
@@ -323,6 +329,219 @@ async function runJob(title, start) {
 function splitGroups(s) { return s.split(",").map(x => x.trim().toLowerCase()).filter(Boolean); }
 
 // MARK: Routing
+
+function chatSettingsForm(cfg) {
+  const st = cfg.settings;
+  const opt = (value, label, current) => h("option", { value, selected: value === current }, label);
+  const mode = h("select", {}, opt("auto", "Automatic: the local model for easy questions, Claude for hard ones", st.mode || "auto"),
+    opt("claude", "Claude only", st.mode), opt("local", "Local model only (nothing leaves your network)", st.mode));
+  const key = h("input", { type: "password", autocomplete: "off", placeholder: cfg.hasKey ? "Saved (" + (cfg.keyHint || "set") + "). Type a new one to replace it" : "sk-ant-…" });
+  const model = h("select", {}, cfg.claudeModels.map(m => opt(m, m, st.claudeModel || cfg.defaults.claudeModel)));
+  const effort = h("select", {}, [["low", "Low (fastest, cheapest)"], ["medium", "Medium (default)"], ["high", "High"], ["xhigh", "Extra high"], ["max", "Max (slowest)"]]
+    .map(([v, l]) => opt(v, l, st.effort || cfg.defaults.effort)));
+  const ask = h("input", { type: "checkbox", checked: !!st.askBeforeCloud });
+  const cap = h("input", { type: "number", min: "0", step: "1", value: st.monthlyCapUSD || "", placeholder: "No limit" });
+  const url = h("input", { value: st.localURL || "", placeholder: "http://192.168.1.20:1234 (LM Studio) or :11434 (Ollama)" });
+  const localModel = h("select", {}, h("option", { value: "" }, "The first model it has loaded"),
+    st.localModel ? h("option", { value: st.localModel, selected: true }, st.localModel) : null);
+  const found = h("p", { class: "muted small" });
+  async function findModels() {
+    found.textContent = "Asking " + (url.value.trim() || "…") + "…";
+    try {
+      const r = await api("POST", "/chat-settings/local-models", { localURL: url.value });
+      const keep = localModel.value;
+      localModel.replaceChildren(h("option", { value: "" }, "The first model it has loaded"), ...r.models.map(m => opt(m, m, keep)));
+      found.textContent = r.models.length ? "Found " + r.models.length + " model" + (r.models.length > 1 ? "s" : "") + " at " + r.localURL + "." : "It answered, but has no chat model loaded.";
+    } catch (err) { found.textContent = err.message; }
+  }
+  return h("form", { class: "card stack", onsubmit: async e => {
+    e.preventDefault();
+    try {
+      await api("PUT", "/chat-settings", { mode: mode.value, claudeModel: model.value, effort: effort.value, askBeforeCloud: ask.checked,
+        monthlyCapUSD: +cap.value || 0, localURL: url.value.trim(), localModel: localModel.value, apiKey: key.value.trim() });
+      toast("Saved"); route();
+    } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, "Assistant chat"),
+    h("p", { class: "muted small" }, "The chat uses Claude, a local model, or both. Homeport doesn't run a model itself: if this server has no strong graphics card, run LM Studio or Ollama on a computer that has one (a Mac with Apple silicon works well), turn on its network server, and put its address here."),
+    h("label", {}, "Which model answers", mode),
+    h("h3", {}, "Claude"),
+    h("label", {}, "Anthropic API key (kept where only root can read it)", key),
+    cfg.hasKey ? h("div", {}, h("button", { type: "button", class: "danger", onclick: async () => {
+      try { await api("PUT", "/chat-settings", { ...st, removeKey: true }); toast("Key removed"); route(); } catch (err) { toast(err.message); } } }, "Remove the key")) : null,
+    h("div", { class: "row" }, h("label", {}, "Model", model), h("label", {}, "Effort", effort)),
+    h("label", { class: "check" }, ask, "Ask me before sending anything to Claude"),
+    h("label", {}, "Monthly limit for Claude, in US dollars (an estimate; this month so far: about $" + cfg.spent.usd.toFixed(2) + ")", cap),
+    h("p", { class: "muted small" }, "If a safety check declines a request, Anthropic re-runs it on its recommended fallback model (Opus models only)."),
+    h("h3", {}, "Local model"),
+    h("div", { class: "row" }, h("label", {}, "Address of an OpenAI-compatible server", url), h("button", { type: "button", onclick: findModels }, "Find models")),
+    found,
+    h("label", {}, "Model", localModel),
+    h("div", {}, h("button", { class: "primary", type: "submit" }, "Save")));
+}
+
+// MARK: Assistant chat
+
+const chat = { id: null, timer: null, renderedTurns: -1 };
+
+// rich shows a reply's text: ``` blocks as code, `code` and **bold** inline, paragraphs and line breaks kept.
+function rich(text) {
+  const out = [];
+  String(text || "").split(/```/).forEach((part, i) => {
+    if (i % 2) { out.push(h("pre", { class: "log" }, part.replace(/^[a-z0-9+-]*\n/i, "").replace(/\n$/, ""))); return; }
+    for (const para of part.split(/\n{2,}/)) {
+      if (!para.trim()) continue;
+      const lines = para.trim().split("\n");
+      const rows = lines.filter(l => l.trim().startsWith("|"));
+      if (rows.length >= 2 && rows.length === lines.filter(l => l.trim()).length) { out.push(table(rows)); continue; }
+      out.push(h("p", {}, para.trim().split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map(bit =>
+        bit.startsWith("`") && bit.endsWith("`") && bit.length > 2 ? h("code", {}, bit.slice(1, -1))
+        : bit.startsWith("**") && bit.endsWith("**") && bit.length > 4 ? h("b", {}, bit.slice(2, -2)) : bit)));
+    }
+  });
+  return out;
+}
+
+// table shows a Markdown table (some models write them however they're asked).
+function table(rows) {
+  const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim().replace(/\*\*/g, ""));
+  const body = rows.filter(r => !/^\s*\|[\s:|-]+\|\s*$/.test(r)).map(cells);
+  const [head, ...rest] = body;
+  return h("div", { class: "list" }, h("table", {},
+    h("thead", {}, h("tr", {}, head.map(c => h("th", {}, c)))),
+    h("tbody", {}, rest.map(r => h("tr", {}, r.map(c => h("td", {}, c)))))));
+}
+
+function argsText(args) {
+  const parts = Object.entries(args || {}).map(([k, v]) => k + ": " + (typeof v === "string" ? v : JSON.stringify(v)));
+  const t = parts.join(", ");
+  return t.length > 120 ? t.slice(0, 117) + "…" : t;
+}
+
+function turnView(t) {
+  switch (t.role) {
+    case "user": return h("div", { class: "msg user" }, rich(t.text));
+    case "note": return h("div", { class: "msg note" }, t.text);
+    case "tools": return h("div", { class: "msg tools" }, t.results.map(r => h("details", {},
+      h("summary", {}, h("span", { class: "pill " + (r.isError ? "failed" : "done") }, r.isError ? "didn't work" : "result"), " ", r.name),
+      h("pre", { class: "log" }, r.text))));
+    default: return h("div", { class: "msg bot" },
+      t.text ? rich(t.text) : null,
+      (t.calls || []).map(c => h("div", { class: "call small" }, "Uses ", h("b", {}, c.name), c.args && Object.keys(c.args).length ? h("span", { class: "muted" }, " (" + argsText(c.args) + ")") : null)),
+      h("div", { class: "by" }, t.by || ""));
+  }
+}
+
+function chatView(list, cfg) {
+  clearTimeout(chat.timer);
+  chat.renderedTurns = -1;
+  if (chat.id && !list.some(c => c.id === chat.id)) chat.id = null;
+  const ready = cfg.hasKey || cfg.settings.localURL;
+  const thread = h("div", { class: "thread" });
+  const live = h("div", { class: "live", "aria-live": "polite" });
+  const approvals = h("div", { class: "stack" });
+  const input = h("textarea", { rows: "3", placeholder: "Ask about this server, or ask for a change…", "aria-label": "Message" });
+  const use = h("select", { "aria-label": "Which model answers" },
+    h("option", { value: "" }, "Model: as in settings"),
+    cfg.settings.localURL ? h("option", { value: "local" }, "Local model") : null,
+    cfg.hasKey ? h("option", { value: "claude" }, "Claude") : null);
+  const send = h("button", { class: "primary", type: "submit" }, "Send");
+  const stop = h("button", { type: "button", hidden: true, onclick: async () => { try { await api("POST", "/chat/" + chat.id + "/stop"); } catch (err) { toast(err.message); } } }, "Stop");
+  const convs = h("nav", { class: "convs", "aria-label": "Conversations" });
+
+  function drawList(items) {
+    convs.replaceChildren(
+      h("button", { type: "button", class: chat.id ? "" : "current", onclick: () => { chat.id = null; route(); } }, "+ New conversation"),
+      ...items.map(c => h("button", { type: "button", class: c.id === chat.id ? "current" : "", title: c.title,
+        onclick: () => { chat.id = c.id; route(); } }, c.title)));
+  }
+
+  function intro() {
+    if (!ready) return [h("div", { class: "card stack" }, h("h2", {}, "Set up a model first"),
+      h("p", {}, "The chat needs Claude (an Anthropic API key) or a local model running in LM Studio or Ollama on a computer with a good graphics card. ",
+        h("a", { href: "#settings" }, "Open Settings → Assistant chat"), "."))];
+    const ask = text => () => { input.value = text; input.focus(); };
+    return [h("div", { class: "card stack" },
+      h("h2", {}, "Ask me to look after this server"),
+      h("p", { class: "muted" }, "I can see the apps, users, domains, logs and health. Changes wait for your OK: an Approve button shows up here."),
+      h("div", { class: "row" }, ["What's installed, and is everything healthy?", "Why can't I open an app?", "Install Mealie and let everyone use it"].map(t =>
+        h("button", { type: "button", onclick: ask(t) }, t))))];
+  }
+
+  function draw(conv) {
+    const turns = conv ? conv.turns : [];
+    if (turns.length !== chat.renderedTurns) {
+      thread.replaceChildren(...(turns.length ? turns.map(turnView) : intro()));
+      chat.renderedTurns = turns.length;
+      thread.lastElementChild?.scrollIntoView({ block: "end" });
+    }
+    const bits = [];
+    if (conv && conv.partial) bits.push(h("div", { class: "msg bot" }, rich(conv.partial)));
+    if (conv && conv.busy) bits.push(h("p", { class: "muted small status" }, conv.status || "Working…"));
+    if (conv && conv.consent) bits.push(h("div", { class: "card stack consent" },
+      h("p", {}, "This would go to Claude, on Anthropic's servers", conv.consentWhy ? " (" + conv.consentWhy + ")" : "", ". Send it?"),
+      h("div", { class: "row" },
+        h("button", { class: "primary", type: "button", onclick: () => cont({ allowCloud: true }) }, "Send to Claude"),
+        conv.canLocal ? h("button", { type: "button", onclick: () => cont({ use: "local" }) }, "Use the local model") : null)));
+    live.replaceChildren(...bits);
+    const busy = !!(conv && conv.busy);
+    send.disabled = busy || !ready; stop.hidden = !busy;
+  }
+
+  async function cont(body) {
+    try { draw(await api("POST", "/chat/" + chat.id + "/continue", body)); poll(); } catch (err) { toast(err.message); }
+  }
+
+  async function drawApprovals() {
+    const pending = await api("GET", "/approvals").catch(() => []);
+    approvals.replaceChildren(...pending.map(p => h("div", { class: "card approval" },
+      h("div", {}, h("b", {}, p.summary), h("div", { class: "muted small" }, p.client + " · " + p.tool)),
+      h("div", { class: "row" },
+        h("button", { class: "primary", type: "button", onclick: () => decide(p, "approve") }, "Approve"),
+        h("button", { class: "danger", type: "button", onclick: () => decide(p, "deny") }, "Decline")))));
+  }
+  async function decide(p, d) {
+    try { await api("POST", "/approvals/" + p.id + "/" + d); toast(d === "approve" ? "Approved" : "Declined"); } catch (err) { toast(err.message); }
+    drawApprovals();
+  }
+
+  async function poll() {
+    clearTimeout(chat.timer);
+    if (location.hash !== "#assistant") return;
+    let busy = false;
+    try {
+      if (chat.id) { const conv = await api("GET", "/chat/" + chat.id); draw(conv); busy = conv.busy; }
+      await drawApprovals();
+      if (!busy && chat.id) drawList(await api("GET", "/chat"));
+    } catch (err) { if (/no such conversation/.test(err.message)) { chat.id = null; route(); return; } }
+    chat.timer = setTimeout(poll, busy ? 900 : 4000);
+  }
+
+  const form = h("form", { class: "composer", onsubmit: async e => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    send.disabled = true;
+    try {
+      const conv = await api("POST", "/chat", { conversation: chat.id || "", text, use: use.value });
+      const isNew = chat.id !== conv.id;
+      chat.id = conv.id; input.value = "";
+      if (isNew) drawList(await api("GET", "/chat"));
+      draw(conv); poll();
+    } catch (err) { toast(err.message); send.disabled = false; }
+  } }, input, h("div", { class: "row" }, use, stop, send));
+  input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
+
+  drawList(list);
+  draw(null);
+  setTimeout(poll, 0);
+  const spent = cfg.hasKey ? "Claude this month: about $" + cfg.spent.usd.toFixed(2) + (cfg.settings.monthlyCapUSD ? " of $" + cfg.settings.monthlyCapUSD : "") : "";
+  return [
+    h("div", { class: "head" }, h("h1", {}, "Assistant"),
+      h("div", { class: "row" }, spent ? h("span", { class: "muted small" }, spent) : null, h("a", { class: "button", href: "#activity" }, "Approvals and activity"))),
+    h("div", { class: "chat" }, convs, h("div", { class: "stack" }, approvals, thread, live, form)),
+  ];
+}
 
 async function route() {
   const name = (location.hash || "#overview").slice(1);

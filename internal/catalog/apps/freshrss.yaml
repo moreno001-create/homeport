@@ -1,0 +1,21 @@
+id: freshrss
+name: FreshRSS
+description: A fast news and blog reader that follows your feeds, with apps on every platform.
+category: Dev & tools
+website: https://freshrss.org
+signIn: gate
+notes: |
+  Open it to finish setup and create your FreshRSS account. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: docker.io/freshrss/freshrss:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        TZ: "{{.TimeZone}}"
+        CRON_MIN: "*/20"
+        TRUSTED_PROXY: "172.16.0.0/12 192.168.0.0/16 10.0.0.0/8"
+      volumes:
+        - "{{.Data}}/data:/var/www/FreshRSS/data"
+        - "{{.Data}}/extensions:/var/www/FreshRSS/extensions"
+      restart: unless-stopped

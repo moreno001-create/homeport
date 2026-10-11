@@ -87,6 +87,9 @@ type Vars struct {
 	CABundle    string
 	CALocal     string
 	InternalTLS bool
+	// HostIP is this machine's address on the local network, for apps that serve the network directly (DNS on port
+	// 53, say) rather than through Caddy.
+	HostIP string
 }
 
 // All lists the catalog, sorted by name.

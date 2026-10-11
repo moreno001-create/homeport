@@ -1,0 +1,37 @@
+id: mealie
+name: Mealie
+description: Collect recipes from any website, plan meals and make shopping lists, for the whole household.
+category: Documents & productivity
+website: https://mealie.io
+signIn: gate
+oidc:
+  redirectPaths: ["/login", "/login?direct=1"]
+notes: |
+  Sign in with "Login with Homeport"; accounts are made the first time, and Homeport admins are Mealie admins. People
+  need an email address in Homeport for Mealie.
+compose: |
+  services:
+    app:
+      image: ghcr.io/mealie-recipes/mealie:latest
+      ports: ["127.0.0.1:{{.Port}}:9000"]
+      extra_hosts: ["{{.MainDomain}}:host-gateway"]
+      environment:
+        BASE_URL: "https://{{.Domain}}"
+        ALLOW_SIGNUP: "false"
+        TZ: "{{.TimeZone}}"
+        OIDC_AUTH_ENABLED: "true"
+        OIDC_SIGNUP_ENABLED: "true"
+        OIDC_CONFIGURATION_URL: "{{.Issuer}}/.well-known/openid-configuration"
+        OIDC_CLIENT_ID: "{{.ClientID}}"
+        OIDC_CLIENT_SECRET: "{{secret "oidc_client_secret"}}"
+        OIDC_PROVIDER_NAME: Homeport
+        OIDC_ADMIN_GROUP: admins
+        OIDC_GROUPS_CLAIM: groups
+        OIDC_SCOPES_OVERRIDE: "openid profile email groups"
+        OIDC_REMEMBER_ME: "true"
+        REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+        SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      volumes:
+        - "{{.Data}}/data:/app/data"
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
+      restart: unless-stopped

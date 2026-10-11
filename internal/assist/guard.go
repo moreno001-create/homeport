@@ -26,6 +26,8 @@ var (
 	// key: value / key=value pairs whose name says they're secret.
 	secretPairRe = regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)[a-z0-9_.-]*)(["']?\s*[:=]\s*["']?)([^\s"',;]{4,})`)
 	bearerRe     = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[a-z0-9._~+/=-]{12,}`)
+	// Anthropic API keys (the chat's own key lives in a file a shell command could read).
+	anthropicKeyRe = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{8,}`)
 )
 
 const hidden = "••••••"
@@ -50,6 +52,7 @@ func Redact(store *state.Store, text string) string {
 	}
 	text = privateKeyRe.ReplaceAllString(text, "[private key hidden]")
 	text = bearerRe.ReplaceAllString(text, "$1 "+hidden)
+	text = anthropicKeyRe.ReplaceAllString(text, hidden)
 	text = secretPairRe.ReplaceAllString(text, "${1}${2}"+hidden)
 	return text
 }

@@ -1,0 +1,43 @@
+id: immich
+name: Immich
+description: Photo and video backup with phone apps, faces, places and search, like Google Photos on your own server.
+category: Photos & media
+website: https://immich.app
+signIn: own
+secrets: [db_password]
+notes: |
+  Open it to create the first account (it becomes Immich's admin). The Immich phone apps connect straight to this
+  address, so it stays public; Immich's own accounts protect it. Photos are kept in the app's data folder (library).
+compose: |
+  services:
+    server:
+      image: ghcr.io/immich-app/immich-server:release
+      ports: ["127.0.0.1:{{.Port}}:2283"]
+      environment: &env
+        DB_HOSTNAME: database
+        DB_USERNAME: immich
+        DB_PASSWORD: "{{secret "db_password"}}"
+        DB_DATABASE_NAME: immich
+        REDIS_HOSTNAME: redis
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/library:/data"]
+      depends_on: [redis, database]
+      restart: unless-stopped
+    machine-learning:
+      image: ghcr.io/immich-app/immich-machine-learning:release
+      environment: *env
+      volumes: ["{{.Data}}/model-cache:/cache"]
+      restart: unless-stopped
+    redis:
+      image: docker.io/valkey/valkey:8
+      restart: unless-stopped
+    database:
+      image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+      environment:
+        POSTGRES_USER: immich
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+        POSTGRES_DB: immich
+        POSTGRES_INITDB_ARGS: "--data-checksums"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      shm_size: 128mb
+      restart: unless-stopped

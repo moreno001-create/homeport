@@ -14,6 +14,11 @@ Docker and Caddy. (Working name.)
   Homeport accounts directly. Nextcloud ("Log in with Homeport", groups included) and Vaultwarden (single sign-on)
   are set up for it on install. An app only gets people whose groups may open it.
 - **Admin panel** at `https://<main domain>/admin`, and the `homeport` command for the same things over SSH.
+- **An assistant** in the admin panel that can look after the server for you (see below).
+
+Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
+AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma
+and whoami (a test page).
 
 ## How it fits together
 
@@ -72,7 +77,19 @@ The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it fro
 
 ## AI helpers
 
-Homeport's abilities are tools for AI agents, over MCP: `sudo homeport mcp` connects opencode, Claude Code or any
+**The chat** (admin panel → Assistant) answers with Claude, a local model, or both:
+
+- **Claude** with an Anthropic API key (Settings → Assistant chat; kept in `/var/lib/homeport/anthropic-api-key`,
+  root-only). Default model `claude-opus-5-5` at medium effort. If a safety check declines a request, Anthropic re-runs
+  it on its recommended fallback model (server-side fallbacks, Opus models).
+- **A local model** on any OpenAI-compatible server: LM Studio, Ollama, llama.cpp. Homeport doesn't run one itself;
+  a server without a strong graphics card points at a computer that has one (a Mac with Apple silicon works well).
+- **Automatic** mode sends easy questions to the local model and troubleshooting or bigger jobs to Claude; the local
+  model can also hand a conversation to Claude. Optional: ask before anything goes to Claude, and a monthly dollar
+  limit (an estimate, in `/var/lib/homeport/assistant-usage.json`).
+- Conversations are kept in memory, per admin; a restart of Homeport starts afresh.
+
+The chat uses the same tools and rules as outside agents. Homeport's abilities are tools for AI agents, over MCP: `sudo homeport mcp` connects opencode, Claude Code or any
 MCP client (on the server, or over `ssh`).
 
 - **Look** tools (apps, logs, health, users, domains, Caddy config, domain checks) run straight away.
@@ -110,6 +127,5 @@ works once), RS256 tokens signed with `/var/lib/homeport/oidc-signing-key.pem`. 
 
 ## Not done yet
 
-Homeport's own assistant (chat in the admin panel, Claude or a local model, routing easy tasks to the local one),
-LDAP for apps that can't do OIDC, email, backups, apps on a path (`example.com/app`), the YunoHost-style
+Saved chat history, LDAP for apps that can't do OIDC, email, backups, apps on a path (`example.com/app`), the YunoHost-style
 diagnosis page, updating Homeport itself from the panel, and more catalog apps.

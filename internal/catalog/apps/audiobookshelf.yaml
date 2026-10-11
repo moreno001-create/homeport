@@ -1,0 +1,22 @@
+id: audiobookshelf
+name: Audiobookshelf
+description: Your audiobooks and podcasts, with progress synced across its phone apps.
+category: Photos & media
+website: https://www.audiobookshelf.org
+signIn: own
+notes: |
+  Open it to create the first (root) account. Put books in the audiobooks folder and podcasts in the podcasts folder
+  inside the app's data folder. Its phone apps connect straight to this address, so it stays public.
+compose: |
+  services:
+    app:
+      image: ghcr.io/advplyr/audiobookshelf:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/config:/config"
+        - "{{.Data}}/metadata:/metadata"
+        - "{{.Data}}/audiobooks:/audiobooks"
+        - "{{.Data}}/podcasts:/podcasts"
+      restart: unless-stopped

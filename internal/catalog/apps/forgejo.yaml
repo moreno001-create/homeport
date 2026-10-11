@@ -1,0 +1,45 @@
+id: forgejo
+name: Forgejo
+description: "Your own GitHub: Git repositories, issues, pull requests and wikis."
+category: Dev & tools
+website: https://forgejo.org
+signIn: own
+secrets: [admin_password]
+oidc:
+  redirectPaths: [/user/oauth2/Homeport/callback]
+notes: |
+  Sign in with "Sign in with Homeport"; accounts are made the first time, and Homeport admins are Forgejo admins.
+  A local administrator "forgejo-admin" exists too (password in this app's secrets). Git over HTTPS works with the
+  same address; it stays public so Git clients can reach it.
+compose: |
+  services:
+    app:
+      image: codeberg.org/forgejo/forgejo:16
+      ports: ["127.0.0.1:{{.Port}}:3000"]
+      extra_hosts: ["{{.MainDomain}}:host-gateway"]
+      environment:
+        USER_UID: "1000"
+        USER_GID: "1000"
+        FORGEJO__server__ROOT_URL: "https://{{.Domain}}/"
+        FORGEJO__server__DOMAIN: "{{.Domain}}"
+        FORGEJO__server__DISABLE_SSH: "true"
+        FORGEJO__database__DB_TYPE: sqlite3
+        FORGEJO__security__INSTALL_LOCK: "true"
+        FORGEJO__service__DISABLE_REGISTRATION: "false"
+        FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"
+        FORGEJO__openid__ENABLE_OPENID_SIGNIN: "false"
+        FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+        FORGEJO__oauth2_client__USERNAME: nickname
+        FORGEJO__oauth2_client__ACCOUNT_LINKING: auto
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/data:/data"
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
+      restart: unless-stopped
+afterInstall:
+  - service: app
+    user: git
+    run: [sh, -c, "forgejo admin user list | grep -q forgejo-admin || forgejo admin user create --admin --username forgejo-admin --email forgejo-admin@{{.Domain}} --password '{{secret \"admin_password\"}}' --must-change-password=false"]
+  - service: app
+    user: git
+    run: [sh, -c, "forgejo admin auth list | grep -q Homeport || forgejo admin auth add-oauth --name Homeport --provider openidConnect --key {{.ClientID}} --secret '{{secret \"oidc_client_secret\"}}' --auto-discover-url {{.Issuer}}/.well-known/openid-configuration --scopes openid --scopes profile --scopes email --scopes groups --group-claim-name groups --admin-group admins --skip-local-2fa"]

@@ -38,6 +38,8 @@ type Server struct {
 	Signer *Signer
 	// Assist runs tools for AI helpers (MCP on the root socket, approvals and audit in the admin panel).
 	Assist *assist.Assistant
+	// Chat is the admin panel's assistant chat (Claude or a local model, with the same tools).
+	Chat *assist.Chat
 	// LocalAddrs are this machine's own network addresses: the portal and admin panel answer on them too, so
 	// https://192.168.1.50/admin works before any DNS is set up.
 	LocalAddrs func() []string

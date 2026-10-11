@@ -1,0 +1,22 @@
+id: navidrome
+name: Navidrome
+description: Stream your music collection to the browser and to any Subsonic-compatible phone app.
+category: Photos & media
+website: https://www.navidrome.org
+signIn: own
+notes: |
+  Open it to create the first (admin) account. Put music in the music folder inside the app's data folder. Music apps
+  (Subsonic clients) connect straight to this address, so it stays public.
+compose: |
+  services:
+    app:
+      image: deluan/navidrome:latest
+      ports: ["127.0.0.1:{{.Port}}:4533"]
+      environment:
+        ND_MUSICFOLDER: /music
+        ND_SCANSCHEDULE: 1h
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/data:/data"
+        - "{{.Data}}/music:/music:ro"
+      restart: unless-stopped

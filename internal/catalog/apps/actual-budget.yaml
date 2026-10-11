@@ -1,0 +1,15 @@
+id: actual-budget
+name: Actual Budget
+description: Envelope-style budgeting that's fast and private, with your data on your own server.
+category: Documents & productivity
+website: https://actualbudget.org
+signIn: gate
+notes: |
+  Open it and choose a server password the first time. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: docker.io/actualbudget/actual-server:latest
+      ports: ["127.0.0.1:{{.Port}}:5006"]
+      volumes: ["{{.Data}}/data:/data"]
+      restart: unless-stopped

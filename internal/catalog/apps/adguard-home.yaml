@@ -1,0 +1,29 @@
+id: adguard-home
+name: AdGuard Home
+description: Blocks ads and trackers for every device on your network, and can give your devices local names.
+category: Home & network
+website: https://adguard.com/adguard-home/overview.html
+signIn: gate
+notes: |
+  To use it, set your router's DNS server (or a device's) to this server's address. Only the groups you allow can
+  open its settings. Under Filters > DNS rewrites you can give names to devices on your network.
+compose: |
+  services:
+    # A first configuration that skips the setup wizard and keeps the web page on one port. Runs once.
+    setup:
+      image: busybox:latest
+      volumes: ["{{.Data}}/conf:/conf"]
+      command: ["sh", "-c", "[ -f /conf/AdGuardHome.yaml ] || printf 'http:\n  address: 0.0.0.0:3000\nusers: []\ndns:\n  bind_hosts:\n    - 0.0.0.0\n  port: 53\n  upstream_dns:\n    - https://dns10.quad9.net/dns-query\n    - https://dns.cloudflare.com/dns-query\n  bootstrap_dns:\n    - 9.9.9.10\n    - 1.1.1.1\nschema_version: 28\n' > /conf/AdGuardHome.yaml"]
+    app:
+      image: adguard/adguardhome:latest
+      depends_on:
+        setup:
+          condition: service_completed_successfully
+      ports:
+        - "127.0.0.1:{{.Port}}:3000"
+        - "{{.HostIP}}:53:53/tcp"
+        - "{{.HostIP}}:53:53/udp"
+      volumes:
+        - "{{.Data}}/work:/opt/adguardhome/work"
+        - "{{.Data}}/conf:/opt/adguardhome/conf"
+      restart: unless-stopped
