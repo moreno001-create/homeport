@@ -121,9 +121,20 @@ type App struct {
 	Secrets   map[string]string `json:"secrets,omitempty"`
 	Installed time.Time         `json:"installed"`
 	Updated   time.Time         `json:"updated,omitempty"`
+	// Source is set for an app installed from a repository rather than the catalog (its manifest is homeport.yaml in
+	// the app's folder).
+	Source *Source `json:"source,omitempty"`
 	// OIDC is set for apps that sign people in with Homeport over OpenID Connect (client id = app id; the client
 	// secret is Secrets["oidc_client_secret"]).
 	OIDC *OIDCClient `json:"oidc,omitempty"`
+}
+
+// Source is where an app from outside the catalog came from.
+type Source struct {
+	URL    string `json:"url"`
+	Commit string `json:"commit"`
+	// By says who wrote its manifest: "repository" (its own homeport.yaml), a model's name, or "admin" (edited).
+	By string `json:"by,omitempty"`
 }
 
 type OIDCClient struct {

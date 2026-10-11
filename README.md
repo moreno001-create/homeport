@@ -22,6 +22,13 @@ Docker and Caddy. (Working name.)
 - **A web terminal** (off by default: Settings, or `homeport terminal on`): admins only, then the Linux login prompt.
 - **An assistant** in the admin panel that can look after the server for you (see below).
 
+- **Apps from GitHub**, like YunoHost's custom apps: give a repository's address (Apps → Install from GitHub, or
+  `homeport app install https://github.com/owner/app --domain …`). Homeport reads its `homeport.yaml` (same format as
+  the catalog), or has the assistant (Claude or the local model) write one from its Docker Compose file and README.
+  Nothing from the repository runs until you've reviewed it, it's pinned to one commit, and Homeport refuses anything
+  that reaches outside the app's own folder and port: privileged containers, the host's network, the Docker socket,
+  folders from the server, extra published ports, builds from source.
+
 Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
 AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma
 and whoami (a test page).

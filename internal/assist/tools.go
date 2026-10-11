@@ -67,8 +67,12 @@ func (a *Assistant) define() []Tool {
 				}
 				var b strings.Builder
 				for _, x := range list {
-					fmt.Fprintf(&b, "- %s (%s): https://%s, open to %s, %s, installed %s from catalog %q%s\n", x.ID, x.Name, x.Domain,
-						accessText(x.Access), a.Apps.Status(ctx, x.ID), x.Installed.Format("2006-01-02"), x.Catalog, oidcText(x))
+					from := fmt.Sprintf("catalog %q", x.Catalog)
+					if x.Source != nil {
+						from = fmt.Sprintf("%s (commit %.12s, not from the catalog)", x.Source.URL, x.Source.Commit)
+					}
+					fmt.Fprintf(&b, "- %s (%s): https://%s, open to %s, %s, installed %s from %s%s\n", x.ID, x.Name, x.Domain,
+						accessText(x.Access), a.Apps.Status(ctx, x.ID), x.Installed.Format("2006-01-02"), from, oidcText(x))
 				}
 				return b.String(), nil
 			}},

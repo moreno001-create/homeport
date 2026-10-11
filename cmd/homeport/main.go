@@ -120,6 +120,7 @@ func usage() {
   homeport app catalog
   homeport app list
   homeport app install CATALOG-ID --domain DOMAIN [--public | --groups a,b] [--id ID]
+  homeport app install https://github.com/owner/app --domain DOMAIN [--model claude|local] [--yes]
   homeport app update ID
   homeport app access ID (--public | --groups a,b)
   homeport app secrets ID
@@ -311,14 +312,23 @@ func call(method, path string, body, out any) error {
 
 // follow prints a background job's log as it grows, until it ends.
 func follow(path string, body any, method string) error {
-	var j struct{ ID, Status, Error, Log string }
+	_, err := followResult(path, body, method)
+	return err
+}
+
+// followResult is follow for jobs that make something (a draft manifest), returning it.
+func followResult(path string, body any, method string) (json.RawMessage, error) {
+	var j struct {
+		ID, Status, Error, Log string
+		Result                 json.RawMessage
+	}
 	if err := call(method, path, body, &j); err != nil {
-		return err
+		return nil, err
 	}
 	printed := 0
 	for {
 		if err := call("GET", "/jobs/"+j.ID, nil, &j); err != nil {
-			return err
+			return nil, err
 		}
 		if len(j.Log) > printed {
 			fmt.Print(j.Log[printed:])
@@ -326,9 +336,9 @@ func follow(path string, body any, method string) error {
 		}
 		if j.Status != "running" {
 			if j.Status == "failed" {
-				return errors.New(j.Error)
+				return nil, errors.New(j.Error)
 			}
-			return nil
+			return j.Result, nil
 		}
 		time.Sleep(700 * time.Millisecond)
 	}
@@ -705,11 +715,49 @@ func cmdApp(args []string) error {
 		public := fs.Bool("public", false, "anyone can open it")
 		groups := fs.String("groups", "", "only these groups (all = every user)")
 		id := fs.String("id", "", "instance id (defaults to the catalog id)")
+		use := fs.String("model", "", "for a repository without homeport.yaml: claude or local (default: Claude if there's a key)")
+		yes := fs.Bool("yes", false, "for a repository: install without asking, if it passes the checks")
 		pos := parse(fs, rest)
 		if len(pos) != 1 || *domain == "" {
-			return errors.New("usage: homeport app install CATALOG-ID --domain DOMAIN [--public | --groups a,b]")
+			return errors.New("usage: homeport app install (CATALOG-ID | https://github.com/owner/app) --domain DOMAIN [--public | --groups a,b]")
 		}
 		req := map[string]any{"catalog": pos[0], "domain": *domain, "id": *id}
+		if strings.Contains(pos[0], "github.com") {
+			raw, err := followResult("/apps/draft", map[string]string{"url": pos[0], "use": *use}, "POST")
+			if err != nil {
+				return err
+			}
+			var d struct {
+				Source   state.Source
+				Manifest string
+				Review   struct{ Problems, Warnings []string }
+			}
+			if err := json.Unmarshal(raw, &d); err != nil {
+				return err
+			}
+			fmt.Printf("\n--- Manifest (%s) ---\n%s---\n", d.Source.By, d.Manifest)
+			for _, w := range d.Review.Warnings {
+				fmt.Println("Good to know:", w)
+			}
+			if len(d.Review.Problems) > 0 {
+				for _, p := range d.Review.Problems {
+					fmt.Println("Problem:", p)
+				}
+				return errors.New("Homeport won't install this as it is (fix it in the admin panel's Install from GitHub)")
+			}
+			fmt.Println("\nThis app isn't from Homeport's catalog: it was checked, not reviewed. Only install apps you trust.")
+			if !*yes {
+				if !term.IsTerminal(int(os.Stdin.Fd())) {
+					return errors.New("add --yes to install it without a terminal to ask on")
+				}
+				fmt.Print("Install it? [y/N] ")
+				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+				if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+					return errors.New("not installed")
+				}
+			}
+			req = map[string]any{"manifest": d.Manifest, "source": d.Source, "domain": *domain, "id": *id}
+		}
 		if *public {
 			req["access"] = state.Access{Public: true}
 		} else if *groups != "" {

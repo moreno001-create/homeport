@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"homeport/internal/catalog"
 	"homeport/internal/certs"
 	"homeport/internal/dyndns"
+	"homeport/internal/source"
 	"homeport/internal/state"
 )
 
@@ -71,6 +73,8 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("GET /api/catalog", guard(s.listCatalog))
 	mux.HandleFunc("GET /api/apps", guard(s.listApps))
 	mux.HandleFunc("POST /api/apps", guard(s.installApp))
+	mux.HandleFunc("POST /api/apps/draft", guard(s.draftApp))
+	mux.HandleFunc("POST /api/apps/check", guard(s.checkApp))
 	mux.HandleFunc("POST /api/apps/{id}/update", guard(s.updateApp))
 	mux.HandleFunc("DELETE /api/apps/{id}", guard(s.removeApp))
 	mux.HandleFunc("PUT /api/apps/{id}/access", guard(s.setAccess))
@@ -777,22 +781,23 @@ func (s *Server) listCatalog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 	type row struct {
-		ID        string       `json:"id"`
-		Catalog   string       `json:"catalog"`
-		Name      string       `json:"name"`
-		Domain    string       `json:"domain"`
-		Access    state.Access `json:"access"`
-		Status    string       `json:"status"`
-		Installed time.Time    `json:"installed"`
-		Updated   *time.Time   `json:"updated,omitempty"`
-		HasSecret bool         `json:"hasSecrets"`
+		ID        string        `json:"id"`
+		Catalog   string        `json:"catalog"`
+		Name      string        `json:"name"`
+		Domain    string        `json:"domain"`
+		Access    state.Access  `json:"access"`
+		Status    string        `json:"status"`
+		Installed time.Time     `json:"installed"`
+		Updated   *time.Time    `json:"updated,omitempty"`
+		HasSecret bool          `json:"hasSecrets"`
+		Source    *state.Source `json:"source,omitempty"`
 	}
 	var list []state.App
 	s.Store.Read(func(d *state.Data) { list = d.Apps() })
 	out := make([]row, len(list))
 	var wg sync.WaitGroup
 	for i, a := range list {
-		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0}
+		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t
@@ -827,11 +832,109 @@ func (s *Server) installApp(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 	}
-	job := s.jobs.start("install "+in.Catalog, func(ctx context.Context, j *job) error {
+	what := in.Catalog
+	if in.Manifest != "" {
+		// Refused before it starts, so the admin sees why straight away.
+		if _, err := apps.Outside(in.Manifest); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if in.Source == nil {
+			writeError(w, http.StatusBadRequest, errors.New("an app from outside the catalog needs its source"))
+			return
+		}
+		what = in.Source.URL
+	}
+	job := s.jobs.start("install "+what, func(ctx context.Context, j *job) error {
 		_, err := s.Apps.Install(ctx, in, installer, j)
 		return err
 	})
 	writeJSON(w, http.StatusAccepted, job.view())
+}
+
+// draftApp reads an app from a GitHub repository and prepares its manifest: the repository's own homeport.yaml, or
+// one a model writes from its compose file. Nothing is installed; the admin reviews it first. The job's result is a
+// draftResult.
+func (s *Server) draftApp(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URL string `json:"url"`
+		Use string `json:"use"` // "claude", "local" or "" (Claude if there's a key)
+		// AI asks a model even when the repository has its own manifest.
+		AI bool `json:"ai"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	repo, err := source.ParseURL(in.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	j := s.jobs.start("read "+repo.URL(), func(ctx context.Context, j *job) error {
+		fmt.Fprintf(j, "Reading %s…\n", repo.URL())
+		files, err := source.Fetch(ctx, repo)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(j, "Commit %.12s.\n", files.Commit)
+		res := draftResult{Source: state.Source{URL: repo.URL(), Commit: files.Commit}, Compose: files.ComposeName}
+		for n := range files.Extra {
+			res.Files = append(res.Files, n)
+		}
+		sort.Strings(res.Files)
+		if files.Manifest != "" && !in.AI {
+			fmt.Fprintln(j, "It has its own homeport.yaml.")
+			res.Manifest, res.Source.By, res.Review = files.Manifest, "repository", review(files.Manifest)
+		} else {
+			if s.Chat == nil {
+				return errors.New("there's no assistant on this server to write the manifest")
+			}
+			fmt.Fprintf(j, "It has %s and no homeport.yaml, so the assistant writes one.\n", cmp.Or(files.ComposeName, "a homeport.yaml"))
+			d, err := s.Chat.DraftApp(ctx, files, in.Use, func(line string) { fmt.Fprintln(j, line) })
+			if err != nil {
+				return err
+			}
+			res.Manifest, res.Source.By, res.Review = d.Manifest, d.By, d.Review
+		}
+		if res.Review.OK() {
+			fmt.Fprintln(j, "It passed Homeport's checks. Review it before installing.")
+		} else {
+			fmt.Fprintln(j, "It doesn't pass Homeport's checks yet: see the problems below.")
+		}
+		j.setResult(res)
+		return nil
+	})
+	writeJSON(w, http.StatusAccepted, j.view())
+}
+
+type draftResult struct {
+	Source   state.Source   `json:"source"`
+	Manifest string         `json:"manifest"`
+	Review   catalog.Review `json:"review"`
+	Compose  string         `json:"compose,omitempty"` // which compose file it was made from
+	Files    []string       `json:"files"`             // the other files read
+}
+
+// review checks a manifest, with a parse error as its problem.
+func review(manifest string) catalog.Review {
+	entry, err := catalog.Parse(manifest)
+	if err != nil {
+		return catalog.Review{Problems: []string{err.Error()}}
+	}
+	return entry.Check()
+}
+
+// checkApp checks a manifest an admin edited.
+func (s *Server) checkApp(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Manifest string `json:"manifest"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, review(in.Manifest))
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
@@ -898,6 +1001,13 @@ type job struct {
 	done     bool
 	err      error
 	started  time.Time
+	result   any // what the job made, for jobs that make something (a draft)
+}
+
+func (j *job) setResult(v any) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.result = v
 }
 
 func (j *job) Write(p []byte) (int, error) {
@@ -916,12 +1026,13 @@ type jobView struct {
 	Error   string    `json:"error,omitempty"`
 	Log     string    `json:"log"`
 	Started time.Time `json:"started"`
+	Result  any       `json:"result,omitempty"`
 }
 
 func (j *job) view() jobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	v := jobView{ID: j.id, What: j.what, Status: "running", Log: j.log.String(), Started: j.started}
+	v := jobView{ID: j.id, What: j.what, Status: "running", Log: j.log.String(), Started: j.started, Result: j.result}
 	if j.done {
 		v.Status = "done"
 		if j.err != nil {

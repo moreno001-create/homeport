@@ -164,3 +164,12 @@ pre.log { margin: 0; max-height: 320px; overflow: auto; background: var(--soft);
   .chat { grid-template-columns: 1fr; }
   .convs { position: static; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; max-height: none; }
 }
+
+/* Installing from GitHub */
+dialog:has(form.wide) { width: min(780px, calc(100vw - 32px)); }
+textarea.code { font: 12px/1.45 var(--mono); white-space: pre; overflow: auto; }
+.problems { border-color: var(--bad); }
+.problems b { color: var(--bad); }
+.warnings b { color: var(--warn); }
+.problems ul, .warnings ul { margin: 6px 0 0; padding-left: 20px; }
+.warn-box { padding: 10px 12px; border-radius: 8px; color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }

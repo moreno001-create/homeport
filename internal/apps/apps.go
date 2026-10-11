@@ -44,10 +44,14 @@ type Manager struct {
 }
 
 type InstallRequest struct {
-	Catalog string        `json:"catalog"`
-	ID      string        `json:"id,omitempty"` // defaults to the catalog id (with -2, -3… if taken)
-	Domain  string        `json:"domain"`
-	Access  *state.Access `json:"access,omitempty"` // defaults by the app's sign-in style
+	Catalog string `json:"catalog"`
+	// Manifest installs an app from outside the catalog instead (YAML in the catalog's format), from Source. It's
+	// checked first: anything that reaches outside the app's own folder and port is refused.
+	Manifest string        `json:"manifest,omitempty"`
+	Source   *state.Source `json:"source,omitempty"`
+	ID       string        `json:"id,omitempty"` // defaults to the catalog id (with -2, -3… if taken)
+	Domain   string        `json:"domain"`
+	Access   *state.Access `json:"access,omitempty"` // defaults by the app's sign-in style
 }
 
 func (m *Manager) dir(id string) string { return filepath.Join(m.Root, id) }
@@ -83,9 +87,20 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entry, ok := catalog.Get(req.Catalog)
-	if !ok {
-		return state.App{}, fmt.Errorf("there's no %q in the catalog", req.Catalog)
+	var entry catalog.App
+	if req.Manifest != "" {
+		var err error
+		if entry, err = Outside(req.Manifest); err != nil {
+			return state.App{}, err
+		}
+		if req.Source == nil || req.Source.URL == "" {
+			return state.App{}, errors.New("an app from outside the catalog needs to say where it came from")
+		}
+	} else {
+		var ok bool
+		if entry, ok = catalog.Get(req.Catalog); !ok {
+			return state.App{}, fmt.Errorf("there's no %q in the catalog", req.Catalog)
+		}
 	}
 	domain := strings.ToLower(strings.TrimSpace(req.Domain))
 	if err := auth.ValidDomain(domain); err != nil {
@@ -148,6 +163,10 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 		}
 		app = state.App{ID: id, Catalog: entry.ID, Name: entry.Name, Domain: domain, Port: port, Access: access,
 			Secrets: secrets, Installed: time.Now(), OIDC: oidcClient(entry, domain)}
+		if req.Manifest != "" {
+			src := *req.Source
+			app.Catalog, app.Source = "", &src
+		}
 		d.AddApp(app)
 		return nil
 	})
@@ -167,6 +186,12 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 	if err := m.writeCompose(entry, app, installer); err != nil {
 		return undo(err)
 	}
+	if req.Manifest != "" {
+		fmt.Fprintf(log, "From %s (commit %.12s). It isn't from Homeport's catalog: it was checked, not reviewed.\n", app.Source.URL, app.Source.Commit)
+		if err := os.WriteFile(filepath.Join(m.dir(app.ID), manifestFile), []byte(req.Manifest), 0o600); err != nil {
+			return undo(err)
+		}
+	}
 	if err := m.compose(ctx, app.ID, log, "pull"); err != nil {
 		return undo(fmt.Errorf("downloading the app failed: %w", err))
 	}
@@ -184,6 +209,35 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 		fmt.Fprintf(log, "\n%s\n", strings.TrimSpace(entry.Notes))
 	}
 	return app, nil
+}
+
+// manifestFile keeps the manifest of an app from outside the catalog, in its folder, for updates.
+const manifestFile = "homeport.yaml"
+
+// Outside reads and checks the manifest of an app from outside the catalog.
+func Outside(text string) (catalog.App, error) {
+	entry, err := catalog.Parse(text)
+	if err != nil {
+		return catalog.App{}, err
+	}
+	if r := entry.Check(); !r.OK() {
+		return catalog.App{}, fmt.Errorf("not installed, because it could reach outside its own folder and port:\n- %s", strings.Join(r.Problems, "\n- "))
+	}
+	return entry, nil
+}
+
+// entryOf is the manifest an installed app runs from: its catalog entry, or its own.
+func (m *Manager) entryOf(app state.App) (catalog.App, bool, error) {
+	if app.Source != nil {
+		b, err := os.ReadFile(filepath.Join(m.dir(app.ID), manifestFile))
+		if err != nil {
+			return catalog.App{}, false, fmt.Errorf("%s's manifest is missing: %w", app.Name, err)
+		}
+		e, err := Outside(string(b))
+		return e, err == nil, err
+	}
+	e, ok := catalog.Get(app.Catalog)
+	return e, ok, nil
 }
 
 // oidcClient is the OIDC registration an app gets from its manifest, on its domain.
@@ -267,6 +321,9 @@ func (m *Manager) writeCompose(entry catalog.App, app state.App, installer state
 		return err
 	}
 	header := fmt.Sprintf("# %s, installed by Homeport from the catalog entry %q. Homeport rewrites this file on updates.\n", app.Name, entry.ID)
+	if app.Source != nil {
+		header = fmt.Sprintf("# %s, installed by Homeport from %s (commit %.12s). Homeport rewrites this file on updates.\n", app.Name, app.Source.URL, app.Source.Commit)
+	}
 	return os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(header+text), 0o600)
 }
 
@@ -278,7 +335,10 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entry, known := catalog.Get(app.Catalog)
+	entry, known, err := m.entryOf(app)
+	if err != nil {
+		return err
+	}
 	if known {
 		// A newer manifest may need secrets this install doesn't have yet (a new Redis password, say), or sign in
 		// with Homeport now.

@@ -74,7 +74,7 @@ const views = {
   async apps() {
     const [installed, catalog] = await Promise.all([api("GET", "/apps"), api("GET", "/catalog")]);
     const rows = installed.map(a => h("tr", {},
-      h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id)),
+      h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])),
       h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain)),
       h("td", {}, accessText(a.access)),
       h("td", {}, h("span", { class: "pill " + a.status.split(" ")[0] }, a.status)),
@@ -84,7 +84,7 @@ const views = {
         h("button", { onclick: () => runJob("Updating " + a.name, () => api("POST", "/apps/" + a.id + "/update")) }, "Update"),
         h("button", { class: "danger", onclick: () => removeDialog(a) }, "Remove"))));
     return [
-      h("div", { class: "head" }, h("h1", {}, "Apps")),
+      h("div", { class: "head" }, h("h1", {}, "Apps"), h("button", { onclick: fromGitHubDialog }, "Install from GitHub")),
       installed.length
         ? h("div", { class: "list" }, h("table", {}, h("thead", {}, h("tr", {}, ["App", "Address", "Who can open it", "Status", ""].map(t => h("th", {}, t)))), h("tbody", {}, rows)))
         : h("p", { class: "muted" }, "Nothing installed yet. Pick an app below."),
@@ -398,15 +398,74 @@ async function runJob(title, start) {
   const close = h("button", { onclick: () => { dialog.close(); route(); } }, "Close");
   openDialog(h("div", { class: "body" }, h("div", { class: "head" }, h("h2", {}, title), status), log, h("div", { class: "buttons" }, close)));
   let job;
-  try { job = await start(); } catch (err) { status.textContent = "failed"; status.className = "pill failed"; log.textContent = err.message; return; }
+  try { job = await start(); } catch (err) { status.textContent = "failed"; status.className = "pill failed"; log.textContent = err.message; return null; }
+  let j = job;
   while (dialog.open) {
-    const j = await api("GET", "/jobs/" + job.id).catch(err => ({ status: "failed", log: err.message }));
+    j = await api("GET", "/jobs/" + job.id).catch(err => ({ status: "failed", log: err.message }));
     log.textContent = j.log + (j.error ? "\n" + j.error : "");
     log.scrollTop = log.scrollHeight;
     status.textContent = j.status; status.className = "pill " + j.status;
     if (j.status !== "running") break;
     await new Promise(r => setTimeout(r, 1000));
   }
+  return j;
+}
+
+// Installing an app from outside the catalog: read the repository, then review the manifest before installing.
+function fromGitHubDialog() {
+  const url = h("input", { required: true, placeholder: "https://github.com/owner/app", autocapitalize: "none", spellcheck: "false" });
+  const use = h("select", {}, h("option", { value: "" }, "Claude if there's an API key, otherwise the local model"),
+    h("option", { value: "claude" }, "Claude"), h("option", { value: "local" }, "The local model"));
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    const j = await runJob("Reading the app", () => api("POST", "/apps/draft", { url: url.value.trim(), use: use.value }));
+    if (j && j.status === "done" && j.result) reviewDialog(j.result);
+  } },
+    h("h2", {}, "Install from GitHub"),
+    h("label", {}, "Repository", url),
+    h("label", {}, "If it has no homeport.yaml, the assistant writes one with", use),
+    h("p", { class: "muted small" }, "Homeport reads the repository's compose file and README; nothing from it runs yet. You see what it would install, and Homeport refuses anything that reaches outside the app's own folder and port."),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Read it"))));
+}
+
+function reviewDialog(res) {
+  const main = me.settings.mainDomain;
+  const idOf = text => (text.match(/^id:\s*["']?([a-z0-9-]+)/m) || [])[1] || "app";
+  const manifest = h("textarea", { rows: "18", spellcheck: "false", class: "code" });
+  manifest.value = res.manifest;
+  const domain = h("input", { required: true, value: idOf(res.manifest) + "." + main, autocapitalize: "none", spellcheck: "false" });
+  const pub = h("input", { type: "checkbox" });
+  const groups = h("input", { value: "all" });
+  const findings = h("div", { class: "stack" });
+  const install = h("button", { class: "primary", type: "submit" }, "Install");
+  let edited = false;
+  const show = r => {
+    findings.replaceChildren(
+      r.problems && r.problems.length ? h("div", { class: "card problems" }, h("b", {}, "Homeport won't install this:"), h("ul", {}, r.problems.map(p => h("li", {}, p)))) : h("p", {}, h("span", { class: "pill done" }, "Passed Homeport's checks")),
+      r.warnings && r.warnings.length ? h("div", { class: "card warnings" }, h("b", {}, "Good to know:"), h("ul", {}, r.warnings.map(p => h("li", {}, p)))) : null);
+    install.disabled = !!(r.problems && r.problems.length);
+  };
+  show(res.review);
+  manifest.addEventListener("input", () => { edited = true; install.disabled = true; });
+  const recheck = h("button", { type: "button", onclick: async () => { try { show(await api("POST", "/apps/check", { manifest: manifest.value })); } catch (err) { toast(err.message); } } }, "Check again");
+  const by = res.source.by === "repository" ? "the repository's own homeport.yaml" : "written by " + res.source.by + " from " + (res.compose || "the repository");
+  openDialog(h("form", { method: "dialog", class: "wide", onsubmit: async e => {
+    e.preventDefault();
+    const access = pub.checked ? { public: true } : { groups: splitGroups(groups.value) };
+    const src = { ...res.source, by: edited ? "admin" : res.source.by };
+    const j = await runJob("Installing from " + res.source.url, () => api("POST", "/apps", { manifest: manifest.value, source: src, domain: domain.value.trim(), access }));
+    if (j && j.status === "done") toast("Installed");
+  } },
+    h("h2", {}, "Review before installing"),
+    h("p", { class: "warn-box" }, "This app isn't from Homeport's catalog. Homeport checked what it can reach, but nobody reviewed it: only install apps you trust."),
+    h("p", { class: "small" }, h("a", { href: res.source.url, target: "_blank", rel: "noopener" }, res.source.url), " at commit ", h("code", {}, res.source.commit.slice(0, 12)), ". Manifest ", by, "."),
+    h("label", {}, "Manifest (you can edit it, then Check again)", manifest),
+    h("div", { class: "row" }, recheck),
+    findings,
+    h("label", {}, "Address", domain),
+    h("label", { class: "check" }, pub, "Anyone can open it (no Homeport sign-in in front)"),
+    h("label", {}, "Or only these groups (comma-separated; \"all\" is every user)", groups),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), install)));
 }
 
 function splitGroups(s) { return s.split(",").map(x => x.trim().toLowerCase()).filter(Boolean); }
