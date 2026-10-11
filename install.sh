@@ -9,14 +9,45 @@
 #   HOMEPORT_TLS=internal   (Caddy's own certificates, for a test machine with no public address)
 #   HOMEPORT_VERSION=v0.3.0 (a release tag; default: the latest)
 # Running it again updates Homeport and leaves the setup alone.
-set -euo pipefail
+set -Eeuo pipefail
 
 REPO="moreno001-create/homeport"
+CADDY_REPO="${HOMEPORT_CADDY_REPO:-https://dl.cloudsmith.io/public/caddy/stable}"
+LOG=/var/log/homeport-install.log
 
-say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+step="starting"
+say() { step="$*"; printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; printf 'The whole log is in %s\n' "$LOG" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "run this as root: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sudo bash"
+[ "$(id -u)" -eq 0 ] || { echo "Run this as root: curl -fsSL https://tinyurl.com/homeport-linux | sudo bash" >&2; exit 1; }
+# Everything also goes to a log, and a failure says which step it was in.
+exec > >(tee -a "$LOG") 2>&1
+echo "Homeport installer, $(date)"
+trap 'printf "\n\033[31mThe installer stopped during: %s\033[0m\nThe whole log is in %s\n" "$step" "$LOG" >&2' ERR
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+
+# fetch URL FILE WHAT: download, retrying a few times, and say plainly what failed.
+fetch() {
+  local code
+  code="$(curl -sSL --retry 3 --retry-delay 2 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)" || code="${code:-no answer}"
+  case "$code" in
+    2??) return 0 ;;
+    401|403) echo "Couldn't download $3: $1 refused it (HTTP $code). A proxy or filter on this network, or the server limiting this address, can cause that." ;;
+    *) echo "Couldn't download $3 from $1 (HTTP $code)." ;;
+  esac
+  return 1
+}
+
+# apt-get update; if Caddy's repository (from an earlier run) refuses, drop it and use Ubuntu's Caddy.
+apt_update() {
+  apt-get update -q && return 0
+  if [ -f /etc/apt/sources.list.d/caddy-stable.list ]; then
+    echo "Caddy's package repository refused the update; removing it (Ubuntu's own Caddy will be used)."
+    rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    apt-get update -q && return 0
+  fi
+  return 1
+}
 . /etc/os-release
 [ "${ID:-}" = ubuntu ] || die "Homeport is for Ubuntu (this is ${PRETTY_NAME:-unknown})"
 case "${VERSION_ID:-}" in
@@ -31,16 +62,23 @@ esac
 
 say "Installing Docker and the packages Homeport needs"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
 apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2
 
 say "Installing Caddy"
+# Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
+caddy_repo() {
+  fetch "$CADDY_REPO/gpg.key" "$tmp/caddy.key" "Caddy's signing key" || return 1
+  gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg "$tmp/caddy.key" || return 1
+  fetch "$CADDY_REPO/debian.deb.txt" "$tmp/caddy.list" "Caddy's package list" || return 1
+  cp "$tmp/caddy.list" /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -q || return 1
+}
 if ! command -v caddy >/dev/null || ! caddy version | grep -q -E '^v2\.(8|9|[1-9][0-9])'; then
-  if curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-     && curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o /etc/apt/sources.list.d/caddy-stable.list; then
-    apt-get update -q
-  else
-    echo "Caddy's repository couldn't be reached; using Ubuntu's (older) Caddy instead."
+  if ! caddy_repo; then
+    echo "Using Ubuntu's own (older) Caddy instead of Caddy's repository."
+    rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    apt_update || die "apt-get update failed"
   fi
   apt-get install -y -q caddy
 fi
@@ -52,7 +90,6 @@ here=/nonexistent
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 if [ -x "$here/homeport-linux-$arch" ]; then
   cp "$here/homeport-linux-$arch" "$tmp/homeport"            # a local build next to this script
 elif [ -x "$here/dist/homeport-linux-$arch" ]; then
@@ -63,8 +100,8 @@ else
   else
     base="https://github.com/$REPO/releases/latest/download"
   fi
-  curl -fsSL "$base/homeport-linux-$arch" -o "$tmp/homeport" || die "couldn't download Homeport from $base"
-  if curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
+  fetch "$base/homeport-linux-$arch" "$tmp/homeport" "Homeport" || die "couldn't download Homeport (see above)"
+  if fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" "Homeport's checksums"; then
     want="$(awk -v f="homeport-linux-$arch" '$2==f{print $1}' "$tmp/SHA256SUMS")"
     have="$(sha256sum "$tmp/homeport" | awk '{print $1}')"
     [ -n "$want" ] && [ "$want" = "$have" ] || die "the download's checksum doesn't match; not installing it"
