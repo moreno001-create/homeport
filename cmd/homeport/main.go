@@ -176,10 +176,13 @@ func serve() error {
 		var st state.Settings
 		var list []state.App
 		var names []string // what Caddy serves: announced on the home network when they're .local
+		var home []string  // home-network names the portal also answers on
 		own := map[string]proxy.SiteTLS{}
 		store.Read(func(d *state.Data) {
 			st, list = *d.Settings(), d.Apps()
+			home = d.HomeNames()
 			names = append(names, st.MainDomain, d.AIDomain())
+			names = append(names, home...)
 			for _, a := range list {
 				names = append(names, a.Domain)
 			}
@@ -200,7 +203,8 @@ func serve() error {
 				log.Printf("Announcing .local names: %v", err)
 			}
 		}
-		return caddy.Apply(ctx, proxy.CaddyfileFor(st, list, addrs, own))
+		// The portal also answers on the machine's addresses and its home-network names, with Caddy's own certificates.
+		return caddy.Apply(ctx, proxy.CaddyfileFor(st, list, append(slices.Clone(addrs), home...), own))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, LocalAddrs: localAddrs}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -180,9 +181,14 @@ func (s *Server) settings() state.Settings {
 	return st
 }
 
-// isMainHost: the main domain, or one of this machine's own addresses.
+// isMainHost: the main domain, one of this machine's own addresses, or a home-network name (state.HomeNames).
 func (s *Server) isMainHost(h string) bool {
 	if h == s.settings().MainDomain {
+		return true
+	}
+	home := false
+	s.Store.Read(func(d *state.Data) { home = slices.Contains(d.HomeNames(), h) })
+	if home {
 		return true
 	}
 	if s.LocalAddrs != nil {
@@ -259,7 +265,7 @@ func (s *Server) safeReturn(raw string) (string, bool) {
 	h := strings.ToLower(u.Hostname())
 	ok := false
 	s.Store.Read(func(d *state.Data) {
-		if h == d.Settings().MainDomain || h == d.AIDomain() {
+		if h == d.Settings().MainDomain || h == d.AIDomain() || slices.Contains(d.HomeNames(), h) {
 			ok = true
 			return
 		}

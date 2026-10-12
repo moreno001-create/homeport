@@ -489,3 +489,19 @@ func CertFor(st Settings, domain string, own CertMode) CertMode {
 	}
 	return CertLetsEncrypt
 }
+
+// HomeNames are home-network names (homeport.local, say) in the domain list that nothing else uses: the portal and
+// admin panel answer on them too, whatever the main domain is, so they keep working at home when the main domain is
+// a public name the home network can't reach (a backup internet connection, a router without NAT loopback).
+func (v *Data) HomeNames() []string {
+	var out []string
+	for _, d := range v.d.Domains {
+		if !strings.HasSuffix(d.Name, ".local") || d.Name == v.d.Settings.MainDomain || d.Name == v.AIDomain() {
+			continue
+		}
+		if _, used := v.AppOn(d.Name); !used {
+			out = append(out, d.Name)
+		}
+	}
+	return out
+}
