@@ -62,6 +62,13 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
 			writeHomeport(&b, s)
 		}
+		// The AI page (Homeport serves it and checks who's signed in), unless an app has its name.
+		if ai := AIDomain(s.MainDomain, apps); ai != "" {
+			fmt.Fprintf(&b, "\n# The AI page\n%s {\n", ai)
+			writeTLS(&b, s, certs[ai])
+			writeStripIdentity(&b)
+			fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
+		}
 	}
 
 	for _, a := range apps {
@@ -81,6 +88,17 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 		fmt.Fprintf(&b, "\t\treverse_proxy 127.0.0.1:%d\n\t}\n}\n", a.Port)
 	}
 	return b.String()
+}
+
+// AIDomain is the AI page's name (ai.<main domain>), or "" when an app has it.
+func AIDomain(main string, apps []state.App) string {
+	name := "ai." + main
+	for _, a := range apps {
+		if a.Domain == name {
+			return ""
+		}
+	}
+	return name
 }
 
 // writeTLS says where a site's certificate comes from; Let's Encrypt is Caddy's own default, so it needs nothing.

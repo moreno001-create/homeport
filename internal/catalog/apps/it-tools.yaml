@@ -1,0 +1,14 @@
+id: it-tools
+name: IT Tools
+description: Dozens of handy tools for developers and admins in one page (converters, generators, encoders).
+category: Tools
+website: https://it-tools.tech
+signIn: gate
+notes: |
+  Everything runs in your browser; nothing is stored on the server.
+compose: |
+  services:
+    app:
+      image: docker.io/corentinth/it-tools:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      restart: unless-stopped

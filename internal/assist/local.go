@@ -2,6 +2,7 @@ package assist
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -101,6 +102,9 @@ func localRequest(ctx context.Context, method, base, path string, body any, out 
 		}
 		return fmt.Errorf("%s answered %d: %s", base, res.StatusCode, clip(msg, 300))
 	}
+	if out == nil {
+		return nil
+	}
 	return json.Unmarshal(data, out)
 }
 
@@ -187,7 +191,9 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 	if err != nil || base == "" {
 		return "", errors.New("no local model is set up yet: add its address under Settings → Assistant chat")
 	}
-	model := st.LocalModel
+	c.mu.Lock()
+	model := cmp.Or(conv.Model, st.LocalModel)
+	c.mu.Unlock()
 	if model == "" {
 		models, err := LocalModels(ctx, base)
 		if err != nil {
@@ -199,8 +205,11 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 		model = models[0]
 	}
 	who := chatClient(conv.Owner, "local "+model)
-	tools := localTools(c.A.Tools(), canHandOver)
-	system := c.systemPrompt(conv.Owner)
+	var tools []oaTool
+	system := c.plainPrompt(conv.Owner)
+	if !conv.Plain {
+		tools, system = localTools(c.A.Tools(), canHandOver), c.systemPrompt(conv.Owner)
+	}
 	if canHandOver {
 		system += "\n- You're a small local model. For anything complex, call " + handOverTool + " instead of guessing."
 	}
@@ -215,7 +224,10 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 		}
-		body := map[string]any{"model": model, "messages": localHistory(system, c.history(conv)), "tools": tools, "stream": false}
+		body := map[string]any{"model": model, "messages": localHistory(system, c.history(conv)), "stream": false}
+		if len(tools) > 0 {
+			body["tools"] = tools
+		}
 		if err := localRequest(ctx, "POST", base, "/chat/completions", body, &res); err != nil {
 			return "", err
 		}

@@ -1,0 +1,18 @@
+id: changedetection
+name: changedetection.io
+description: Watches web pages for changes (prices, news, stock) and tells you when they change.
+category: Tools
+website: https://changedetection.io
+signIn: gate
+notes: |
+  Only the groups you allow can open it. Notifications (email, ntfy, Discord and more) are set under Settings.
+compose: |
+  services:
+    app:
+      image: ghcr.io/dgtlmoon/changedetection.io:latest
+      ports: ["127.0.0.1:{{.Port}}:5000"]
+      environment:
+        BASE_URL: "https://{{.Domain}}"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/datastore:/datastore"]
+      restart: unless-stopped

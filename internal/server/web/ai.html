@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/ai.js" defer></script>
+</head>
+<body class="ai">
+  <header class="ai-bar">
+    <button type="button" class="ai-menu" id="menu" aria-label="Conversations" aria-expanded="false" aria-controls="convs">☰</button>
+    <a class="brand" id="home" href="/"><span class="mark" aria-hidden="true"></span><span id="domain">Homeport</span> <span class="muted">AI</span></a>
+    <span class="ai-small-name" id="small-name"></span>
+    <div class="who">
+      <span id="me"></span>
+      <a class="button" id="admin" hidden>Admin</a>
+      <a class="button" href="/.homeport/signout">Sign out</a>
+    </div>
+  </header>
+  <div class="ai-body">
+    <nav class="ai-convs" id="convs" aria-label="Conversations"></nav>
+    <main class="ai-main" id="main">
+      <section class="ai-hero" id="hero" aria-live="polite">
+        <p class="ai-status" id="status" hidden></p>
+        <h1 class="ai-name" id="name">&nbsp;</h1>
+        <p class="ai-desc" id="desc"></p>
+      </section>
+      <div class="ai-thread">
+        <div class="thread" id="thread"></div>
+        <div class="live" id="live" aria-live="polite"></div>
+        <div class="stack" id="approvals"></div>
+      </div>
+      <form class="ai-composer" id="form">
+        <div class="ai-box">
+          <textarea id="input" rows="1" placeholder="Ask anything" aria-label="Message"></textarea>
+          <button type="button" class="ai-stop" id="stop" hidden>Stop</button>
+          <button type="submit" class="primary ai-send" id="send" aria-label="Send">↑</button>
+        </div>
+        <div class="ai-under">
+          <label class="ai-pick"><span class="sr">Model</span><select id="model"></select></label>
+          <span class="muted small" id="hint">Enter to send · Shift+Enter for a new line</span>
+        </div>
+      </form>
+      <div class="ai-chips" id="chips"></div>
+    </main>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+</body>
+</html>

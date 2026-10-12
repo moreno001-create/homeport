@@ -35,8 +35,8 @@ func TestCaddyfile(t *testing.T) {
 		t.Error("a public app must not be behind the sign-in check")
 	}
 	// Every site strips identity headers a browser might send.
-	if n := strings.Count(c, "request_header -Remote-User"); n != 3 {
-		t.Errorf("identity headers stripped on %d sites, want 3", n)
+	if n := strings.Count(c, "request_header -Remote-User"); n != 4 {
+		t.Errorf("identity headers stripped on %d sites (main, AI page, two apps), want 4", n)
 	}
 	if !strings.Contains(Caddyfile(state.Settings{MainDomain: "a.test", TLS: state.TLSInternal}, nil), "a.test {\n\ttls internal\n") {
 		t.Error("internal TLS should use Caddy's own certificates")
@@ -83,7 +83,7 @@ func TestCertificatePerDomain(t *testing.T) {
 
 func TestLocalAddressesServeThePortal(t *testing.T) {
 	c := CaddyfileWith(state.Settings{MainDomain: "home.test", TLS: state.TLSLetsEncrypt}, nil, []string{"192.168.4.27"})
-	if !strings.Contains(c, "192.168.4.27 {\n\ttls internal\n") || strings.Count(c, "reverse_proxy 127.0.0.1:8090") != 2 {
+	if !strings.Contains(c, "192.168.4.27 {\n\ttls internal\n") || strings.Count(c, "reverse_proxy 127.0.0.1:8090") != 3 {
 		t.Fatalf("the portal should also answer on the machine's address, with Caddy's own certificate:\n%s", c)
 	}
 }
@@ -102,5 +102,18 @@ func TestTerminalRoute(t *testing.T) {
 		if !strings.Contains(c, want) {
 			t.Errorf("missing %q in:\n%s", want, c)
 		}
+	}
+}
+
+func TestAIPage(t *testing.T) {
+	s := state.Settings{MainDomain: "homeport.local", TLS: state.TLSInternal}
+	c := Caddyfile(s, nil)
+	if !strings.Contains(c, "ai.homeport.local {\n\ttls internal\n") {
+		t.Fatalf("the AI page should have its own site, served by Homeport:\n%s", c)
+	}
+	// An app that has the name keeps it.
+	c = Caddyfile(s, []state.App{{ID: "chat", Name: "Chat", Domain: "ai.homeport.local", Port: 18009}})
+	if strings.Contains(c, "# The AI page") || !strings.Contains(c, "reverse_proxy 127.0.0.1:18009") {
+		t.Fatalf("an app on ai.homeport.local should win:\n%s", c)
 	}
 }

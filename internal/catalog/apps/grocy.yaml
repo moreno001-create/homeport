@@ -1,0 +1,19 @@
+id: grocy
+name: Grocy
+description: "Groceries and household management: what's in stock, shopping lists, chores and recipes."
+category: Home & network
+website: https://grocy.info
+signIn: gate
+notes: |
+  First sign-in: admin / admin. Change the password right away (user menu → Change password).
+compose: |
+  services:
+    app:
+      image: lscr.io/linuxserver/grocy:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        PUID: "1000"
+        PGID: "1000"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/config:/config"]
+      restart: unless-stopped

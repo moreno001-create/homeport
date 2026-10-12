@@ -1,0 +1,15 @@
+id: excalidraw
+name: Excalidraw
+description: A whiteboard for hand-drawn-style sketches and diagrams.
+category: Documents & productivity
+website: https://excalidraw.com
+signIn: gate
+notes: |
+  Drawings are kept in your browser; save them as files (or export images) to keep them elsewhere. Live collaboration
+  uses excalidraw.com's own servers, so leave it off for private drawings.
+compose: |
+  services:
+    app:
+      image: docker.io/excalidraw/excalidraw:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      restart: unless-stopped

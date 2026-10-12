@@ -192,10 +192,20 @@ local_ai() {
     local_model="$model (LM Studio on this Mac)"
     return 0
   fi
-  if [ "$mem_gb" -ge 44 ]; then model=qwen3.6:35b-a3b    # a mixture of experts: big, but only 3B at work per word
-  elif [ "$mem_gb" -ge 22 ]; then model=qwen3.5:9b
-  elif [ "$mem_gb" -ge 7 ]; then model=qwen3.5:4b
-  else model=qwen3.5:2b; fi
+  # Apple silicon runs models on its graphics, sharing the Mac's memory; an Intel Mac runs them on the processor, where
+  # smaller models (or a mixture of experts: big, but only 3B at work per word) keep answers quick.
+  if [ "$arch" = arm64 ]; then
+    if [ "$mem_gb" -ge 40 ]; then model=qwen3.6:35b-a3b
+    elif [ "$mem_gb" -ge 16 ]; then model=qwen3.5:9b
+    elif [ "$mem_gb" -ge 8 ]; then model=qwen3.5:4b
+    else model=qwen3.5:2b; fi
+    echo "Apple silicon with ${mem_gb} GB of memory: $model."
+  else
+    if [ "$mem_gb" -ge 32 ]; then model=qwen3.6:35b-a3b
+    elif [ "$mem_gb" -ge 14 ]; then model=qwen3.5:4b
+    else model=qwen3.5:2b; fi
+    echo "An Intel Mac with ${mem_gb} GB of memory (models run on the processor): $model."
+  fi
   model="${HOMEPORT_LOCAL_MODEL:-$model}"
   command -v ollama >/dev/null || "$BREW" install ollama || return 1
   if ! curl -sf "$OLLAMA/api/version" >/dev/null && [ ! -d /Applications/Ollama.app ]; then

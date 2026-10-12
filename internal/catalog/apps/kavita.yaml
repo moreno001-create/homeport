@@ -1,0 +1,19 @@
+id: kavita
+name: Kavita
+description: A reading server for comics, manga and e-books, with a reader in the browser.
+category: Photos & media
+website: https://www.kavitareader.com
+signIn: gate
+notes: |
+  Open it to make the admin account, then add a library pointing at /library (the app's data folder, "library").
+compose: |
+  services:
+    app:
+      image: docker.io/jvmilazz0/kavita:latest
+      ports: ["127.0.0.1:{{.Port}}:5000"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/config:/kavita/config"
+        - "{{.Data}}/library:/library"
+      restart: unless-stopped

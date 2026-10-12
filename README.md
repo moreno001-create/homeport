@@ -12,6 +12,15 @@ Docker and Caddy. (Working name.)
 - **Domains and HTTPS**: Caddy gets Let's Encrypt certificates for every domain on its own. Each domain can instead
   use Caddy's own certificates or one you upload (`homeport domain cert`), and the Domains page shows the certificate
   each site really serves and when it runs out.
+- **The AI page** at `https://ai.<main domain>`: everyone signs in and chats with the local model (plain chat: it can't
+  see or change the server); admins get the full assistant there too. The model's name and what it can do sit above the
+  message box, and a picker below it chooses among the models the local server has.
+- **No domain needed at home**: by default the server is `homeport.local`, and apps get names under it
+  (`cloud.homeport.local`). Homeport announces them on the home network with Avahi (mDNS), so Macs, iPhones, Linux and
+  Windows find them with nothing to set up; the admin panel also answers on the server's IP address.
+- **Set up from the start**: the installer asks how people reach the server: `homeport.local` (this network), a free
+  name from DuckDNS or deSEC (it explains how to get one, then sets it up with Let's Encrypt certificates for it and
+  every app under it), or a domain of your own.
 - **Free domains**, like YunoHost's nohost.me: `name.dedyn.io` from [deSEC](https://desec.io) or `name.duckdns.org`
   from [DuckDNS](https://www.duckdns.org), with a token from your free account there (`homeport domain free`).
   Homeport keeps the name pointed at your public address when it changes, and apps get subdomains of it.
@@ -30,8 +39,9 @@ Docker and Caddy. (Working name.)
   folders from the server, extra published ports, builds from source.
 
 Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
-AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma
-and whoami (a test page).
+AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma,
+linkding, Wiki.js, n8n, changedetection.io, IT Tools, Excalidraw, Calibre-Web, Kavita, Grocy, Homebox, Wallos,
+code-server, ntfy and whoami (a test page).
 
 ## How it fits together
 
@@ -97,8 +107,9 @@ The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it fro
   root-only). Default model `claude-opus-5-5` at medium effort. If a safety check declines a request, Anthropic re-runs
   it on its recommended fallback model (server-side fallbacks, Opus models).
 - **A local model** on any OpenAI-compatible server: LM Studio, Ollama, llama.cpp. The installer sets one up and
-  loads it: Ollama on the server with a model that fits its memory (`qwen3.5:2b` under 8 GB, `qwen3.5:4b`, `qwen3.5:9b`
-  from 24 GB, `qwen3.6:35b-a3b` from 48 GB). `HOMEPORT_LOCAL_AI=no` skips it, `HOMEPORT_LOCAL_MODEL` picks another
+  loads it: Ollama on the server with the model that suits its hardware. With an NVIDIA or AMD graphics card, its memory
+  decides (`qwen3.5:2b` up to `qwen3.6:35b-a3b`); on the processor alone, quick models (`qwen3.5:2b`, `qwen3.5:4b` from
+  16 GB, `qwen3.6:35b-a3b` from 32 GB). The installer says what it picked and why. `HOMEPORT_LOCAL_AI=no` skips it, `HOMEPORT_LOCAL_MODEL` picks another
   Ollama model, and `HOMEPORT_LOCAL_URL=http://192.168.1.20:1234` uses a model server on another computer instead
   (a server without a strong graphics card can point at one that has one; a Mac with Apple silicon works well).
   Change it later in Settings → Assistant chat, or with `homeport assistant local URL [--model NAME]`.

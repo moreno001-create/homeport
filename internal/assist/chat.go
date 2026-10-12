@@ -1,6 +1,7 @@
 package assist
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -87,6 +88,11 @@ type Conversation struct {
 	Consent    bool   `json:"consent,omitempty"`
 	ConsentWhy string `json:"consentWhy,omitempty"`
 	CanLocal   bool   `json:"canLocal,omitempty"`
+	// Plain is a conversation on the AI page with someone who isn't an admin: the local model only, with no tools, so it
+	// can't see or change anything on the server, and nothing goes to Claude.
+	Plain bool `json:"plain,omitempty"`
+	// Model is the local model chosen for this conversation ("": the one in the settings).
+	Model string `json:"model,omitempty"`
 
 	claudeTookOver bool
 	cancel         context.CancelFunc
@@ -131,6 +137,20 @@ func (c *Chat) settings() state.ChatSettings {
 // Send adds the admin's message to a conversation (a new one when id is empty) and starts answering it. use is ""
 // (follow the settings), "local" or "claude"; allowCloud answers "ask before sending to Claude" for this message.
 func (c *Chat) Send(owner, id, text, use string, allowCloud bool) (Conversation, error) {
+	return c.send(owner, id, text, use, allowCloud, false, "")
+}
+
+// SendLocal is Send answered by one of the local server's models (model; "" for the one in the settings).
+func (c *Chat) SendLocal(owner, id, text, model string) (Conversation, error) {
+	return c.send(owner, id, text, "local", false, false, model)
+}
+
+// SendPlain is SendLocal for a plain conversation (see Conversation.Plain), for people who aren't admins.
+func (c *Chat) SendPlain(owner, id, text, model string) (Conversation, error) {
+	return c.send(owner, id, text, "local", false, true, model)
+}
+
+func (c *Chat) send(owner, id, text, use string, allowCloud, plain bool, model string) (Conversation, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Conversation{}, errors.New("write a message first")
@@ -141,10 +161,10 @@ func (c *Chat) Send(owner, id, text, use string, allowCloud bool) (Conversation,
 	}
 	var conv *Conversation
 	if id == "" {
-		conv = &Conversation{ID: newID(), Owner: owner, Title: titleFrom(text)}
+		conv = &Conversation{ID: newID(), Owner: owner, Title: titleFrom(text), Plain: plain}
 		c.convs[conv.ID] = conv
 		c.dropOldLocked(owner)
-	} else if conv = c.convs[id]; conv == nil || conv.Owner != owner {
+	} else if conv = c.convs[id]; conv == nil || conv.Owner != owner || conv.Plain != plain {
 		c.mu.Unlock()
 		return Conversation{}, ErrNoConversation
 	}
@@ -153,6 +173,7 @@ func (c *Chat) Send(owner, id, text, use string, allowCloud bool) (Conversation,
 		return Conversation{}, errBusy
 	}
 	conv.Turns = append(conv.Turns, Turn{Role: "user", Text: text, Time: time.Now()})
+	conv.Model = model
 	c.startLocked(conv, use, allowCloud)
 	out := conv.copyLocked()
 	c.mu.Unlock()
@@ -356,6 +377,21 @@ func (c *Chat) answer(ctx context.Context, conv *Conversation, use string, allow
 	defer c.update(conv, func(conv *Conversation) {
 		conv.Busy, conv.Status, conv.Partial, conv.cancel = false, "", "", nil
 	})
+	if conv.Plain {
+		var err error
+		if st.LocalURL == "" {
+			err = errors.New("there's no local AI model on this server yet: ask an admin to set one up")
+		} else {
+			_, err = c.runLocal(ctx, conv, st, false)
+		}
+		switch {
+		case ctx.Err() != nil:
+			c.note(conv, "Stopped.")
+		case err != nil:
+			c.note(conv, "Couldn't answer: "+err.Error())
+		}
+		return
+	}
 	r, err := c.choose(conv, use, st)
 	for err == nil {
 		if r.provider == "claude" {
@@ -414,6 +450,22 @@ func (c *Chat) runTools(ctx context.Context, conv *Conversation, who string, cal
 	}
 	c.add(conv, Turn{Role: "tools", Results: results})
 	c.status(conv, "Thinking…")
+}
+
+// plainPrompt is for plain conversations: a private chat on the server, with no tools.
+func (c *Chat) plainPrompt(owner string) string {
+	var domain, name string
+	c.A.Store.Read(func(d *state.Data) {
+		domain = d.Settings().MainDomain
+		if u, ok := d.User(owner); ok {
+			name = cmp.Or(u.DisplayName, u.Name)
+		}
+	})
+	return `You're a helpful AI assistant running privately on the home server ` + domain + `, talking with ` + cmp.Or(name, owner) + `.
+- Nothing they write here leaves their own network.
+- Answer clearly and to the point. Use Markdown: short paragraphs, lists, **bold** and code blocks where they help.
+- You can't see or change anything on the server, browse the web, or remember other conversations. If they ask for
+  something like that, say so plainly.`
 }
 
 func (c *Chat) systemPrompt(owner string) string {

@@ -1,0 +1,19 @@
+id: wallos
+name: Wallos
+description: Keeps track of your subscriptions and what they cost each month.
+category: Documents & productivity
+website: https://wallosapp.com
+signIn: gate
+notes: |
+  Open it to make the first account.
+compose: |
+  services:
+    app:
+      image: docker.io/bellamy/wallos:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/db:/var/www/html/db"
+        - "{{.Data}}/logos:/var/www/html/images/uploads/logos"
+      restart: unless-stopped

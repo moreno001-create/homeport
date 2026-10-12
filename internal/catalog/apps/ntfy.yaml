@@ -1,0 +1,30 @@
+id: ntfy
+name: ntfy
+description: Push notifications to your phone and computer from scripts, apps and this server.
+category: Home & network
+website: https://ntfy.sh
+signIn: own
+secrets: [admin_password]
+notes: |
+  The phone app talks to it directly, so it stays public; only signed-in users can send or read. Sign in (in the app
+  and on the web) as "homeport" with the password in this app's secrets, and add more users with:
+  docker exec -it <container> ntfy user add NAME
+compose: |
+  services:
+    app:
+      image: docker.io/binwiederhier/ntfy:latest
+      command: [serve]
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        NTFY_BASE_URL: "https://{{.Domain}}"
+        NTFY_BEHIND_PROXY: "true"
+        NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+        NTFY_AUTH_FILE: /var/lib/ntfy/auth.db
+        NTFY_AUTH_DEFAULT_ACCESS: deny-all
+        NTFY_ENABLE_LOGIN: "true"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/ntfy:/var/lib/ntfy"]
+      restart: unless-stopped
+afterInstall:
+  - service: app
+    run: [sh, -c, "ntfy user list 2>&1 | grep -q 'user homeport' || NTFY_PASSWORD='{{secret \"admin_password\"}}' ntfy user add --role=admin homeport"]

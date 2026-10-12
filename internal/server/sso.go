@@ -186,7 +186,7 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine})
+	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, AI: s.aiHost()})
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,22 @@
+id: calibre-web
+name: Calibre-Web
+description: Read, browse and download your e-book library in the browser, and send books to an e-reader.
+category: Photos & media
+website: https://github.com/janeczku/calibre-web
+signIn: gate
+notes: |
+  First sign-in: admin / admin123, then change the password under Admin. Put a Calibre library (the folder with
+  metadata.db) in the app's data folder under "books", and point Calibre-Web at /books.
+compose: |
+  services:
+    app:
+      image: lscr.io/linuxserver/calibre-web:latest
+      ports: ["127.0.0.1:{{.Port}}:8083"]
+      environment:
+        PUID: "1000"
+        PGID: "1000"
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.Data}}/config:/config"
+        - "{{.Data}}/books:/books"
+      restart: unless-stopped

@@ -1,0 +1,32 @@
+id: wikijs
+name: Wiki.js
+description: A modern wiki for notes, documentation and how-tos, with a visual and a Markdown editor.
+category: Documents & productivity
+website: https://js.wiki
+signIn: gate
+secrets: [db_password]
+notes: |
+  Open it to finish its setup: you make the first (admin) account there and confirm its address,
+  https://{{.Domain}}. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: ghcr.io/requarks/wiki:2
+      ports: ["127.0.0.1:{{.Port}}:3000"]
+      environment:
+        DB_TYPE: postgres
+        DB_HOST: db
+        DB_PORT: "5432"
+        DB_USER: wikijs
+        DB_PASS: "{{secret "db_password"}}"
+        DB_NAME: wiki
+      depends_on: [db]
+      restart: unless-stopped
+    db:
+      image: docker.io/library/postgres:17-alpine
+      environment:
+        POSTGRES_DB: wiki
+        POSTGRES_USER: wikijs
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      restart: unless-stopped

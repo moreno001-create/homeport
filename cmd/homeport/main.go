@@ -31,6 +31,7 @@ import (
 	"homeport/internal/assist"
 	"homeport/internal/certs"
 	"homeport/internal/dyndns"
+	"homeport/internal/mdns"
 	"homeport/internal/platform"
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
@@ -155,12 +156,22 @@ func serve() error {
 	}
 	sys := runner.System{}
 	caddy := proxy.Caddy{Path: caddyfile, Runner: sys, Reload: plat.ReloadCaddy}
+	var announce *mdns.Publisher // .local names, through Avahi (Linux)
+	if plat.Name == "linux" {
+		host, _ := os.Hostname()
+		announce = &mdns.Publisher{Hostname: host}
+	}
 	applyProxy := func(ctx context.Context) error {
 		var st state.Settings
 		var list []state.App
+		var names []string // what Caddy serves: announced on the home network when they're .local
 		own := map[string]proxy.SiteTLS{}
 		store.Read(func(d *state.Data) {
 			st, list = *d.Settings(), d.Apps()
+			names = append(names, st.MainDomain, d.AIDomain())
+			for _, a := range list {
+				names = append(names, a.Domain)
+			}
 			for _, x := range d.Domains() {
 				if x.Cert != "" {
 					cert, key := certs.Paths(plat.CertDir, x.Name)
@@ -172,7 +183,13 @@ func serve() error {
 			return nil // not set up yet: leave Caddy alone
 		}
 		writeLoginBanner(st.MainDomain)
-		return caddy.Apply(ctx, proxy.CaddyfileFor(st, list, localAddrs(), own))
+		addrs := localAddrs()
+		if announce != nil {
+			if err := announce.Publish(ctx, names, addrs); err != nil {
+				log.Printf("Announcing .local names: %v", err)
+			}
+		}
+		return caddy.Apply(ctx, proxy.CaddyfileFor(st, list, addrs, own))
 	}
 	manager := &apps.Manager{Store: store, Root: filepath.Join(stateDir, "apps"), Runner: sys, TimeZone: localZone(), Apply: applyProxy,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, LocalAddrs: localAddrs}
@@ -197,6 +214,7 @@ func serve() error {
 		log.Printf("Caddy configuration: %v", err)
 	}
 	go srv.DynDNS.Run(ctx)
+	go followAddress(ctx, applyProxy)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- web.ListenAndServe() }()
@@ -209,6 +227,28 @@ func serve() error {
 		return web.Shutdown(shut)
 	case err := <-errs:
 		return err
+	}
+}
+
+// followAddress applies the configuration again when this machine's own addresses change (a new address from the
+// router): Caddy serves the portal by address, and .local names are announced at it.
+func followAddress(ctx context.Context, apply func(context.Context) error) {
+	last := strings.Join(localAddrs(), " ")
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if now := strings.Join(localAddrs(), " "); now != last {
+			log.Printf("This machine's address changed (%s → %s); applying the configuration again", last, now)
+			last = now
+			if err := apply(ctx); err != nil {
+				log.Printf("Caddy configuration: %v", err)
+			}
+		}
 	}
 }
 

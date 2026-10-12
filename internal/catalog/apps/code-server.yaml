@@ -1,0 +1,23 @@
+id: code-server
+name: code-server
+description: Visual Studio Code in the browser, with a terminal, for editing code from anywhere.
+category: Dev & tools
+website: https://coder.com/docs/code-server
+signIn: gate
+secrets: [password]
+notes: |
+  It asks for its own password too (in this app's secrets). The terminal inside runs in the app's container, not on
+  the server; your work lives in the app's data folder, "config/workspace".
+compose: |
+  services:
+    app:
+      image: lscr.io/linuxserver/code-server:latest
+      ports: ["127.0.0.1:{{.Port}}:8443"]
+      environment:
+        PUID: "1000"
+        PGID: "1000"
+        TZ: "{{.TimeZone}}"
+        PASSWORD: "{{secret "password"}}"
+        DEFAULT_WORKSPACE: /config/workspace
+      volumes: ["{{.Data}}/config:/config"]
+      restart: unless-stopped

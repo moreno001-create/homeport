@@ -39,6 +39,7 @@ type pageData struct {
 	Return string
 	Error  string
 	Name   string
+	AI     string // the AI page's name, on the portal
 }
 
 var pages = template.Must(template.New("").Funcs(template.FuncMap{
@@ -79,8 +80,9 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 </header>
 <main class="wide">
   <h1>Your apps</h1>
-  {{if .Apps}}
+  {{if or .Apps .AI}}
   <ul class="tiles">
+    {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
     {{range .Apps}}<li><a class="tile" href="https://{{.Domain}}/"><span class="glyph" aria-hidden="true">{{initial .Name}}</span><span class="tname">{{.Name}}</span><span class="tdomain">{{.Domain}}</span></a></li>{{end}}
   </ul>
   {{else}}

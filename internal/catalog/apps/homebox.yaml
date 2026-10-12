@@ -1,0 +1,20 @@
+id: homebox
+name: Homebox
+description: "A home inventory: what you own, where it is, warranties, receipts and manuals."
+category: Home & network
+website: https://homebox.software
+signIn: gate
+secrets: [api_key_pepper]
+notes: |
+  Open it and register the first account. Turn off sign-ups afterwards if you like (in its settings).
+compose: |
+  services:
+    app:
+      image: ghcr.io/sysadminsmedia/homebox:latest
+      ports: ["127.0.0.1:{{.Port}}:7745"]
+      environment:
+        HBOX_LOG_LEVEL: info
+        HBOX_AUTH_API_KEY_PEPPER: "{{secret "api_key_pepper"}}"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/data:/data"]
+      restart: unless-stopped

@@ -1,0 +1,21 @@
+id: linkding
+name: linkding
+description: A fast, minimal bookmark manager with tags, search and a browser extension.
+category: Documents & productivity
+website: https://linkding.link
+signIn: headers
+notes: |
+  You're signed in with your Homeport account automatically (accounts are made on first visit). The browser extension
+  and the API use a token from linkding's Settings → Integrations.
+compose: |
+  services:
+    app:
+      image: docker.io/sissbruecker/linkding:latest
+      ports: ["127.0.0.1:{{.Port}}:9090"]
+      environment:
+        LD_ENABLE_AUTH_PROXY: "True"
+        LD_AUTH_PROXY_USERNAME_HEADER: HTTP_REMOTE_USER
+        LD_AUTH_PROXY_LOGOUT_URL: "https://{{.Domain}}/.homeport/signout"
+        LD_CSRF_TRUSTED_ORIGINS: "https://{{.Domain}}"
+      volumes: ["{{.Data}}/data:/etc/linkding/data"]
+      restart: unless-stopped

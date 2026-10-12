@@ -84,7 +84,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assets()))
 	s.oidcRoutes(mux)
 	s.api(mux, s.browserAdmin)
-	return securityHeaders(mux)
+	ai := s.aiHandler()
+	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The AI page has its own name; Caddy's sign-in checks (/auth/) come from any site.
+		if h := s.aiHost(); h != "" && host(r) == h && !strings.HasPrefix(r.URL.Path, "/auth/") {
+			ai.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 }
 
 // LocalHandler serves the root-only socket the `homeport` command uses: same API, already trusted.
@@ -242,7 +250,7 @@ func (s *Server) safeReturn(raw string) (string, bool) {
 	h := strings.ToLower(u.Hostname())
 	ok := false
 	s.Store.Read(func(d *state.Data) {
-		if h == d.Settings().MainDomain {
+		if h == d.Settings().MainDomain || h == d.AIDomain() {
 			ok = true
 			return
 		}

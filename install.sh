@@ -7,6 +7,8 @@
 # domain and the first admin. It asks at the terminal; for an unattended install, set these first:
 #   HOMEPORT_DOMAIN=home.example.com HOMEPORT_ADMIN=alice HOMEPORT_PASSWORD='…' HOMEPORT_EMAIL=you@example.com
 #   HOMEPORT_TLS=internal   (Caddy's own certificates, for a test machine with no public address)
+#   (With no domain of your own, HOMEPORT_DOMAIN=homeport.local works on the home network, announced with Avahi; or a
+#   free name: HOMEPORT_DDNS=duckdns|desec HOMEPORT_DDNS_NAME=myhome HOMEPORT_DDNS_TOKEN='…')
 #   HOMEPORT_VERSION=v0.3.0 (a release tag; default: the latest)
 # It also installs Ollama with a model that fits this server's memory, for the assistant chat:
 #   HOMEPORT_LOCAL_AI=no (skip it), HOMEPORT_LOCAL_MODEL=qwen3.5:9b (another Ollama model),
@@ -184,7 +186,9 @@ esac
 say 0 30 "Installing Docker and the packages Homeport needs"
 export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
-run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2
+# Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
+# lets this server find them too.
+run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns
 
 say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
@@ -283,13 +287,34 @@ for _ in $(seq 1 40); do [ -S /run/homeport/homeport.sock ] && break; sleep 0.5;
 OLLAMA=http://127.0.0.1:11434
 local_model="" # what the assistant ended up with, for the summary
 
-# pick_model: an Ollama model that fits this machine's memory, and its download in tenths of a GB.
+# pick_model: the best Ollama model for this machine, its download in tenths of a GB, and why, as "model|size|why".
+# With a graphics card Ollama can use (NVIDIA, or AMD with its own memory), the card's memory decides. On the processor
+# alone, speed matters most (every answer reads the whole conversation again), so the models are smaller; with plenty of
+# memory, a mixture of experts (big, but only 3B at work per word) is both quick and capable.
 pick_model() {
-  local gb=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1048576 ))
-  if [ "$gb" -ge 44 ]; then echo "qwen3.6:35b-a3b 226"   # a mixture of experts: big, but only 3B at work per word
-  elif [ "$gb" -ge 22 ]; then echo "qwen3.5:9b 66"
-  elif [ "$gb" -ge 7 ]; then echo "qwen3.5:4b 33"
-  else echo "qwen3.5:2b 27"; fi
+  local ram vram=0 gpu="" v f b
+  ram=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1048576 ))
+  if command -v nvidia-smi >/dev/null && v="$(nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>/dev/null | head -1)" && [ -n "$v" ]; then
+    vram=$(( ${v%%,*} / 1024 )); gpu="${v#*, }"
+  fi
+  for f in /sys/class/drm/card*/device/mem_info_vram_total; do
+    [ -r "$f" ] || continue
+    b=$(( $(cat "$f") / 1073741824 ))
+    if [ "$b" -gt "$vram" ]; then vram=$b; gpu="AMD graphics"; fi
+  done
+  if [ "$vram" -ge 4 ]; then
+    local why="$gpu with $vram GB of graphics memory"
+    if [ "$vram" -ge 28 ]; then echo "qwen3.6:35b-a3b|226|$why"
+    elif [ "$vram" -ge 20 ]; then echo "qwen3.5:27b|175|$why"
+    elif [ "$vram" -ge 10 ]; then echo "qwen3.5:9b|66|$why"
+    elif [ "$vram" -ge 6 ]; then echo "qwen3.5:4b|33|$why"
+    else echo "qwen3.5:2b|27|$why"; fi
+    return
+  fi
+  local why="no graphics card Ollama can use; $ram GB of memory and $(nproc) processor cores, so a model that answers quickly on the processor"
+  if [ "$ram" -ge 32 ]; then echo "qwen3.6:35b-a3b|226|$why"
+  elif [ "$ram" -ge 14 ]; then echo "qwen3.5:4b|33|$why"
+  else echo "qwen3.5:2b|27|$why"; fi
 }
 gb() { printf -v "$1" '%d.%d GB' $(($2 / 1000000000)) $(($2 % 1000000000 / 100000000)); }
 
@@ -321,7 +346,7 @@ pull_model() {
 # Returns non-zero if it couldn't; Homeport works without it.
 local_ai() {
   if [ "${HOMEPORT_LOCAL_AI:-yes}" = no ]; then echo "Local AI skipped (HOMEPORT_LOCAL_AI=no)."; return 0; fi
-  local now model size free need
+  local now model size why free need
   # (Homeport before 0.7.1 can't connect a local model.)
   if ! now="$(homeport assistant local 2>/dev/null)"; then note "This Homeport version can't connect a local model yet."; return 1; fi
   if [[ $now == "Local model: "* ]]; then local_model="${now#Local model: }"; note "The assistant already uses $local_model"; return 0; fi
@@ -331,8 +356,9 @@ local_ai() {
     local_model="$(homeport assistant local)"; local_model="${local_model#Local model: }"
     return 0
   fi
-  read -r model size <<<"$(pick_model)"
-  if [ -n "${HOMEPORT_LOCAL_MODEL:-}" ]; then model=$HOMEPORT_LOCAL_MODEL size=0; fi
+  IFS='|' read -r model size why <<<"$(pick_model)"
+  if [ -n "${HOMEPORT_LOCAL_MODEL:-}" ]; then model=$HOMEPORT_LOCAL_MODEL size=0 why="HOMEPORT_LOCAL_MODEL"; fi
+  note "Local AI model: $model ($why)"
   free=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
   need=$((size / 10 + 3))
   if [ "$need" -gt "$free" ]; then note "Not enough disk space for the local AI model $model (it needs about $need GB; $free GB free)."; return 1; fi
@@ -345,8 +371,8 @@ local_ai() {
   # Room for Homeport's instructions and tools (Ollama's default context is smaller), and the model stays loaded a
   # while after each use.
   mkdir -p /etc/systemd/system/ollama.service.d
-  printf '[Service]\nEnvironment=OLLAMA_CONTEXT_LENGTH=%s\nEnvironment=OLLAMA_KEEP_ALIVE=30m\n' \
-    "$([ "$size" -gt 0 ] && [ "$size" -le 27 ] && echo 8192 || echo 16384)" > /etc/systemd/system/ollama.service.d/homeport.conf
+  printf '[Service]\nEnvironment=OLLAMA_CONTEXT_LENGTH=16384\nEnvironment=OLLAMA_KEEP_ALIVE=30m\n' \
+    > /etc/systemd/system/ollama.service.d/homeport.conf
   run systemctl daemon-reload || return 1
   run systemctl enable ollama || return 1
   run systemctl restart ollama || return 1
@@ -402,14 +428,66 @@ ask() { # ask VAR "question" [default] [secret]
 ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v -E '^(172\.(1[6-9]|2[0-9]|3[01])|127)\.' | tr '\n' ' ')" || ips=""
 first_ip="${ips%% *}"
 shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
-# With no domain yet, <ip>.sslip.io works on this network with no setup: every device resolves it to this machine.
-ask HOMEPORT_DOMAIN "Main domain for the portal and admin panel. Press Enter for ${first_ip:+$first_ip.sslip.io, which works on this network with no setup;} or type your own (its DNS must point here)" "${first_ip:+$first_ip.sslip.io}"
+# How people reach this server. homeport.local works on this network with no setup (Homeport announces it, and apps'
+# names under it, with Avahi). A free name from DuckDNS or deSEC works from anywhere, with Let's Encrypt certificates
+# for it and every app under it; Homeport keeps it pointed at this home's public address. Or a domain of your own.
+# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_DDNS=duckdns|desec with HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
+ddns="" # the free name's provider, once registered
+free_name() { # free_name duckdns|desec NAME TOKEN: registers the name with Homeport; on success it's the main domain
+  local out
+  if out="$(printf '%s\n' "$3" | homeport domain free "$1" "$2" 2>&1)"; then
+    HOMEPORT_DOMAIN="$(echo "$out" | awk '{print $1; exit}')" ddns=$1 HOMEPORT_TLS=letsencrypt
+    echo "$out"
+    return 0
+  fi
+  echo "$out" | sed 's/^Error: //'
+  return 1
+}
+guide_free_name() { # asks for a free name, with how to get one, until it works or they go back
+  local p=$1 suffix name token
+  suffix=$([ "$p" = duckdns ] && echo .duckdns.org || echo .dedyn.io)
+  if [ "$p" = duckdns ]; then
+    printf '\n  1. Open https://www.duckdns.org and sign in (with GitHub, Google or another account).\n  2. Under "domains", add the name you want (letters, digits and dashes).\n  3. Copy your token: the long code at the top of the page.\n\n' >/dev/tty
+  else
+    printf '\n  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n  2. Open "Token Management", add a token and copy it.\n  Homeport makes the name in your deSEC account for you, if no one has it yet.\n\n' >/dev/tty
+  fi
+  while :; do
+    name=""; token=""
+    printf 'Name (yourname, for yourname%s), or Enter to go back: ' "$suffix" >/dev/tty; read -r name </dev/tty
+    [ -n "$name" ] || return 1
+    printf 'Token: ' >/dev/tty; read -r -s token </dev/tty; echo >/dev/tty
+    if free_name "$p" "$name" "$token" >/dev/tty 2>&1; then return 0; fi
+    printf 'That didn'"'"'t work (see above). Try again.\n' >/dev/tty
+  done
+}
+if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
+  free_name "$HOMEPORT_DDNS" "${HOMEPORT_DDNS_NAME:-}" "${HOMEPORT_DDNS_TOKEN:-}" || die "couldn't set up the free name (see above)"
+fi
+while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
+  printf '\nHow should people reach this server?\n' >/dev/tty
+  printf '  1) homeport.local: on this network only, nothing to set up (browsers warn about its certificate once)\n' >/dev/tty
+  printf '  2) A free name from DuckDNS (yourname.duckdns.org): from anywhere, with real HTTPS certificates\n' >/dev/tty
+  printf '  3) A free name from deSEC (yourname.dedyn.io): the same, from a non-profit\n' >/dev/tty
+  printf '  4) A domain of your own\n' >/dev/tty
+  pick=""; printf 'Choose 1-4 [1]: ' >/dev/tty; read -r pick </dev/tty
+  case "${pick:-1}" in
+    1) HOMEPORT_DOMAIN=homeport.local ;;
+    2) guide_free_name duckdns || true ;;
+    3) guide_free_name desec || true ;;
+    4) ask HOMEPORT_DOMAIN "Your domain (its DNS must point at this server's public address)" ;;
+  esac
+done
+echo "Main domain: ${HOMEPORT_DOMAIN:-}${ddns:+ (free name from $ddns)}"
 # Names Let's Encrypt can't certify (private addresses, test and local names) use Caddy's own certificates.
 tls_default=letsencrypt
 case "${HOMEPORT_DOMAIN:-}" in *.sslip.io|*.nip.io|*.test|*.local|*.lan|*.home.arpa|*.internal) tls_default=internal ;; esac
 ask HOMEPORT_ADMIN "First admin's user name"
-ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
-ask HOMEPORT_TLS "Certificates: letsencrypt (public server) or internal (test machine)" "$tls_default"
+if [ "$tls_default" = letsencrypt ]; then
+  ask HOMEPORT_EMAIL "Email for Let's Encrypt notices about the certificates (optional)"
+fi
+if [ -z "$ddns" ] && [ "$tls_default" = letsencrypt ]; then
+  ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (test machine)" "$tls_default"
+fi
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; printf 'Again: ' >/dev/tty; read -r -s p2 </dev/tty; echo >/dev/tty
@@ -456,6 +534,12 @@ if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
   Certificates: Caddy's own test certificates, so your browser warns the first time; choose to continue.
 MSG
   case "$HOMEPORT_DOMAIN" in
+    *.local) show <<MSG
+  $HOMEPORT_DOMAIN is announced on this network: Macs, iPhones, iPads, Linux and Windows find it with no setup.
+  Install apps on names under it, like cloud.$HOMEPORT_DOMAIN (Windows may not find those; Android browsers often find
+  no .local names at all: there, use https://$shown_ip/admin).
+MSG
+    ;;
     *.sslip.io|*.nip.io) show <<MSG
   $HOMEPORT_DOMAIN already leads to this machine from every device on this network: nothing to set up.
   Install apps on names under it, like cloud.$HOMEPORT_DOMAIN.
@@ -471,6 +555,15 @@ MSG
 MSG
     ;;
   esac
+elif [ -n "$ddns" ]; then
+  show <<MSG
+
+  $HOMEPORT_DOMAIN is your free name; Homeport keeps it pointed at your home's public address.
+  On your router, forward ports 80 and 443 to $shown_ip (often under "Port forwarding" or "NAT"). Then
+  Let's Encrypt gives each name its certificate within a minute of its first visit, and it works from anywhere.
+  Apps get names under it, like cloud.$HOMEPORT_DOMAIN, each with its own certificate.
+  Some routers don't let devices at home reach the home's own public address: there, use https://$shown_ip/admin.
+MSG
 else
   show <<MSG
 

@@ -307,6 +307,20 @@ func (v *Data) App(id string) (*App, bool) {
 	return nil, false
 }
 
+// AIDomain is where the AI page is served: ai.<main domain>, unless an app already has that name ("" then, or before
+// setup).
+func (v *Data) AIDomain() string {
+	main := v.Settings().MainDomain
+	if main == "" {
+		return ""
+	}
+	name := "ai." + main
+	if _, taken := v.AppOn(name); taken {
+		return ""
+	}
+	return name
+}
+
 // AppOn is the app served on domain, if any.
 func (v *Data) AppOn(domain string) (*App, bool) {
 	for i := range v.d.Apps {

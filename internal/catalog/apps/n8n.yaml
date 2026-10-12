@@ -1,0 +1,32 @@
+id: n8n
+name: n8n
+description: Automate work between your apps and services with visual workflows, like a private Zapier.
+category: Dev & tools
+website: https://n8n.io
+signIn: gate
+secrets: [encryption_key]
+notes: |
+  Open it to make the owner account. Only the groups you allow can open it; for webhooks that other services call,
+  make it public (Who can open it → Anyone) and protect each webhook in n8n itself.
+compose: |
+  services:
+    # n8n runs as user 1000: its data folder is handed to that user first.
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "1000:1000", "/data"]
+      volumes: ["{{.Data}}/n8n:/data"]
+    app:
+      image: docker.n8n.io/n8nio/n8n:latest
+      ports: ["127.0.0.1:{{.Port}}:5678"]
+      environment:
+        N8N_HOST: "{{.Domain}}"
+        N8N_PROTOCOL: https
+        N8N_PROXY_HOPS: "1"
+        WEBHOOK_URL: "https://{{.Domain}}/"
+        N8N_ENCRYPTION_KEY: "{{secret "encryption_key"}}"
+        GENERIC_TIMEZONE: "{{.TimeZone}}"
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/n8n:/home/node/.n8n"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped
