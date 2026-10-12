@@ -42,9 +42,10 @@ seen=0          # lines of output so far in this step (to move the bar along)
 drawn=0         # lines of the block on screen now
 last_draw=0
 
-term_cols() { local c; c="$(stty size <&3 2>/dev/null)" || c=""; c="${c##* }"; COLS="${c:-80}"; [ "$COLS" -ge 20 ] || COLS=80; }
+# The block is drawn 80 columns wide. (Not measured with stty: on Ubuntu 26.04, under "curl … | sudo bash", sudo-rs leaves
+# stty paused for good, and the installer would hang before printing anything.)
 COLS=80
-if $live; then term_cols; trap term_cols WINCH; printf '\e[?25l' >&3; fi
+if $live; then printf '\e[?25l' >&3; fi
 
 # clip VAR TEXT WIDTH: TEXT cut to fit WIDTH columns (long lines would wrap and break the redrawing).
 clip() { local _c="$2"; if [ "${#_c}" -gt "$3" ]; then _c="${_c:0:$3-3}..."; fi; printf -v "$1" '%s' "$_c"; }
@@ -188,8 +189,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
 # Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
 # lets this server find them too.
-# restic makes the backups (Backups page).
-run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic
+# restic makes the backups (Backups page); zstd unpacks Ollama (the local AI).
+run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic zstd
 
 say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
