@@ -1,7 +1,9 @@
-// Package mdns announces Homeport's .local names on the home network through Avahi (Linux), so Macs, iPhones, Linux and
-// Windows computers find homeport.local and cloud.homeport.local with no DNS to set up.
+// Package mdns announces Homeport's .local names on the home network, so Macs, iPhones, Linux and Windows computers find
+// homeport.local and cloud.homeport.local with no DNS to set up: through Avahi on Linux, and macOS's own mDNS (dns-sd)
+// on a Mac.
 //
-// Each name is kept announced by an avahi-publish process (from avahi-utils) running as long as the name is wanted.
+// Each name is kept announced by a process (avahi-publish from avahi-utils, or dns-sd -P) running as long as the name
+// is wanted.
 // Avahi's hosts file can't do it: its names point at this machine's own address, whose reverse lookup belongs to the
 // hostname, and Avahi refuses them as a "local name collision". avahi-publish --no-reverse leaves that out.
 package mdns
@@ -31,9 +33,10 @@ func Local(names []string) []string {
 	return out
 }
 
-// Publisher keeps one avahi-publish running for each .local name Homeport serves.
+// Publisher keeps one avahi-publish (or dns-sd) running for each .local name Homeport serves.
 type Publisher struct {
-	Command  string        // default avahi-publish
+	OS       string        // "linux" or "macos"
+	Command  string        // default avahi-publish (Linux) or dns-sd (macOS)
 	Hostname string        // this machine's name; Avahi announces Hostname.local itself
 	Retry    time.Duration // wait before announcing a name again after its avahi-publish ended (default 10s)
 
@@ -44,7 +47,11 @@ type Publisher struct {
 // Publish announces names (the .local ones) at the first of ips, and stops announcing the ones no longer among them.
 // Without Avahi installed it does nothing.
 func (p *Publisher) Publish(_ context.Context, names, ips []string) error {
-	path, err := exec.LookPath(cmp.Or(p.Command, "avahi-publish"))
+	program := "avahi-publish"
+	if p.OS == "macos" {
+		program = "dns-sd" // part of macOS
+	}
+	path, err := exec.LookPath(cmp.Or(p.Command, program))
 	if err != nil {
 		return nil
 	}
@@ -103,7 +110,12 @@ func (p *Publisher) Close() {
 // keep runs avahi-publish for name until stop is closed, starting it again if it ends (Avahi restarted, say).
 func (p *Publisher) keep(path, name, ip string, stop <-chan struct{}) {
 	for {
-		cmd := exec.Command(path, "--address", "--no-reverse", name, ip)
+		args := []string{"--address", "--no-reverse", name, ip}
+		if p.OS == "macos" {
+			// A proxy registration: a (made-up) web service whose host record is the name, at this Mac's address.
+			args = []string{"-P", "Homeport " + strings.TrimSuffix(name, ".local"), "_http._tcp", "local", "443", name, ip}
+		}
+		cmd := exec.Command(path, args...)
 		var out bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &out
 		done := make(chan error, 1)

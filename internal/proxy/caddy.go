@@ -56,7 +56,7 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 
 	if s.MainDomain != "" {
 		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
-		writeTLS(&b, s, certs[s.MainDomain])
+		writeTLS(&b, s, s.MainDomain, certs[s.MainDomain])
 		writeHomeport(&b, s)
 		if len(localAddrs) > 0 {
 			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
@@ -65,7 +65,7 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 		// The AI page (Homeport serves it and checks who's signed in), unless an app has its name.
 		if ai := AIDomain(s.MainDomain, apps); ai != "" {
 			fmt.Fprintf(&b, "\n# The AI page\n%s {\n", ai)
-			writeTLS(&b, s, certs[ai])
+			writeTLS(&b, s, ai, certs[ai])
 			writeStripIdentity(&b)
 			fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
 		}
@@ -76,7 +76,7 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 			continue
 		}
 		fmt.Fprintf(&b, "\n# %s (%s)\n%s {\n", a.Name, a.ID, a.Domain)
-		writeTLS(&b, s, certs[a.Domain])
+		writeTLS(&b, s, a.Domain, certs[a.Domain])
 		writeStripIdentity(&b)
 		// Homeport answers its own sign-in hand-off on every app domain, so sign-in works across unrelated domains.
 		fmt.Fprintf(&b, "\thandle /.homeport/* {\n\t\treverse_proxy %s\n\t}\n", Upstream)
@@ -102,15 +102,8 @@ func AIDomain(main string, apps []state.App) string {
 }
 
 // writeTLS says where a site's certificate comes from; Let's Encrypt is Caddy's own default, so it needs nothing.
-func writeTLS(b *strings.Builder, s state.Settings, t SiteTLS) {
-	mode := t.Mode
-	if mode == "" {
-		mode = state.CertLetsEncrypt
-		if s.TLS == state.TLSInternal {
-			mode = state.CertInternal
-		}
-	}
-	switch mode {
+func writeTLS(b *strings.Builder, s state.Settings, domain string, t SiteTLS) {
+	switch state.CertFor(s, domain, t.Mode) {
 	case state.CertInternal:
 		b.WriteString("\ttls internal\n")
 	case state.CertCustom:

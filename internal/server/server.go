@@ -17,8 +17,11 @@ import (
 	"homeport/internal/apps"
 	"homeport/internal/assist"
 	"homeport/internal/auth"
+	"homeport/internal/backup"
 	"homeport/internal/dyndns"
+	"homeport/internal/firewall"
 	"homeport/internal/state"
+	"homeport/internal/system"
 )
 
 const (
@@ -52,6 +55,12 @@ type Server struct {
 	DynDNS *dyndns.Updater
 	// HTTPSAddr is where Caddy serves HTTPS on this machine, for looking at each domain's certificate.
 	HTTPSAddr string
+	// System is the server's own services, for the Services page (nil: only apps are shown).
+	System *system.Manager
+	// Firewall is the Firewall page's ufw (nil: not offered).
+	Firewall *firewall.Manager
+	// Backup backs the server up (nil: not offered).
+	Backup *backup.Manager
 
 	jobs     jobs
 	mu       sync.Mutex

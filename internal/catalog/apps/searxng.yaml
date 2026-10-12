@@ -1,0 +1,20 @@
+id: searxng
+name: SearXNG
+description: Private web search that asks many search engines at once, without tracking you.
+category: Tools
+website: https://docs.searxng.org
+signIn: gate
+secrets: [secret_key]
+notes: |
+  Only the groups you allow can use it. To make it your browser's search engine, open it and use the browser's
+  "add search engine" option (it offers itself).
+compose: |
+  services:
+    app:
+      image: docker.io/searxng/searxng:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        SEARXNG_BASE_URL: "https://{{.Domain}}/"
+        SEARXNG_SECRET: "{{secret "secret_key"}}"
+      volumes: ["{{.Data}}/config:/etc/searxng"]
+      restart: unless-stopped

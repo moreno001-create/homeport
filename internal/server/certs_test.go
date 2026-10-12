@@ -24,6 +24,7 @@ import (
 
 func TestCertificateChoice(t *testing.T) {
 	r := newRig(t)
+	_ = r.srv.Store.Update(func(d *state.Data) error { d.AddDomain(state.Domain{Name: "shop.example.org"}); return nil })
 	r.srv.CertDir = t.TempDir()
 	admin := r.browser()
 	admin.do("POST", "https://home.test/login", url.Values{"name": {"alice"}, "password": {"correct horse"}}, nil)
@@ -39,14 +40,14 @@ func TestCertificateChoice(t *testing.T) {
 	}
 	cert := func() state.CertMode {
 		var m state.CertMode
-		r.srv.Store.Read(func(d *state.Data) { x, _ := d.Domain("example.test"); m = x.Cert })
+		r.srv.Store.Read(func(d *state.Data) { x, _ := d.Domain("shop.example.org"); m = x.Cert })
 		return m
 	}
 
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": "letsencrypt"}); w.Code != http.StatusNoContent || cert() != state.CertLetsEncrypt {
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": "letsencrypt"}); w.Code != http.StatusNoContent || cert() != state.CertLetsEncrypt {
 		t.Fatalf("choosing Let's Encrypt: %d %s", w.Code, w.Body)
 	}
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": "bogus"}); w.Code != http.StatusBadRequest {
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": "bogus"}); w.Code != http.StatusBadRequest {
 		t.Errorf("unknown mode: %d", w.Code)
 	}
 	if w := call("PUT", "/api/domains/nope.test/certificate", map[string]string{"mode": "internal"}); w.Code != http.StatusNotFound {
@@ -55,33 +56,33 @@ func TestCertificateChoice(t *testing.T) {
 
 	// An uploaded certificate must be for the domain.
 	c, k := testCert(t, "other.test")
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": "custom", "cert": c, "key": k}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not example.test") {
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": "custom", "cert": c, "key": k}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not shop.example.org") {
 		t.Errorf("certificate for another domain: %d %s", w.Code, w.Body)
 	}
-	c, k = testCert(t, "example.test")
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": "custom", "cert": c, "key": k}); w.Code != http.StatusNoContent || cert() != state.CertCustom {
+	c, k = testCert(t, "shop.example.org")
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": "custom", "cert": c, "key": k}); w.Code != http.StatusNoContent || cert() != state.CertCustom {
 		t.Fatalf("uploading: %d %s", w.Code, w.Body)
 	}
-	saved := filepath.Join(r.srv.CertDir, "example.test", "key.pem")
+	saved := filepath.Join(r.srv.CertDir, "shop.example.org", "key.pem")
 	if b, _ := os.ReadFile(saved); string(b) != k {
 		t.Fatal("key not saved where Caddy reads it")
 	}
 
 	// Caddy refusing the change puts the old choice back.
 	r.srv.ApplyProxy = func(context.Context) error { return errors.New("Caddy rejected it") }
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": "internal"}); w.Code != http.StatusInternalServerError || cert() != state.CertCustom {
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": "internal"}); w.Code != http.StatusInternalServerError || cert() != state.CertCustom {
 		t.Errorf("a refused change should be undone: %d, now %q", w.Code, cert())
 	}
 	r.srv.ApplyProxy = func(context.Context) error { return nil }
 
 	// Back to the server's setting: the uploaded files go.
-	if w := call("PUT", "/api/domains/example.test/certificate", map[string]string{"mode": ""}); w.Code != http.StatusNoContent || cert() != "" {
+	if w := call("PUT", "/api/domains/shop.example.org/certificate", map[string]string{"mode": ""}); w.Code != http.StatusNoContent || cert() != "" {
 		t.Fatalf("back to the server's setting: %d", w.Code)
 	}
 	if _, err := os.Stat(saved); !os.IsNotExist(err) {
 		t.Error("uploaded key left behind")
 	}
-	if w := call("GET", "/api/domains", nil); !strings.Contains(w.Body.String(), `"name":"example.test","main":false,"added":"0001-01-01T00:00:00Z","cert":"internal","ownCert":false`) {
+	if w := call("GET", "/api/domains", nil); !strings.Contains(w.Body.String(), `"name":"shop.example.org","main":false,"added":"0001-01-01T00:00:00Z","cert":"internal","ownCert":false`) {
 		t.Errorf("listing should show the server's setting: %s", w.Body)
 	}
 }
@@ -96,4 +97,16 @@ func testCert(t *testing.T, name string) (certPEM, keyPEM string) {
 	}
 	kd, _ := x509.MarshalPKCS8PrivateKey(k)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}))
+}
+
+func TestNoLetsEncryptForHomeNames(t *testing.T) {
+	r := newRig(t)
+	_ = r.srv.Store.Update(func(d *state.Data) error { d.AddDomain(state.Domain{Name: "homeport.local"}); return nil })
+	req := httptest.NewRequest("PUT", "/api/domains/homeport.local/certificate", strings.NewReader(`{"mode":"letsencrypt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.srv.LocalHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "home network") {
+		t.Fatalf("Let's Encrypt for a .local name: %d %s", w.Code, w.Body)
+	}
 }

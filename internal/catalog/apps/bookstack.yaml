@@ -1,0 +1,44 @@
+id: bookstack
+name: BookStack
+description: A wiki organised like books, chapters and pages, for manuals, how-tos and family knowledge.
+category: Documents & productivity
+website: https://www.bookstackapp.com
+signIn: gate
+secrets: [app_key, db_password, db_root_password]
+notes: |
+  First sign-in: admin@admin.com / password. Change both right away (top right → My Account).
+compose: |
+  services:
+    app:
+      image: lscr.io/linuxserver/bookstack:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        PUID: "1000"
+        PGID: "1000"
+        TZ: "{{.TimeZone}}"
+        APP_URL: "https://{{.Domain}}"
+        APP_KEY: "{{secret "app_key"}}"
+        DB_HOST: db
+        DB_PORT: "3306"
+        DB_USERNAME: bookstack
+        DB_PASSWORD: "{{secret "db_password"}}"
+        DB_DATABASE: bookstack
+      volumes: ["{{.Data}}/config:/config"]
+      # Started once the database answers (on its first start it takes a while to set itself up).
+      depends_on:
+        db: {condition: service_healthy}
+      restart: unless-stopped
+    db:
+      image: docker.io/library/mariadb:11
+      environment:
+        MARIADB_DATABASE: bookstack
+        MARIADB_USER: bookstack
+        MARIADB_PASSWORD: "{{secret "db_password"}}"
+        MARIADB_ROOT_PASSWORD: "{{secret "db_root_password"}}"
+      volumes: ["{{.Data}}/mysql:/var/lib/mysql"]
+      healthcheck:
+        test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+      restart: unless-stopped

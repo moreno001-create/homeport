@@ -1,0 +1,34 @@
+id: joplin
+name: Joplin Server
+description: Sync for the Joplin notes apps (phone, desktop), and sharing notes, on your own server.
+category: Documents & productivity
+website: https://joplinapp.org
+signIn: own
+secrets: [db_password]
+notes: |
+  First sign-in at https://{{.Domain}}: admin@localhost / admin. Change them right away, and make an account for
+  each person. In the Joplin apps: Synchronisation → Joplin Server, address https://{{.Domain}}.
+compose: |
+  services:
+    app:
+      image: docker.io/joplin/server:latest
+      ports: ["127.0.0.1:{{.Port}}:22300"]
+      environment:
+        APP_BASE_URL: "https://{{.Domain}}"
+        APP_PORT: "22300"
+        DB_CLIENT: pg
+        POSTGRES_HOST: db
+        POSTGRES_PORT: "5432"
+        POSTGRES_DATABASE: joplin
+        POSTGRES_USER: joplin
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      depends_on: [db]
+      restart: unless-stopped
+    db:
+      image: docker.io/library/postgres:17-alpine
+      environment:
+        POSTGRES_DB: joplin
+        POSTGRES_USER: joplin
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      restart: unless-stopped

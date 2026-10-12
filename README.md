@@ -11,13 +11,22 @@ Docker and Caddy. (Working name.)
   `Remote-Name`, `Remote-Email` and `Remote-Groups` (headers a browser sends with those names are removed first).
 - **Domains and HTTPS**: Caddy gets Let's Encrypt certificates for every domain on its own. Each domain can instead
   use Caddy's own certificates or one you upload (`homeport domain cert`), and the Domains page shows the certificate
-  each site really serves and when it runs out.
+  each site really serves and when it runs out. Home-network names (`.local`, `.lan`, sslip.io…) always get Caddy's
+  own, since Let's Encrypt can't certify them, so one server can have both.
 - **The AI page** at `https://ai.<main domain>`: everyone signs in and chats with the local model (plain chat: it can't
   see or change the server); admins get the full assistant there too. The model's name and what it can do sit above the
   message box, and a picker below it chooses among the models the local server has.
 - **No domain needed at home**: by default the server is `homeport.local`, and apps get names under it
-  (`cloud.homeport.local`). Homeport announces them on the home network with Avahi (mDNS), so Macs, iPhones, Linux and
-  Windows find them with nothing to set up; the admin panel also answers on the server's IP address.
+  (`cloud.homeport.local`). Homeport announces them on the home network (Avahi on Linux, macOS's own mDNS on a Mac),
+  so Macs, iPhones, Linux and Windows find them with nothing to set up; the admin panel also answers on the server's
+  IP address.
+- **Services**: each app's containers (state, CPU, memory, restarts; restart, stop, start, logs) and the server's own
+  services (Homeport, Caddy, Docker, Ollama, Avahi…; restart and logs).
+- **Firewall** (Linux, ufw): on or off, open and close ports, from anywhere or only your home network. SSH, 80 and 443
+  always stay open, so nobody locks themselves out; it also lists the ports apps open by themselves.
+- **Backups** with restic, encrypted, daily, to an SSH server or NAS, S3-compatible storage (Backblaze B2, Wasabi, R2,
+  AWS), another Homeport (its Backup space app), or a drive. Each app is paused while its files are read (consistent
+  databases); restore an app from any backup on the page (its current folder is kept, so it can be undone).
 - **Set up from the start**: the installer asks how people reach the server: `homeport.local` (this network), a free
   name from DuckDNS or deSEC (it explains how to get one, then sets it up with Let's Encrypt certificates for it and
   every app under it), or a domain of your own.
@@ -41,7 +50,9 @@ Docker and Caddy. (Working name.)
 Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
 AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma,
 linkding, Wiki.js, n8n, changedetection.io, IT Tools, Excalidraw, Calibre-Web, Kavita, Grocy, Homebox, Wallos,
-code-server, ntfy and whoami (a test page).
+code-server, ntfy, WordPress, Ghost, BookStack, Joplin Server, Trilium Notes, Vikunja, Firefly III, SearXNG, PrivateBin,
+Node-RED, Grafana, Linkwarden, LibreSpeed, copyparty, Mattermost, Matrix (Element), Jitsi Meet, Mumble, Backup space
+and whoami (a test page).
 
 ## How it fits together
 

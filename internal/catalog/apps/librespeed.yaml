@@ -1,0 +1,19 @@
+id: librespeed
+name: LibreSpeed
+description: A speed test between your devices and this server, to check your home network and Wi-Fi.
+category: Home & network
+website: https://github.com/librespeed/speedtest
+signIn: gate
+notes: |
+  It measures the speed between your device and this server (your home network and Wi-Fi), not your internet
+  connection. Only the groups you allow can open it.
+compose: |
+  services:
+    app:
+      image: ghcr.io/librespeed/speedtest:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        MODE: standalone
+        TITLE: "Speed test · {{.MainDomain}}"
+        TELEMETRY: "false"
+      restart: unless-stopped

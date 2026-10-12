@@ -1,0 +1,22 @@
+id: privatebin
+name: PrivateBin
+description: Share text and code snippets that are encrypted in the browser, with expiry and burn-after-reading.
+category: Tools
+website: https://privatebin.info
+signIn: gate
+notes: |
+  Only the groups you allow can open it, which also means only they can read shared links. To share with anyone,
+  make it public under "Who can open it": pastes stay encrypted, and the server never sees them.
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "65534:82", "/data"]
+      volumes: ["{{.Data}}/data:/data"]
+    app:
+      image: docker.io/privatebin/nginx-fpm-alpine:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      volumes: ["{{.Data}}/data:/srv/data"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

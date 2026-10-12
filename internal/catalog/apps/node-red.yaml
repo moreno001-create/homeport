@@ -1,0 +1,24 @@
+id: node-red
+name: Node-RED
+description: Wire together devices, APIs and online services in a visual editor, for home automation and more.
+category: Home & network
+website: https://nodered.org
+signIn: gate
+notes: |
+  Only the groups you allow can open the editor (Node-RED has no sign-in of its own here). Flows and installed nodes
+  live in the app's data folder.
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "1000:1000", "/data"]
+      volumes: ["{{.Data}}/data:/data"]
+    app:
+      image: docker.io/nodered/node-red:latest
+      ports: ["127.0.0.1:{{.Port}}:1880"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/data:/data"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

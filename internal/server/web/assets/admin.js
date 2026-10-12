@@ -85,6 +85,181 @@ const views = {
     ];
   },
 
+  // Services: each app's containers and the server's own services, with restart, stop/start and logs.
+  async services() {
+    const data = await api("GET", "/services");
+    clearTimeout(window.servicesTimer);
+    window.servicesTimer = setTimeout(() => { if (location.hash === "#services" && !dialog.open) route(); }, 10000);
+    const statePill = (state, label) => h("span", { class: "pill " + ({ running: "running", exited: "stopped", dead: "stopped", failed: "failed", stopped: "stopped" }[state] || "unknown") }, label || state);
+    const appCards = data.apps.map(a => h("div", { class: "card stack svc" },
+      h("div", { class: "head" }, h("h2", {}, a.name), h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener", class: "small" }, a.domain)),
+      a.error ? h("p", { class: "error" }, a.error) : null,
+      h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Container", "State", "CPU", "Memory", "Restarts", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, a.containers.map(c => h("tr", {},
+          h("td", {}, h("b", {}, c.service), h("div", { class: "muted small mono" }, c.image)),
+          h("td", {}, c.setup ? statePill("running", "setup done") : statePill(c.state), h("div", { class: "muted small" }, c.status)),
+          h("td", {}, c.cpu || "–"),
+          h("td", { class: "small" }, c.memory ? c.memory.split(" / ")[0] : "–"),
+          h("td", {}, c.restarts ? h("span", { class: "pill unknown", title: "Docker restarted it after it stopped" }, String(c.restarts)) : "0"),
+          h("td", { class: "actions" },
+            h("button", { onclick: () => logsDialog(a.name + " · " + c.service, "/services/apps/" + a.id + "/" + c.service + "/logs") }, "Logs"),
+            c.setup ? null : h("button", { onclick: () => containerAction(a, c, "restart") }, "Restart"),
+            c.setup ? null : c.state === "running" || c.state === "restarting"
+              ? h("button", { class: "danger", onclick: () => containerAction(a, c, "stop") }, "Stop")
+              : h("button", { onclick: () => containerAction(a, c, "start") }, "Start")))))))));
+    const since = t => { if (!t) return ""; const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? m + " min" : m < 2880 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " days"; };
+    const mb = n => n ? (n > 1 << 30 ? (n / (1 << 30)).toFixed(1) + " GiB" : Math.round(n / (1 << 20)) + " MiB") : "–";
+    const sysRows = data.system.map(s => h("tr", {},
+      h("td", {}, h("b", {}, s.name), h("div", { class: "muted small" }, s.about)),
+      h("td", {}, statePill(s.state), s.detail ? h("div", { class: "muted small" }, s.detail) : s.since ? h("div", { class: "muted small" }, "for " + since(s.since)) : null),
+      h("td", { class: "small" }, mb(s.memory)),
+      h("td", { class: "actions" },
+        s.hasLogs ? h("button", { onclick: () => logsDialog(s.name, "/services/system/" + s.id + "/logs") }, "Logs") : null,
+        s.canRestart ? h("button", { onclick: () => restartSystem(s) }, "Restart") : null)));
+    return [
+      h("div", { class: "head" }, h("h1", {}, "Services"), h("button", { onclick: () => route() }, "Refresh")),
+      h("h2", {}, "Apps"),
+      data.apps.length ? h("div", { class: "stack" }, appCards) : h("p", { class: "muted" }, "No apps installed yet."),
+      h("h2", {}, "This server"),
+      data.system.length
+        ? h("div", { class: "list" }, h("table", {}, h("thead", {}, h("tr", {}, ["Service", "State", "Memory", ""].map(t => h("th", {}, t)))), h("tbody", {}, sysRows)))
+        : h("p", { class: "muted" }, "Not available on this system."),
+    ];
+  },
+
+  // Firewall: ufw on or off, and which ports are open. SSH, 80 and 443 always stay open.
+  async firewall() {
+    const fw = await api("GET", "/firewall");
+    if (!fw.available) return [h("div", { class: "head" }, h("h1", {}, "Firewall")), h("div", { class: "card" }, h("p", {}, fw.why))];
+    const protoText = p => ({ tcp: "TCP", udp: "UDP" }[p] || "TCP and UDP");
+    const turn = async on => {
+      const msg = on
+        ? "Turn the firewall on? SSH (port " + fw.sshPort + "), 80 and 443 stay open; everything else coming in is refused, apart from the ports below."
+        : "Turn the firewall off? Every port that something listens on can then be reached from your network (and the internet, if your router forwards it).";
+      if (!confirm(msg)) return;
+      try { await api("POST", "/firewall/" + (on ? "on" : "off")); toast(on ? "The firewall is on" : "The firewall is off"); } catch (err) { toast(err.message); }
+      route();
+    };
+    const close = async r => {
+      if (!confirm("Close " + r.port + " (" + protoText(r.proto) + ")" + (r.from ? " from " + r.from : "") + "?")) return;
+      try { await api("DELETE", "/firewall/rules", { port: r.port, proto: r.proto || "", from: r.from || "" }); toast("Closed"); } catch (err) { toast(err.message); }
+      route();
+    };
+    const port = h("input", { required: true, placeholder: "8080, or 6000:6010", inputmode: "numeric", "aria-label": "Port" });
+    const proto = h("select", { "aria-label": "Protocol" }, h("option", { value: "tcp" }, "TCP"), h("option", { value: "udp" }, "UDP"), h("option", { value: "" }, "TCP and UDP"));
+    const from = h("select", { "aria-label": "From" }, h("option", { value: "" }, "From anywhere"),
+      fw.networks.map(n => h("option", { value: n }, "Only from this network (" + n + ")")));
+    const label = h("input", { placeholder: "What it's for (optional)", maxlength: "60", "aria-label": "What it's for" });
+    const open = h("form", { class: "card stack", onsubmit: async e => {
+      e.preventDefault();
+      try { await api("POST", "/firewall/rules", { port: port.value.trim(), proto: proto.value, from: from.value, label: label.value }); toast("Opened " + port.value); route(); } catch (err) { toast(err.message); }
+    } },
+      h("h2", {}, "Open a port"),
+      h("div", { class: "row" }, h("label", {}, "Port", port), h("label", {}, "Protocol", proto), h("label", {}, "From", from)),
+      h("label", {}, "What it's for", label),
+      h("div", {}, h("button", { class: "primary", type: "submit" }, "Open it")));
+    return [
+      h("div", { class: "head" }, h("h1", {}, "Firewall"), h("span", { class: "pill " + (fw.active ? "running" : "stopped") }, fw.active ? "on" : "off")),
+      h("div", { class: "card stack" },
+        h("p", {}, fw.active
+          ? "The firewall is on: only the ports below can be reached from outside this server."
+          : "The firewall is off: anything listening on this server can be reached from your network (and from the internet, if your router forwards it there)."),
+        h("p", { class: "muted small" }, "SSH (port " + fw.sshPort + "), 80 and 443 always stay open, so you can't lock yourself out and every site keeps working."),
+        h("div", {}, fw.active ? h("button", { class: "danger", onclick: () => turn(false) }, "Turn it off") : h("button", { class: "primary", onclick: () => turn(true) }, "Turn it on"))),
+      h("h2", {}, "Open ports"),
+      fw.rules.length
+        ? h("div", { class: "list" }, h("table", {},
+            h("thead", {}, h("tr", {}, ["Port", "Protocol", "From", "What", ""].map(t => h("th", {}, t)))),
+            h("tbody", {}, fw.rules.map(r => h("tr", {},
+              h("td", {}, h("b", { class: "mono" }, r.port)), h("td", {}, protoText(r.proto)), h("td", {}, r.from || "anywhere"),
+              h("td", { class: "small" }, (r.comment || "").replace(/^Homeport: /, "")),
+              h("td", { class: "actions" }, r.protected ? h("span", { class: "muted small" }, "always open") : h("button", { class: "danger", onclick: () => close(r) }, "Close")))))))
+        : h("p", { class: "muted" }, "No ports opened yet. Turning the firewall on opens SSH, 80 and 443."),
+      open,
+      fw.published.length ? h("div", { class: "stack" },
+        h("h2", {}, "Opened by apps"),
+        h("p", { class: "muted small" }, "These apps publish a port on the network themselves (Syncthing's sync port, say). Docker opens them whatever the firewall says; to close one, remove the app or change its setup."),
+        h("div", { class: "list" }, h("table", {}, h("tbody", {}, fw.published.map(p => h("tr", {}, h("td", { class: "mono" }, p.port), h("td", {}, p.container.replace(/^hp-/, "").replace(/-\d+$/, "")))))))) : null,
+    ];
+  },
+
+  // Backups: when, what, where to (SFTP/NAS, S3, another Homeport, a drive), and restoring an app.
+  async backups() {
+    const b = await api("GET", "/backup");
+    const kindName = { sftp: "SSH / NAS", s3: "S3 storage", homeport: "Another Homeport", local: "Drive" };
+    const when = d => d ? new Date(d).toLocaleString() : "";
+    const password = h("span", { class: "mono secret" }, "••••••••••••");
+    const showPw = h("button", { onclick: async () => {
+      if (showPw.textContent === "Hide") { password.textContent = "••••••••••••"; showPw.textContent = "Show"; return; }
+      try { password.textContent = (await api("GET", "/backup/password")).password; showPw.textContent = "Hide"; } catch (err) { toast(err.message); }
+    } }, "Show");
+    const copyPw = h("button", { onclick: async () => {
+      try { await navigator.clipboard.writeText((await api("GET", "/backup/password")).password); toast("Copied the password"); } catch { toast("Couldn't copy: use Show"); }
+    } }, "Copy");
+
+    const time = h("input", { type: "time", value: b.time || "", "aria-label": "Daily at" });
+    const keep = (v, l) => h("input", { type: "number", min: "0", max: "400", value: v, "aria-label": l });
+    const daily = keep(b.keepDaily, "Daily backups to keep"), weekly = keep(b.keepWeekly, "Weekly backups to keep"), monthly = keep(b.keepMonthly, "Monthly backups to keep");
+    const pause = h("input", { type: "checkbox", checked: !b.noPause });
+    const appBoxes = b.apps.map(a => ({ id: a.id, box: h("input", { type: "checkbox", checked: !b.skip.includes(a.id) }), name: a.name }));
+    const settings = h("form", { class: "card stack", onsubmit: async e => {
+      e.preventDefault();
+      try {
+        await api("PUT", "/backup/settings", { time: time.value, keepDaily: +daily.value, keepWeekly: +weekly.value, keepMonthly: +monthly.value,
+          noPause: !pause.checked, skip: appBoxes.filter(x => !x.box.checked).map(x => x.id) });
+        toast("Saved");
+      } catch (err) { toast(err.message); }
+    } },
+      h("h2", {}, "When and what"),
+      h("div", { class: "row" }, h("label", {}, "Every day at (empty: only when you choose Back up now)", time)),
+      h("div", { class: "row" }, h("label", {}, "Keep daily", daily), h("label", {}, "Keep weekly", weekly), h("label", {}, "Keep monthly", monthly)),
+      h("label", { class: "check" }, pause, "Pause each app for the moment its files are read (keeps databases consistent)"),
+      b.apps.length ? h("fieldset", { class: "apps-pick" }, h("legend", {}, "Apps to back up (Homeport's own settings always are)"),
+        appBoxes.map(x => h("label", { class: "check" }, x.box, x.name))) : null,
+      h("div", {}, h("button", { class: "primary", type: "submit" }, "Save")));
+
+    const destCards = b.destinations.map(d => {
+      const off = h("input", { type: "checkbox", checked: !d.off, onchange: async () => {
+        try { await api("PATCH", "/backup/destinations/" + d.id, { off: !off.checked }); toast(off.checked ? "In the daily backup" : "Left out of the daily backup"); } catch (err) { toast(err.message); }
+      } });
+      const status = d.lastRun
+        ? (d.lastOK ? h("span", { class: "pill running" }, "backed up") : h("span", { class: "pill failed" }, "didn't work"))
+        : h("span", { class: "pill unknown" }, "not yet");
+      return h("div", { class: "card stack" },
+        h("div", { class: "head" }, h("div", {}, h("h3", {}, d.name), h("div", { class: "muted small" }, kindName[d.kind] + " · " + d.where)), status),
+        d.lastRun ? h("p", { class: "small" }, "Last: " + when(d.lastRun) + (d.lastOK ? " · " + sizeText(d.lastAdded) + " new" : "")) : null,
+        d.lastError ? h("p", { class: "error small" }, d.lastError) : null,
+        h("label", { class: "check" }, off, "In the daily backup"),
+        h("div", { class: "row" },
+          h("button", { onclick: () => runJob("Backing up to " + d.name, () => api("POST", "/backup/run", { destination: d.id })) }, "Back up now"),
+          h("button", { onclick: () => snapshotsDialog(d, b.apps) }, "Backups and restore"),
+          h("button", { class: "danger", onclick: async () => {
+            if (!confirm("Stop backing up to " + d.name + "? The backups already there stay there.")) return;
+            try { await api("DELETE", "/backup/destinations/" + d.id); route(); } catch (err) { toast(err.message); }
+          } }, "Remove")));
+    });
+
+    return [
+      h("div", { class: "head" }, h("h1", {}, "Backups"),
+        h("button", { class: "primary", disabled: !b.destinations.length || !!b.running, onclick: () => runJob("Backing up", () => api("POST", "/backup/run", {})) }, b.running ? "Busy: " + b.running : "Back up now")),
+      h("div", { class: "card stack" },
+        h("h2", {}, "Encryption password"),
+        h("p", {}, "Every backup is encrypted with this password before it leaves the server. ", h("b", {}, "Keep a copy somewhere else"), " (a password manager): if this server is lost, the backups can only be read with it."),
+        h("div", { class: "row pw" }, password, showPw, copyPw)),
+      h("div", { class: "head" }, h("h2", {}, "Where backups go"), h("button", { onclick: () => destinationDialog(b) }, "Add a place")),
+      b.destinations.length ? h("div", { class: "stack" }, destCards) : h("p", { class: "muted" }, "Nowhere yet: add a NAS or SSH server, S3 storage, another Homeport, or a drive."),
+      settings,
+      b.lastLog ? h("details", { class: "card" }, h("summary", {}, "The last daily backup (" + (b.lastScheduled || "") + ")"), h("pre", { class: "log" }, b.lastLog)) : null,
+      h("details", { class: "card" }, h("summary", {}, "If this server is lost"),
+        h("div", { class: "stack small" },
+          h("p", {}, "Install Homeport on a new server (the same main address), then as root, with ", h("code", {}, "RESTIC_REPOSITORY"), " (the place) and ", h("code", {}, "RESTIC_PASSWORD"), " (the password above) set:"),
+          h("pre", { class: "log" }, "systemctl stop homeport\nrestic restore latest --tag homeport --target /\nrestic restore latest --tag app:ID --target /    # for each app\nsystemctl start homeport"),
+          h("p", {}, "Homeport's settings bring back the users, domains and each app's passwords; then choose Update on each app (Apps page) to start it. Restic's place names: ", h("code", {}, "sftp:user@host:/folder"), ", ", h("code", {}, "s3:https://address/bucket/homeport"), ", ", h("code", {}, "rest:https://address/user/"), " or the drive's folder."),
+          h("p", {}, "To keep backing up to places that have backups made with another password: ", h("button", { onclick: () => usePasswordDialog() }, "Use the password of earlier backups")))),
+    ];
+  },
+
   async users() {
     const users = await api("GET", "/users");
     return [
@@ -353,6 +528,132 @@ async function notesDialog(a) {
     h("label", {}, h("h3", {}, "Your notes"), mine),
     h("p", { class: "muted small" }, "Kept on this server only, like the passwords above (never shown to AI helpers). Keep them private."),
     h("div", { class: "buttons" }, saved, h("button", { type: "button", onclick: () => dialog.close() }, "Close"), h("button", { class: "primary", type: "submit" }, "Save notes"))));
+}
+
+async function containerAction(a, c, action) {
+  if (action === "stop" && !confirm("Stop " + a.name + "'s " + c.service + "? " + a.name + " may stop working until it's started again.")) return;
+  try { await api("POST", "/services/apps/" + a.id + "/" + c.service + "/" + action); toast(a.name + " · " + c.service + ": " + action + " done"); } catch (err) { toast(err.message); }
+  route();
+}
+
+async function restartSystem(s) {
+  if (!confirm("Restart " + s.name + "? " + s.restart)) return;
+  try { await api("POST", "/services/system/" + s.id + "/restart"); toast("Restarting " + s.name); } catch (err) { toast(err.message); }
+  setTimeout(route, s.id === "homeport" ? 4000 : 1500);
+}
+
+// logsDialog shows a service's recent log lines, newest at the bottom.
+function logsDialog(title, path) {
+  const log = h("pre", { class: "log tall" }, "Loading…");
+  const count = h("select", { "aria-label": "How many lines" }, [200, 1000, 2000].map(n => h("option", { value: n }, n + " lines")));
+  const load = async () => {
+    try { const r = await api("GET", path + "?lines=" + count.value); log.textContent = r.log || "(nothing logged)"; log.scrollTop = log.scrollHeight; }
+    catch (err) { log.textContent = err.message; }
+  };
+  count.addEventListener("change", load);
+  openDialog(h("div", { class: "body wide-body" },
+    h("div", { class: "head" }, h("h2", {}, title), h("div", { class: "row" }, count, h("button", { onclick: load }, "Refresh"))),
+    log,
+    h("div", { class: "buttons" }, h("button", { onclick: () => dialog.close() }, "Close"))));
+  load();
+}
+
+function sizeText(n) {
+  if (!n) return "0 bytes";
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " kB";
+  return n + " bytes";
+}
+
+// destinationDialog adds a place for backups: its fields follow the kind chosen.
+function destinationDialog(b) {
+  const kind = h("select", { "aria-label": "Kind" },
+    h("option", { value: "sftp" }, "An SSH server or NAS (SFTP)"), h("option", { value: "s3" }, "S3-compatible storage (Backblaze B2, Wasabi, AWS, R2…)"),
+    h("option", { value: "homeport" }, "Another Homeport (its Backup space app)"), h("option", { value: "local" }, "A drive plugged into this server"));
+  const name = h("input", { required: true, placeholder: "My NAS", "aria-label": "Name" });
+  const f = {};
+  const field = (key, label, attrs = {}) => { f[key] = h("input", { "aria-label": label, autocapitalize: "none", spellcheck: "false", ...attrs }); return h("label", {}, label, f[key]); };
+  const key = h("pre", { class: "log" }, "Making Homeport's SSH key…");
+  const parts = {
+    sftp: h("div", { class: "stack" },
+      h("div", { class: "row" }, field("host", "Host", { placeholder: "nas.local or 192.168.0.20" }), field("port", "Port", { type: "number", value: "22" }), field("user", "User", { placeholder: "backup" })),
+      field("path", "Folder there", { placeholder: "/volume1/backups/homeport" }),
+      h("p", { class: "small" }, "On that machine, add this line to ", h("code", {}, "~USER/.ssh/authorized_keys"), " (on a Synology: enable SSH and \"user home\", then the same):"), key),
+    s3: h("div", { class: "stack" },
+      field("endpoint", "Address", { placeholder: "https://s3.eu-central-003.backblazeb2.com" }),
+      h("p", { class: "muted small" }, "Backblaze B2: https://s3.<region>.backblazeb2.com · Wasabi: https://s3.<region>.wasabisys.com · Cloudflare R2: https://<account>.r2.cloudflarestorage.com · AWS: https://s3.<region>.amazonaws.com"),
+      h("div", { class: "row" }, field("bucket", "Bucket"), field("region", "Region (if it asks)")),
+      h("div", { class: "row" }, field("accessKey", "Access key (key ID)"), field("secretKey", "Secret key", { type: "password", autocomplete: "off" }))),
+    homeport: h("div", { class: "stack" },
+      h("p", { class: "small" }, "Your friend installs ", h("b", {}, "Backup space"), " from their Homeport's catalog and makes a user for you (its Notes say how), then gives you its address, the user name and the password."),
+      field("url", "Address", { placeholder: "https://backup.friend.duckdns.org" }),
+      h("div", { class: "row" }, field("username", "User name"), field("secret", "Password", { type: "password", autocomplete: "off" }))),
+    local: h("div", { class: "stack" },
+      b.drives.length
+        ? h("label", {}, "Drive", (f.drive = h("select", {}, b.drives.map(d => h("option", { value: d.path }, d.path + (d.label ? " (" + d.label + ")" : "") + (d.free ? " · " + d.free + " free" : ""))))))
+        : h("p", { class: "muted small" }, "No drive found: plug one in and mount it (under /media or /mnt), or type its folder below."),
+      field("folder", "Folder on it", { value: "homeport-backup" })),
+  };
+  const box = h("div", {});
+  const show = () => {
+    box.replaceChildren(parts[kind.value]);
+    if (kind.value === "sftp") api("GET", "/backup/public-key").then(r => { key.textContent = r.key; }).catch(err => { key.textContent = err.message; });
+  };
+  kind.addEventListener("change", show);
+  show();
+  const submit = h("button", { class: "primary", type: "submit" }, "Check and add");
+  openDialog(h("form", { method: "dialog", class: "wide", onsubmit: async e => {
+    e.preventDefault();
+    const v = k => (f[k] ? f[k].value.trim() : "");
+    const d = { kind: kind.value, name: name.value.trim() };
+    if (d.kind === "sftp") Object.assign(d, { host: v("host"), port: +v("port") || 22, user: v("user"), path: v("path") });
+    if (d.kind === "s3") Object.assign(d, { endpoint: v("endpoint"), bucket: v("bucket"), region: v("region"), accessKey: v("accessKey"), secretKey: v("secretKey") });
+    if (d.kind === "homeport") Object.assign(d, { url: v("url"), username: v("username"), secret: v("secret") });
+    if (d.kind === "local") d.path = ((f.drive && f.drive.value) || "").replace(/\/$/, "") + "/" + v("folder").replace(/^\//, "");
+    submit.disabled = true; submit.textContent = "Checking…";
+    try { const r = await api("POST", "/backup/destinations", d); dialog.close(); toast(r.message); route(); }
+    catch (err) { toast(err.message); submit.disabled = false; submit.textContent = "Check and add"; }
+  } },
+    h("h2", {}, "Add a place for backups"),
+    h("label", {}, "Kind", kind), h("label", {}, "Name", name), box,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), submit)));
+}
+
+// snapshotsDialog lists the backups at a place, and restores an app from one.
+async function snapshotsDialog(d, appsList) {
+  const body = h("div", { class: "stack" }, h("p", { class: "muted" }, "Asking " + d.name + "…"));
+  openDialog(h("div", { class: "body wide-body" }, h("h2", {}, "Backups at " + d.name), body,
+    h("div", { class: "buttons" }, h("button", { onclick: () => dialog.close() }, "Close"))));
+  let snaps;
+  try { snaps = await api("GET", "/backup/destinations/" + d.id + "/snapshots"); } catch (err) { body.replaceChildren(h("p", { class: "error" }, err.message)); return; }
+  const names = Object.fromEntries(appsList.map(a => [a.id, a.name]));
+  const restore = s => {
+    if (!confirm("Restore " + (names[s.what] || s.what) + " as it was on " + new Date(s.time).toLocaleString() + "? It stops for a moment; its current folder is kept beside it, so this can be undone.")) return;
+    dialog.close();
+    runJob("Restoring " + (names[s.what] || s.what), () => api("POST", "/backup/restore", { destination: d.id, snapshot: s.id, app: s.what }));
+  };
+  body.replaceChildren(snaps.length
+    ? h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["When", "What", "Size", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, snaps.map(s => h("tr", {},
+          h("td", {}, new Date(s.time).toLocaleString()),
+          h("td", {}, s.what === "homeport" ? "Homeport's settings" : (names[s.what] || s.what + " (not installed)")),
+          h("td", { class: "small" }, s.size ? sizeText(s.size) : ""),
+          h("td", { class: "actions" }, s.what !== "homeport" && names[s.what] ? h("button", { onclick: () => restore(s) }, "Restore") : null))))))
+    : h("p", { class: "muted" }, "No backups there yet."));
+}
+
+function usePasswordDialog() {
+  const pw = h("input", { type: "password", required: true, minlength: "8", autocomplete: "off", "aria-label": "Password" });
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    try { await api("PUT", "/backup/password", { password: pw.value }); dialog.close(); toast("Saved: backups now use that password"); route(); } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, "Use the password of earlier backups"),
+    h("p", {}, "For restoring onto a new server: the password the backups were made with. New backups use it too. Backups at places already added with another password can't be read with it."),
+    h("label", {}, "Password", pw),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Use it"))));
 }
 
 function removeDialog(a) {

@@ -1,0 +1,24 @@
+id: trilium
+name: Trilium Notes
+description: Notes in a deep tree, with links, scripting and a rich editor, for building a personal knowledge base.
+category: Documents & productivity
+website: https://triliumnotes.org
+signIn: gate
+notes: |
+  Open it and choose a password for Trilium itself. Only the groups you allow can reach it; the Trilium desktop app
+  can sync with https://{{.Domain}} too.
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "1000:1000", "/data"]
+      volumes: ["{{.Data}}/trilium:/data"]
+    app:
+      image: docker.io/triliumnext/trilium:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/trilium:/home/node/trilium-data"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

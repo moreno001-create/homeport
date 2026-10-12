@@ -1,0 +1,35 @@
+id: mumble
+name: Mumble
+description: Low-latency voice chat for groups and gaming, with apps for computers and phones.
+category: Communication
+website: https://www.mumble.info
+signIn: gate
+secrets: [server_password, superuser_password]
+notes: |
+  In the Mumble app, add a server: address {{.Domain}} (or this server's IP address), port 64738, any user name, and
+  the server password (in this app's notes). Voice uses port 64738 (TCP and UDP) directly: for friends outside your
+  home, forward it on your router to this server. "SuperUser" (its password is in this app's notes too) can make
+  channels and give others admin rights. The web page only shows how to connect.
+compose: |
+  services:
+    server:
+      image: docker.io/mumblevoip/mumble-server:latest
+      ports: ["64738:64738/tcp", "64738:64738/udp"]
+      environment:
+        MUMBLE_SUPERUSER_PASSWORD: "{{secret "superuser_password"}}"
+        MUMBLE_CONFIG_SERVERPASSWORD: "{{secret "server_password"}}"
+        MUMBLE_CONFIG_WELCOMETEXT: "Welcome to Mumble on {{.MainDomain}}"
+      volumes: ["{{.Data}}/data:/data"]
+      restart: unless-stopped
+    # A page saying how to connect (Mumble itself has no web page).
+    app:
+      image: docker.io/library/busybox:1.37
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        PAGE: |
+          <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Mumble</title><body style="font:16px/1.5 system-ui,sans-serif;max-width:34em;margin:3em auto;padding:0 1em">
+          <h1>Mumble</h1><p>Voice chat runs in the Mumble app (<a href="https://www.mumble.info/downloads/">download it</a>; on phones: Mumla or Mumble).</p>
+          <p>Add a server with the address <b>{{.Domain}}</b>, port <b>64738</b>, and any name you like. The server password is with the admin.</p></body></html>
+      command: [sh, -c, "mkdir -p /www && printf '%s' \"$$PAGE\" > /www/index.html && exec httpd -f -p 8080 -h /www"]
+      restart: unless-stopped

@@ -188,7 +188,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
 # Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
 # lets this server find them too.
-run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns
+# restic makes the backups (Backups page).
+run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic
 
 say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
@@ -277,8 +278,8 @@ if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then
 fi
 
 cmd_shown="waiting for the Homeport service to start"; draw force
-for _ in $(seq 1 40); do [ -S /run/homeport/homeport.sock ] && break; sleep 0.5; done
-[ -S /run/homeport/homeport.sock ] || die "the Homeport service didn't start (see: journalctl -u homeport)"
+for _ in $(seq 1 60); do homeport status >/dev/null 2>&1 && break; sleep 0.5; done
+hp_status="$(homeport status 2>&1)" || die "the Homeport service didn't start: $hp_status (see: journalctl -u homeport)"
 
 # MARK: Local AI
 # A local model for the assistant chat: Ollama on this server with a model that fits its memory, downloaded, loaded and
@@ -396,7 +397,7 @@ local_ai_failed() {
   note "The local AI model isn't set up (the log says why). Everything else works: run the installer again to retry, or connect one under Settings → Assistant chat."
 }
 
-if ! homeport status | grep -q "Not set up"; then
+if [[ $hp_status != *"Not set up"* ]]; then
   if ! local_ai 50 70; then local_ai_failed; fi
   say 100 100 "Homeport is updated"
   hide

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -30,14 +31,17 @@ import (
 
 	"homeport/internal/apps"
 	"homeport/internal/assist"
+	"homeport/internal/backup"
 	"homeport/internal/certs"
 	"homeport/internal/dyndns"
+	"homeport/internal/firewall"
 	"homeport/internal/mdns"
 	"homeport/internal/platform"
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
 	"homeport/internal/server"
 	"homeport/internal/state"
+	"homeport/internal/system"
 	"homeport/internal/terminal"
 )
 
@@ -158,10 +162,15 @@ func serve() error {
 	}
 	sys := runner.System{}
 	caddy := proxy.Caddy{Path: caddyfile, Runner: sys, Reload: plat.ReloadCaddy}
-	var announce *mdns.Publisher // .local names, through Avahi (Linux)
-	if plat.Name == "linux" {
+	var announce *mdns.Publisher // .local names, through Avahi (Linux) or dns-sd (macOS)
+	switch plat.Name {
+	case "linux":
 		host, _ := os.Hostname()
-		announce = &mdns.Publisher{Hostname: host}
+		announce = &mdns.Publisher{OS: "linux", Hostname: host}
+	case "macos":
+		// The Mac announces its own Local hostname (System Settings → General → Sharing) itself.
+		host, _ := exec.Command("scutil", "--get", "LocalHostName").Output()
+		announce = &mdns.Publisher{OS: "macos", Hostname: strings.TrimSpace(string(host))}
 	}
 	applyProxy := func(ctx context.Context) error {
 		var st state.Settings
@@ -206,6 +215,10 @@ func serve() error {
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
 		Chat: chat, LocalAddrs: localAddrs, CertDir: plat.CertDir, HTTPSAddr: "127.0.0.1:" + cmp.Or(os.Getenv("HOMEPORT_HTTPS_PORT"), "443"),
 		DynDNS: &dyndns.Updater{Store: store, Dir: filepath.Join(stateDir, "dyndns")}}
+	srv.System = &system.Manager{Runner: sys, OS: plat.Name, UID: os.Getuid(), Logs: plat.LogsCommand}
+	srv.Firewall = &firewall.Manager{Runner: sys, OS: plat.Name}
+	srv.Backup = &backup.Manager{Store: store, Apps: manager, StateDir: stateDir, Dir: filepath.Join(stateDir, "backup"), Run: backup.RunRestic,
+		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, SSHDir: backupSSHDir(stateDir)}
 	if plat.Name == "linux" {
 		srv.SetTerminal = func(ctx context.Context, on bool) error { return terminal.Set(ctx, sys, on) }
 	}
@@ -217,6 +230,7 @@ func serve() error {
 	}
 	go srv.DynDNS.Run(ctx)
 	go followAddress(ctx, applyProxy)
+	go srv.Backup.Schedule(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- web.ListenAndServe() }()
@@ -230,6 +244,16 @@ func serve() error {
 	case err := <-errs:
 		return err
 	}
+}
+
+// backupSSHDir is where SFTP backups keep their SSH key: Homeport's own folder, unless its path has a space (a Mac's
+// Application Support), then ~/.config/homeport-backup.
+func backupSSHDir(stateDir string) string {
+	if !strings.Contains(stateDir, " ") {
+		return filepath.Join(stateDir, "backup")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "homeport-backup")
 }
 
 // followAddress applies the configuration again when this machine's own addresses change (a new address from the

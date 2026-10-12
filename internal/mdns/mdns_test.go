@@ -83,3 +83,15 @@ func TestPublishWithoutAvahi(t *testing.T) {
 		t.Fatalf("without Avahi: %v, %v", err, p.Announced())
 	}
 }
+
+func TestPublishOnAMac(t *testing.T) {
+	cmd, calls := fakePublish(t, "exec sleep 30")
+	p := &Publisher{OS: "macos", Command: cmd, Hostname: "homeport"}
+	defer p.Close()
+	_ = p.Publish(context.Background(), []string{"homeport.local", "cloud.homeport.local"}, []string{"192.168.0.139"})
+	waitFor(t, "dns-sd", func() bool { b, _ := os.ReadFile(calls); return strings.Count(string(b), "\n") == 1 })
+	b, _ := os.ReadFile(calls)
+	if strings.TrimSpace(string(b)) != "-P Homeport cloud.homeport _http._tcp local 443 cloud.homeport.local 192.168.0.139" {
+		t.Fatalf("the Mac announces its own name itself; the app's goes through dns-sd -P: %s", b)
+	}
+}

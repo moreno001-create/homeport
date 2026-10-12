@@ -1,0 +1,62 @@
+id: matrix
+name: Matrix (Element)
+description: Private, end-to-end encrypted chat and calls with the Element apps, that can also talk to other Matrix servers.
+category: Communication
+website: https://element.io
+signIn: own
+secrets: [admin_password]
+notes: |
+  Element on the web is at https://{{.Domain}}; the Element apps (phones, computers) use https://{{.Domain}} as the
+  homeserver. Sign in as "admin" (password in this app's notes) and make accounts for others with:
+    docker exec -it hp-{{.ID}}-synapse-1 register_new_matrix_user -c /data/homeserver.yaml http://localhost:8008
+  Chatting with people on other Matrix servers needs {{.Domain}} reachable from the internet on port 443 (a free name
+  from DuckDNS or deSEC works); a .local name keeps it to your home network. Choose the name before people start
+  using it: a Matrix server's name can't change later.
+compose: |
+  services:
+    # Synapse writes its configuration (and signing key) the first time.
+    init:
+      image: docker.io/matrixdotorg/synapse:latest
+      entrypoint: [sh, -c, "[ -f /data/homeserver.yaml ] || /start.py generate"]
+      environment:
+        SYNAPSE_SERVER_NAME: "{{.Domain}}"
+        SYNAPSE_REPORT_STATS: "no"
+      volumes: ["{{.Data}}/synapse:/data"]
+    synapse:
+      image: docker.io/matrixdotorg/synapse:latest
+      environment:
+        TZ: "{{.TimeZone}}"
+      volumes: ["{{.Data}}/synapse:/data"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped
+    element:
+      image: docker.io/vectorim/element-web:latest
+      restart: unless-stopped
+    # The front door: Matrix to Synapse, everything else to Element, and Element's settings (this server).
+    app:
+      image: docker.io/library/nginx:1-alpine
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        SITE: |
+          server {
+            listen 80;
+            client_max_body_size 100m;
+            location ~ ^/(_matrix|_synapse/client) {
+              proxy_pass http://synapse:8008;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Forwarded-For $$remote_addr;
+              proxy_set_header X-Forwarded-Proto https;
+            }
+            location = /.well-known/matrix/server { default_type application/json; return 200 '{"m.server":"{{.Domain}}:443"}'; }
+            location = /.well-known/matrix/client { default_type application/json; add_header Access-Control-Allow-Origin *; return 200 '{"m.homeserver":{"base_url":"https://{{.Domain}}"}}'; }
+            location = /config.json { default_type application/json; return 200 '{"default_server_config":{"m.homeserver":{"base_url":"https://{{.Domain}}","server_name":"{{.Domain}}"}},"disable_guests":true,"brand":"Element"}'; }
+            location / { proxy_pass http://element:80; }
+          }
+      command: [sh, -c, "printf '%s' \"$$SITE\" > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
+      depends_on: [synapse, element]
+      restart: unless-stopped
+afterInstall:
+  - service: synapse
+    run: [sh, -c, "out=$(register_new_matrix_user -u admin -p '{{secret \"admin_password\"}}' -a -c /data/homeserver.yaml http://localhost:8008 2>&1) || echo \"$out\" | grep -q 'already taken'"]

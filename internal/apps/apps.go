@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -607,6 +608,103 @@ func parentDomain(d *state.Data, domain string) (string, bool) {
 		return s, true
 	}
 	return "", false
+}
+
+// Container is one of an app's containers, for the Services page.
+type Container struct {
+	Service  string `json:"service"`
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	State    string `json:"state"`  // running, exited, restarting, created, paused…
+	Status   string `json:"status"` // Docker's words: "Up 2 hours (healthy)"
+	Health   string `json:"health,omitempty"`
+	ExitCode int    `json:"exitCode"`
+	// Setup is a one-time setup container that finished cleanly (it isn't meant to keep running).
+	Setup    bool   `json:"setup,omitempty"`
+	Restarts int    `json:"restarts"`
+	CPU      string `json:"cpu,omitempty"`    // "1.25%"
+	Memory   string `json:"memory,omitempty"` // "212MiB / 11.05GiB"
+}
+
+// Containers lists an app's containers (without CPU and memory: see Usage).
+func (m *Manager) Containers(ctx context.Context, id string) ([]Container, error) {
+	out, err := m.ComposeOutput(ctx, id, "ps", "--all", "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list %s's containers: %v", id, err)
+	}
+	var list []Container
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Newer Compose prints one object per line; older ones a single array.
+		var some []Container
+		var one Container
+		if json.Unmarshal([]byte(line), &some) != nil {
+			if json.Unmarshal([]byte(line), &one) != nil {
+				continue
+			}
+			some = []Container{one}
+		}
+		for _, c := range some {
+			c.Setup = c.State == "exited" && c.ExitCode == 0
+			list = append(list, c)
+		}
+	}
+	slices.SortFunc(list, func(a, b Container) int { return strings.Compare(a.Service, b.Service) })
+	return list, nil
+}
+
+// Usage is every running container's CPU and memory use, and every container's restart count, by container name.
+type Usage struct {
+	CPU, Memory string
+	Restarts    int
+}
+
+func (m *Manager) Usage(ctx context.Context, names []string) map[string]Usage {
+	use := map[string]Usage{}
+	if len(names) == 0 {
+		return use
+	}
+	if out, err := m.Runner.Output(ctx, "", "docker", append([]string{"stats", "--no-stream", "--format", "{{json .}}"}, names...)...); err == nil || out != "" {
+		for _, line := range strings.Split(out, "\n") {
+			var s struct{ Name, CPUPerc, MemUsage string }
+			if json.Unmarshal([]byte(line), &s) == nil && s.Name != "" {
+				use[s.Name] = Usage{CPU: s.CPUPerc, Memory: s.MemUsage}
+			}
+		}
+	}
+	if out, err := m.Runner.Output(ctx, "", "docker", append([]string{"inspect", "--format", "{{.Name}} {{.RestartCount}}"}, names...)...); err == nil || out != "" {
+		for _, line := range strings.Split(out, "\n") {
+			name, n, ok := strings.Cut(strings.TrimPrefix(strings.TrimSpace(line), "/"), " ")
+			if !ok {
+				continue
+			}
+			u := use[name]
+			u.Restarts, _ = strconv.Atoi(n)
+			use[name] = u
+		}
+	}
+	return use
+}
+
+// ContainerAction restarts, stops or starts one of an app's containers (by its service name).
+func (m *Manager) ContainerAction(ctx context.Context, id, service, action string) error {
+	if action != "restart" && action != "stop" && action != "start" {
+		return errors.New("restart, stop or start")
+	}
+	list, err := m.Containers(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(list, func(c Container) bool { return c.Service == service }) {
+		return fmt.Errorf("%s has no service %q", id, service)
+	}
+	if out, err := m.ComposeOutput(ctx, id, action, service); err != nil {
+		return fmt.Errorf("docker compose %s %s: %v %s", action, service, err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
 // Dir is the app's folder (compose.yaml and data/).

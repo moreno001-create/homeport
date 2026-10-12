@@ -1,0 +1,44 @@
+id: wordpress
+name: WordPress
+description: Websites and blogs with the world's most used publishing system, themes and plugins.
+category: Websites
+website: https://wordpress.org
+signIn: own
+secrets: [db_password, db_root_password]
+notes: |
+  Open https://{{.Domain}} to pick the language and make the admin account. It's public, like any website;
+  editing happens at https://{{.Domain}}/wp-admin with that account.
+compose: |
+  services:
+    app:
+      image: docker.io/library/wordpress:6-apache
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        WORDPRESS_DB_HOST: db
+        WORDPRESS_DB_USER: wordpress
+        WORDPRESS_DB_PASSWORD: "{{secret "db_password"}}"
+        WORDPRESS_DB_NAME: wordpress
+        # Behind Caddy: the browser uses HTTPS even though the app is reached over plain HTTP.
+        WORDPRESS_CONFIG_EXTRA: |
+          if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $$_SERVER['HTTPS'] = 'on'; }
+          define('WP_HOME', 'https://{{.Domain}}');
+          define('WP_SITEURL', 'https://{{.Domain}}');
+      volumes: ["{{.Data}}/html:/var/www/html"]
+      # Started once the database answers (on its first start it takes a while to set itself up).
+      depends_on:
+        db: {condition: service_healthy}
+      restart: unless-stopped
+    db:
+      image: docker.io/library/mariadb:11
+      environment:
+        MARIADB_DATABASE: wordpress
+        MARIADB_USER: wordpress
+        MARIADB_PASSWORD: "{{secret "db_password"}}"
+        MARIADB_ROOT_PASSWORD: "{{secret "db_root_password"}}"
+      volumes: ["{{.Data}}/mysql:/var/lib/mysql"]
+      healthcheck:
+        test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+      restart: unless-stopped

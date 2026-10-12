@@ -44,11 +44,11 @@ func TestCaddyfile(t *testing.T) {
 }
 
 func TestCertificatePerDomain(t *testing.T) {
-	s := state.Settings{MainDomain: "home.test", TLS: state.TLSInternal}
+	s := state.Settings{MainDomain: "home.example.org", TLS: state.TLSInternal}
 	apps := []state.App{
 		{ID: "a", Name: "A", Domain: "a.example.com", Port: 18000},
 		{ID: "b", Name: "B", Domain: "b.example.com", Port: 18001},
-		{ID: "c", Name: "C", Domain: "c.home.test", Port: 18002},
+		{ID: "c", Name: "C", Domain: "c.home.example.org", Port: 18002},
 	}
 	c := CaddyfileFor(s, apps, nil, map[string]SiteTLS{
 		"a.example.com": {Mode: state.CertLetsEncrypt},
@@ -65,7 +65,7 @@ func TestCertificatePerDomain(t *testing.T) {
 	if !strings.Contains(site("b.example.com"), `tls "/etc/caddy/homeport-certs/b.example.com/cert.pem" "/etc/caddy/homeport-certs/b.example.com/key.pem"`) {
 		t.Errorf("uploaded certificate not used:\n%s", site("b.example.com"))
 	}
-	for _, d := range []string{"home.test", "c.home.test"} {
+	for _, d := range []string{"home.example.org", "c.home.example.org"} {
 		if !strings.Contains(site(d), "tls internal") {
 			t.Errorf("%s should follow the server's setting:\n%s", d, site(d))
 		}
@@ -115,5 +115,20 @@ func TestAIPage(t *testing.T) {
 	c = Caddyfile(s, []state.App{{ID: "chat", Name: "Chat", Domain: "ai.homeport.local", Port: 18009}})
 	if strings.Contains(c, "# The AI page") || !strings.Contains(c, "reverse_proxy 127.0.0.1:18009") {
 		t.Fatalf("an app on ai.homeport.local should win:\n%s", c)
+	}
+}
+
+func TestPrivateNamesGetCaddysOwnCertificate(t *testing.T) {
+	s := state.Settings{MainDomain: "wh91.duckdns.org", TLS: state.TLSLetsEncrypt}
+	apps := []state.App{
+		{ID: "speed", Name: "Speed", Domain: "librespeed.wh91.duckdns.org", Port: 18000},
+		{ID: "cloud", Name: "Cloud", Domain: "cloud.homeport.local", Port: 18001},
+	}
+	c := Caddyfile(s, apps)
+	if strings.Contains(c, "wh91.duckdns.org {\n\ttls") || strings.Contains(c, "librespeed.wh91.duckdns.org {\n\ttls") {
+		t.Errorf("public names follow the server's Let's Encrypt setting:\n%s", c)
+	}
+	if !strings.Contains(c, "cloud.homeport.local {\n\ttls internal") {
+		t.Errorf(".local names can't have Let's Encrypt: Caddy's own, whatever the server's setting:\n%s", c)
 	}
 }

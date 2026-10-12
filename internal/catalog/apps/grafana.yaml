@@ -1,0 +1,33 @@
+id: grafana
+name: Grafana
+description: Dashboards and charts for metrics, logs and home sensors from many data sources.
+category: Monitoring
+website: https://grafana.com/oss/grafana
+signIn: headers
+secrets: [admin_password]
+notes: |
+  You're signed in with your Homeport account automatically. Homeport admins are Grafana admins; others can view.
+  A local "admin" exists too (password in this app's notes).
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "472:0", "/data"]
+      volumes: ["{{.Data}}/grafana:/data"]
+    app:
+      image: docker.io/grafana/grafana-oss:latest
+      ports: ["127.0.0.1:{{.Port}}:3000"]
+      environment:
+        GF_SERVER_ROOT_URL: "https://{{.Domain}}/"
+        GF_SECURITY_ADMIN_PASSWORD: "{{secret "admin_password"}}"
+        GF_AUTH_PROXY_ENABLED: "true"
+        GF_AUTH_PROXY_HEADER_NAME: Remote-User
+        GF_AUTH_PROXY_HEADER_PROPERTY: username
+        GF_AUTH_PROXY_HEADERS: "Email:Remote-Email Name:Remote-Name Groups:Remote-Groups"
+        GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+        GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+        GF_AUTH_SIGNOUT_REDIRECT_URL: "https://{{.Domain}}/.homeport/signout"
+      volumes: ["{{.Data}}/grafana:/var/lib/grafana"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

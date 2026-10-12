@@ -1,0 +1,24 @@
+id: copyparty
+name: copyparty
+description: "A fast file server in the browser: upload and download (resumable), share folders, media thumbnails."
+category: Files
+website: https://github.com/9001/copyparty
+signIn: gate
+notes: |
+  Everyone you let in (Who can open it) can upload, download, rename and delete. Files live in the app's data folder,
+  "files". It also speaks WebDAV for other apps; for those, make it public and give copyparty its own accounts.
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "1000:1000", "/w", "/cfg"]
+      volumes: ["{{.Data}}/files:/w", "{{.Data}}/config:/cfg"]
+    app:
+      image: docker.io/copyparty/ac:latest
+      user: "1000:1000"
+      ports: ["127.0.0.1:{{.Port}}:3923"]
+      command: ["-v", "/w::rwmd", "--xff-src=lan", "--rproxy=1"]
+      volumes: ["{{.Data}}/files:/w", "{{.Data}}/config:/cfg"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

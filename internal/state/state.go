@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -166,6 +167,7 @@ type Session struct {
 
 type data struct {
 	Settings Settings       `json:"settings"`
+	Backup   Backup         `json:"backup"`
 	Users    []User         `json:"users"`
 	Domains  []Domain       `json:"domains"`
 	Apps     []App          `json:"apps"`
@@ -236,6 +238,59 @@ func (s *Store) Read(fn func(d *Data)) {
 type Data struct{ d *data }
 
 func (v *Data) Settings() *Settings { return &v.d.Settings }
+
+// Backup is the backup settings and destinations.
+func (v *Data) Backup() *Backup { return &v.d.Backup }
+
+// Backup: what's backed up, when, for how long, and where to.
+type Backup struct {
+	// Password encrypts every backup (restic's repository password). Without it nobody can read them: the admin
+	// panel shows it to keep somewhere else.
+	Password string `json:"password,omitempty"`
+	// Time is when the daily backup runs ("03:00", this server's time; "" for never).
+	Time string `json:"time,omitempty"`
+	// Keep: how many daily, weekly and monthly backups to keep.
+	KeepDaily   int `json:"keepDaily,omitempty"`
+	KeepWeekly  int `json:"keepWeekly,omitempty"`
+	KeepMonthly int `json:"keepMonthly,omitempty"`
+	// NoPause backs apps up while they run (normally each is paused while its files are read, for consistent
+	// databases).
+	NoPause bool `json:"noPause,omitempty"`
+	// Skip lists apps left out of backups (big media libraries, say).
+	Skip         []string            `json:"skip,omitempty"`
+	Destinations []BackupDestination `json:"destinations,omitempty"`
+	// LastScheduled is the day the daily backup last ran ("2026-10-12").
+	LastScheduled string `json:"lastScheduled,omitempty"`
+}
+
+// BackupDestination is one place backups go.
+type BackupDestination struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"` // sftp, s3, homeport, local
+	Name string `json:"name"`
+	// sftp: user@host:port, path. local: Path (a mounted drive).
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	User string `json:"user,omitempty"`
+	Path string `json:"path,omitempty"`
+	// s3: endpoint (https://s3.eu-central-003.backblazeb2.com), bucket, keys.
+	Endpoint  string `json:"endpoint,omitempty"`
+	Bucket    string `json:"bucket,omitempty"`
+	Region    string `json:"region,omitempty"`
+	AccessKey string `json:"accessKey,omitempty"`
+	SecretKey string `json:"secretKey,omitempty"`
+	// homeport: another Homeport's Backup space (restic's REST server): address, user name, password.
+	URL      string `json:"url,omitempty"`
+	Username string `json:"username,omitempty"`
+	Secret   string `json:"secret,omitempty"`
+
+	Off bool `json:"off,omitempty"` // left out of the daily backup
+	// The last backup to it.
+	LastRun   time.Time `json:"lastRun,omitzero"`
+	LastOK    bool      `json:"lastOK,omitempty"`
+	LastError string    `json:"lastError,omitempty"`
+	LastAdded int64     `json:"lastAdded,omitempty"` // bytes new in that backup
+}
 
 func (v *Data) Users() []User {
 	out := append([]User(nil), v.d.Users...)
@@ -409,4 +464,28 @@ func filter[T any](in []T, keep func(T) bool) []T {
 		}
 	}
 	return out
+}
+
+// PrivateName says whether Let's Encrypt can't certify a name: home-network names (.local, .lan…), test names, and
+// sslip.io/nip.io names (they're for addresses at home). Those get Caddy's own certificates whatever the server's setting.
+func PrivateName(domain string) bool {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	for _, suffix := range []string{".local", ".lan", ".home.arpa", ".internal", ".test", ".localhost", ".invalid", ".sslip.io", ".nip.io"} {
+		if strings.HasSuffix(domain, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// CertFor is where a domain's certificate comes from: its own choice, or else the server's setting, except that private
+// names (PrivateName) always get Caddy's own.
+func CertFor(st Settings, domain string, own CertMode) CertMode {
+	switch {
+	case own != "":
+		return own
+	case st.TLS == TLSInternal || PrivateName(domain):
+		return CertInternal
+	}
+	return CertLetsEncrypt
 }

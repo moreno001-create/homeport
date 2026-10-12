@@ -1,0 +1,45 @@
+id: mattermost
+name: Mattermost
+description: Team chat like Slack, with channels, threads, calls and apps for phones and computers.
+category: Communication
+website: https://mattermost.com
+signIn: own
+secrets: [db_password]
+notes: |
+  Open https://{{.Domain}} and make the first account: it becomes the system admin. The phone and desktop apps
+  connect to https://{{.Domain}} directly, so it's public with its own accounts; invite people from there.
+compose: |
+  services:
+    # Mattermost runs as user 2000: its folders are handed to that user first.
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["sh", "-c", "mkdir -p /m/config /m/data /m/logs /m/plugins /m/client-plugins /m/bleve-indexes && chown -R 2000:2000 /m"]
+      volumes: ["{{.Data}}/mattermost:/m"]
+    app:
+      image: docker.io/mattermost/mattermost-team-edition:latest
+      ports: ["127.0.0.1:{{.Port}}:8065"]
+      environment:
+        TZ: "{{.TimeZone}}"
+        MM_SQLSETTINGS_DRIVERNAME: postgres
+        MM_SQLSETTINGS_DATASOURCE: "postgres://mattermost:{{secret "db_password"}}@db:5432/mattermost?sslmode=disable&connect_timeout=10"
+        MM_SERVICESETTINGS_SITEURL: "https://{{.Domain}}"
+        MM_BLEVESETTINGS_INDEXDIR: /mattermost/bleve-indexes
+      volumes:
+        - "{{.Data}}/mattermost/config:/mattermost/config"
+        - "{{.Data}}/mattermost/data:/mattermost/data"
+        - "{{.Data}}/mattermost/logs:/mattermost/logs"
+        - "{{.Data}}/mattermost/plugins:/mattermost/plugins"
+        - "{{.Data}}/mattermost/client-plugins:/mattermost/client/plugins"
+        - "{{.Data}}/mattermost/bleve-indexes:/mattermost/bleve-indexes"
+      depends_on:
+        db: {condition: service_started}
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped
+    db:
+      image: docker.io/library/postgres:17-alpine
+      environment:
+        POSTGRES_DB: mattermost
+        POSTGRES_USER: mattermost
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      restart: unless-stopped

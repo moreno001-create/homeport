@@ -82,6 +82,9 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("GET /api/apps/{id}/notes", guard(s.appNotes))
 	mux.HandleFunc("PUT /api/apps/{id}/notes", guard(s.setAppNotes))
 	mux.HandleFunc("GET /api/jobs/{id}", guard(s.getJob))
+	s.serviceRoutes(mux, guard)
+	s.firewallRoutes(mux, guard)
+	s.backupRoutes(mux, guard)
 	mux.HandleFunc("GET /api/approvals", guard(s.listApprovals))
 	mux.HandleFunc("POST /api/approvals/{id}/{decision}", guard(s.decideApproval))
 	mux.HandleFunc("GET /api/audit", guard(s.auditLog))
@@ -602,13 +605,7 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 
 // effectiveCert is where a domain's certificate comes from.
 func effectiveCert(st state.Settings, d state.Domain) state.CertMode {
-	if d.Cert != "" {
-		return d.Cert
-	}
-	if st.TLS == state.TLSInternal {
-		return state.CertInternal
-	}
-	return state.CertLetsEncrypt
+	return state.CertFor(st, d.Name, d.Cert)
 }
 
 // setCertificate picks one domain's certificate: "letsencrypt", "internal", "custom" (with the PEM certificate chain
@@ -643,6 +640,10 @@ func (s *Server) setCertificate(w http.ResponseWriter, r *http.Request) {
 	s.Store.Read(func(d *state.Data) { _, found = d.Domain(name) })
 	if !found {
 		writeError(w, http.StatusNotFound, fmt.Errorf("%s isn't one of the domains", name))
+		return
+	}
+	if in.Mode == state.CertLetsEncrypt && state.PrivateName(name) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("Let's Encrypt can't certify %s: it's a name for your home network, not the internet. It uses Caddy's own certificates (browsers warn once)", name))
 		return
 	}
 	if in.Mode == state.CertCustom {

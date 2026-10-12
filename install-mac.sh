@@ -41,6 +41,7 @@ export PATH="$BREW_PREFIX/bin:$HOME/.orbstack/bin:/usr/local/bin:$PATH"
 
 say "Installing Caddy"
 command -v caddy >/dev/null || "$BREW" install caddy
+command -v restic >/dev/null || "$BREW" install restic   # backups (Backups page)
 caddy version
 
 # MARK: Docker runtime
@@ -80,7 +81,8 @@ DOCKER_DIR="$(dirname "$(command -v docker)")"
 # MARK: Ports 80 and 443
 say "Checking the ports Homeport needs"
 # 80/443 for the web, 2019 for Caddy's admin port, 8090 for Homeport itself (all but the first two on localhost).
-holders="$(lsof -nP -iTCP:80 -iTCP:443 -iTCP:2019 -iTCP:8090 -sTCP:LISTEN 2>/dev/null | awk 'NR>1 && $1!="caddy" && $1!="homeport" {print $1}' | sort -u | tr '\n' ' ')"
+# (lsof finds nothing on a Mac where they're all free, and says so with an error: that's the good case.)
+holders="$({ lsof -nP -iTCP:80 -iTCP:443 -iTCP:2019 -iTCP:8090 -sTCP:LISTEN 2>/dev/null || true; } | awk 'NR>1 && $1!="caddy" && $1!="homeport" {print $1}' | sort -u | tr '\n' ' ')"
 if [ -n "$holders" ] && [ -z "${HOMEPORT_SKIP_PORT_CHECK:-}" ]; then
   msg="Ports Homeport needs (80, 443, 2019, 8090) are in use by: $holders."
   case "$holders" in
@@ -144,13 +146,21 @@ agent() { # agent NAME PROGRAM ARGS...
 </dict></plist>
 PLIST
   launchctl bootout "gui/$UID_NUM/$LABEL.$name" 2>/dev/null || true
-  launchctl bootstrap "gui/$UID_NUM" "$plist"
+  # bootout returns before the old one is fully gone, and starting it again too soon fails ("Bootstrap failed: 5"):
+  # wait until it's gone, and try a few times.
+  for _ in $(seq 1 50); do launchctl print "gui/$UID_NUM/$LABEL.$name" >/dev/null 2>&1 || break; sleep 0.2; done
+  for _ in 1 2 3 4 5; do
+    launchctl bootstrap "gui/$UID_NUM" "$plist" 2>/dev/null && return 0
+    sleep 1
+  done
+  launchctl bootstrap "gui/$UID_NUM" "$plist" || die "couldn't start $name in the background (launchctl bootstrap)"
 }
 agent caddy "$(command -v caddy)" run --config "$STATE/Caddyfile" --adapter caddyfile
 agent homeport "$BREW_PREFIX/bin/homeport" serve
 
-for _ in $(seq 1 40); do [ -S "$STATE/homeport.sock" ] && break; sleep 0.5; done
-[ -S "$STATE/homeport.sock" ] || die "Homeport didn't start (see $STATE/logs/homeport.log)"
+# Started when it answers (its socket file can be left from before, so that alone doesn't say).
+for _ in $(seq 1 60); do homeport status >/dev/null 2>&1 && break; sleep 0.5; done
+hp_status="$(homeport status 2>&1)" || die "Homeport didn't start: $hp_status (see $STATE/logs/homeport.log)"
 
 # MARK: Local AI
 # A local model for the assistant chat, loaded and connected: LM Studio's if it has a model for it, else Ollama (from
@@ -228,7 +238,7 @@ local_ai_failed() {
   printf '\033[33mThe local AI model isn'"'"'t set up (see above). Everything else works: run the installer again to retry, or connect one under Settings → Assistant chat.\033[0m\n'
 }
 
-if ! homeport status | grep -q "Not set up"; then
+if [[ $hp_status != *"Not set up"* ]]; then
   if ! local_ai; then local_ai_failed; fi
   say "Homeport is updated"
   homeport status
@@ -247,17 +257,68 @@ ask() {
   else read -r -p "$q${def:+ [$def]}: " val </dev/tty; fi
   printf -v "$var" '%s' "${val:-$def}"
 }
-ips="$(for i in en0 en1 en2; do ipconfig getifaddr "$i" 2>/dev/null; done | tr '\n' ' ')"
+ips="$(for i in en0 en1 en2; do ipconfig getifaddr "$i" 2>/dev/null || true; done | tr '\n' ' ')"
 first_ip="${ips%% *}"
 shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
-# With no domain yet, <ip>.sslip.io works on this network with no setup: every device resolves it to this machine.
-ask HOMEPORT_DOMAIN "Main domain for the portal and admin panel. Press Enter for ${first_ip:+$first_ip.sslip.io, which works on this network with no setup;} or type your own (its DNS must point here)" "${first_ip:+$first_ip.sslip.io}"
+# How people reach this Mac. homeport.local works on this network with no setup (Homeport announces it, and apps' names
+# under it, with macOS's own mDNS). A free name from DuckDNS or deSEC works from anywhere, with Let's Encrypt
+# certificates; Homeport keeps it pointed at this home's public address. Or a domain of your own.
+# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_DDNS=duckdns|desec with HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
+ddns=""
+free_name() { # free_name duckdns|desec NAME TOKEN: registers the name with Homeport; on success it's the main domain
+  local out
+  if out="$(printf '%s\n' "$3" | homeport domain free "$1" "$2" 2>&1)"; then
+    HOMEPORT_DOMAIN="$(echo "$out" | awk '{print $1; exit}')" ddns=$1 HOMEPORT_TLS=letsencrypt
+    echo "$out"
+    return 0
+  fi
+  echo "$out" | sed 's/^Error: //'
+  return 1
+}
+guide_free_name() {
+  local p=$1 suffix name token
+  suffix=$([ "$p" = duckdns ] && echo .duckdns.org || echo .dedyn.io)
+  if [ "$p" = duckdns ]; then
+    printf '\n  1. Open https://www.duckdns.org and sign in (with GitHub, Google or another account).\n  2. Under "domains", add the name you want (letters, digits and dashes).\n  3. Copy your token: the long code at the top of the page.\n\n' >/dev/tty
+  else
+    printf '\n  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n  2. Open "Token Management", add a token and copy it.\n  Homeport makes the name in your deSEC account for you, if no one has it yet.\n\n' >/dev/tty
+  fi
+  while :; do
+    name=""; token=""
+    read -r -p "Name (yourname, for yourname$suffix), or Enter to go back: " name </dev/tty
+    [ -n "$name" ] || return 1
+    read -r -s -p "Token: " token </dev/tty; echo >/dev/tty
+    if free_name "$p" "$name" "$token" >/dev/tty 2>&1; then return 0; fi
+    echo "That didn't work (see above). Try again." >/dev/tty
+  done
+}
+if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
+  free_name "$HOMEPORT_DDNS" "${HOMEPORT_DDNS_NAME:-}" "${HOMEPORT_DDNS_TOKEN:-}" || die "couldn't set up the free name (see above)"
+fi
+while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
+  printf '\nHow should people reach this Mac?\n' >/dev/tty
+  printf '  1) homeport.local: on this network only, nothing to set up (browsers warn about its certificate once)\n' >/dev/tty
+  printf '  2) A free name from DuckDNS (yourname.duckdns.org): from anywhere, with real HTTPS certificates\n' >/dev/tty
+  printf '  3) A free name from deSEC (yourname.dedyn.io): the same, from a non-profit\n' >/dev/tty
+  printf '  4) A domain of your own\n' >/dev/tty
+  pick=""; read -r -p "Choose 1-4 [1]: " pick </dev/tty
+  case "${pick:-1}" in
+    1) HOMEPORT_DOMAIN=homeport.local ;;
+    2) guide_free_name duckdns || true ;;
+    3) guide_free_name desec || true ;;
+    4) ask HOMEPORT_DOMAIN "Your domain (its DNS must point at this Mac's public address)" ;;
+  esac
+done
 # Names Let's Encrypt can't certify (private addresses, test and local names) use Caddy's own certificates.
 tls_default=letsencrypt
 case "${HOMEPORT_DOMAIN:-}" in *.sslip.io|*.nip.io|*.test|*.local|*.lan|*.home.arpa|*.internal) tls_default=internal ;; esac
 ask HOMEPORT_ADMIN "First admin's user name"
-ask HOMEPORT_EMAIL "Email for Let's Encrypt notices (optional)"
-ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (just this network)" "$tls_default"
+if [ "$tls_default" = letsencrypt ]; then
+  ask HOMEPORT_EMAIL "Email for Let's Encrypt notices about the certificates (optional)"
+fi
+if [ -z "$ddns" ] && [ "$tls_default" = letsencrypt ]; then
+  ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (just this network)" "$tls_default"
+fi
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   ask HOMEPORT_PASSWORD "Password for ${HOMEPORT_ADMIN:-the admin} (at least 10 characters)" "" secret
   p2=""; read -r -s -p "Again: " p2 </dev/tty; echo >/dev/tty
@@ -288,6 +349,12 @@ if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
   Certificates: Caddy's own test certificates, so your browser warns the first time; choose to continue.
 MSG
   case "$HOMEPORT_DOMAIN" in
+    *.local) cat <<MSG
+  $HOMEPORT_DOMAIN is announced on this network: Macs, iPhones, iPads, Linux and Windows find it with no setup.
+  Install apps on names under it, like cloud.$HOMEPORT_DOMAIN (Windows may not find those; Android browsers often find
+  no .local names at all: there, use https://$shown_ip/admin).
+MSG
+    ;;
     *.sslip.io|*.nip.io) cat <<MSG
   $HOMEPORT_DOMAIN already leads to this machine from every device on this network: nothing to set up.
   Install apps on names under it, like cloud.$HOMEPORT_DOMAIN.
@@ -303,6 +370,14 @@ MSG
 MSG
     ;;
   esac
+elif [ -n "$ddns" ]; then
+  cat <<MSG
+
+  $HOMEPORT_DOMAIN is your free name; Homeport keeps it pointed at your home's public address.
+  On your router, forward ports 80 and 443 to $shown_ip (often under "Port forwarding" or "NAT"). Then
+  Let's Encrypt gives each name its certificate within a minute of its first visit, and it works from anywhere.
+  Apps get names under it, like cloud.$HOMEPORT_DOMAIN, each with its own certificate.
+MSG
 else
   cat <<MSG
 

@@ -1,0 +1,41 @@
+id: ghost
+name: Ghost
+description: A clean, fast platform for blogs and newsletters, with memberships.
+category: Websites
+website: https://ghost.org
+signIn: own
+secrets: [db_password, db_root_password]
+notes: |
+  Open https://{{.Domain}}/ghost to make the owner account. The site itself is public, like any blog. Sending
+  newsletters and staff invitations needs an email service, set under its mail settings.
+compose: |
+  services:
+    app:
+      image: docker.io/library/ghost:6-alpine
+      ports: ["127.0.0.1:{{.Port}}:2368"]
+      environment:
+        url: "https://{{.Domain}}"
+        database__client: mysql
+        database__connection__host: db
+        database__connection__user: ghost
+        database__connection__password: "{{secret "db_password"}}"
+        database__connection__database: ghost
+      volumes: ["{{.Data}}/content:/var/lib/ghost/content"]
+      # Started once the database answers (on its first start it takes a while to set itself up).
+      depends_on:
+        db: {condition: service_healthy}
+      restart: unless-stopped
+    db:
+      image: docker.io/library/mysql:8.4
+      environment:
+        MYSQL_DATABASE: ghost
+        MYSQL_USER: ghost
+        MYSQL_PASSWORD: "{{secret "db_password"}}"
+        MYSQL_ROOT_PASSWORD: "{{secret "db_root_password"}}"
+      volumes: ["{{.Data}}/mysql:/var/lib/mysql"]
+      healthcheck:
+        test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+      restart: unless-stopped

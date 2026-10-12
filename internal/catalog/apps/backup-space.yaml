@@ -1,0 +1,21 @@
+id: backup-space
+name: Backup space
+description: Keeps encrypted backups for friends and family (or your other servers), as restic's REST server.
+category: Files
+website: https://github.com/restic/rest-server
+signIn: own
+notes: |
+  Give each person their own user; they only see their own folder, and their backups are encrypted with a password
+  only they have. To add one, on this server:
+    sudo docker exec -it hp-{{.ID}}-app-1 create_user NAME
+  (it asks for the password; the Backup space notices new users within half a minute), then give them https://{{.Domain}}, the name and the password. On their Homeport:
+  Backups → Add a place → Another Homeport. Backups take room in this app's data folder ("data").
+compose: |
+  services:
+    app:
+      image: docker.io/restic/rest-server:latest
+      ports: ["127.0.0.1:{{.Port}}:8000"]
+      environment:
+        OPTIONS: "--private-repos"
+      volumes: ["{{.Data}}/data:/data"]
+      restart: unless-stopped

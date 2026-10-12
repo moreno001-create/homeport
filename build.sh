@@ -11,6 +11,6 @@ for os in linux darwin; do
   done
 done
 cp install.sh install-mac.sh dist/
-(cd dist && shasum -a 256 homeport-linux-* > SHA256SUMS)
+(cd dist && shasum -a 256 homeport-linux-* homeport-darwin-* > SHA256SUMS)
 echo "Built Homeport $version in dist/"
 ls -la dist

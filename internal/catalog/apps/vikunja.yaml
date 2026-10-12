@@ -1,0 +1,30 @@
+id: vikunja
+name: Vikunja
+description: To-do lists, projects and kanban boards for yourself, your family or a team.
+category: Documents & productivity
+website: https://vikunja.io
+signIn: gate
+secrets: [jwt_secret]
+notes: |
+  Open it and register the first account. The Vikunja phone apps connect to https://{{.Domain}} (make it public under
+  "Who can open it" for them; it has its own accounts).
+compose: |
+  services:
+    # Vikunja runs as user 1000: its folders are handed to that user first.
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "-R", "1000:1000", "/files", "/db"]
+      volumes: ["{{.Data}}/files:/files", "{{.Data}}/db:/db"]
+    app:
+      image: docker.io/vikunja/vikunja:latest
+      ports: ["127.0.0.1:{{.Port}}:3456"]
+      environment:
+        VIKUNJA_SERVICE_PUBLICURL: "https://{{.Domain}}/"
+        VIKUNJA_SERVICE_JWTSECRET: "{{secret "jwt_secret"}}"
+        VIKUNJA_SERVICE_TIMEZONE: "{{.TimeZone}}"
+        VIKUNJA_DATABASE_TYPE: sqlite
+        VIKUNJA_DATABASE_PATH: /db/vikunja.db
+      volumes: ["{{.Data}}/files:/app/vikunja/files", "{{.Data}}/db:/db"]
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped

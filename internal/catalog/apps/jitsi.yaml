@@ -1,0 +1,57 @@
+id: jitsi
+name: Jitsi Meet
+description: Video meetings in the browser, with screen sharing and chat, and nothing to install.
+category: Communication
+website: https://jitsi.org/jitsi-meet/
+signIn: gate
+secrets: [jicofo_password, jvb_password]
+notes: |
+  Open https://{{.Domain}}, name a meeting and share its link. Only the groups you allow can open it; for guests from
+  outside, make it public ("Who can open it" → Anyone), and then anyone with a link can start a meeting.
+  Video goes over UDP port 10000 directly: for people outside your home, forward it on your router to this server
+  (and they need its public name, like a free DuckDNS one).
+compose: |
+  services:
+    app:
+      image: docker.io/jitsi/web:stable
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment: &common
+        TZ: "{{.TimeZone}}"
+        PUBLIC_URL: "https://{{.Domain}}"
+        XMPP_DOMAIN: meet.jitsi
+        XMPP_AUTH_DOMAIN: auth.meet.jitsi
+        XMPP_MUC_DOMAIN: muc.meet.jitsi
+        XMPP_INTERNAL_MUC_DOMAIN: internal-muc.meet.jitsi
+        XMPP_SERVER: xmpp.meet.jitsi
+        XMPP_BOSH_URL_BASE: "http://xmpp.meet.jitsi:5280"
+        JVB_BREWERY_MUC: jvbbrewery
+        JICOFO_AUTH_PASSWORD: "{{secret "jicofo_password"}}"
+        JVB_AUTH_PASSWORD: "{{secret "jvb_password"}}"
+        DISABLE_HTTPS: "1"
+        ENABLE_HTTP_REDIRECT: "0"
+        ENABLE_LETSENCRYPT: "0"
+        JVB_ADVERTISE_IPS: "{{.HostIP}}"
+      volumes: ["{{.Data}}/web:/config"]
+      depends_on: [prosody, jvb]
+      restart: unless-stopped
+    prosody:
+      image: docker.io/jitsi/prosody:stable
+      environment: *common
+      volumes: ["{{.Data}}/prosody/config:/config", "{{.Data}}/prosody/plugins:/prosody-plugins-custom"]
+      networks:
+        default:
+          aliases: [xmpp.meet.jitsi]
+      restart: unless-stopped
+    jicofo:
+      image: docker.io/jitsi/jicofo:stable
+      environment: *common
+      volumes: ["{{.Data}}/jicofo:/config"]
+      depends_on: [prosody]
+      restart: unless-stopped
+    jvb:
+      image: docker.io/jitsi/jvb:stable
+      ports: ["10000:10000/udp"]
+      environment: *common
+      volumes: ["{{.Data}}/jvb:/config"]
+      depends_on: [prosody]
+      restart: unless-stopped
