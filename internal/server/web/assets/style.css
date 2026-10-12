@@ -165,6 +165,12 @@ pre.log { margin: 0; max-height: 320px; overflow: auto; background: var(--soft);
   .convs { position: static; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; max-height: none; }
 }
 
+/* An app's notes */
+.notes { padding: 14px 16px; display: grid; gap: 8px; }
+.notes p { white-space: pre-wrap; }
+.secret { letter-spacing: .02em; word-break: break-all; }
+h3 { font-size: 15px; margin: 0; }
+
 /* Installing from GitHub */
 dialog:has(form.wide) { width: min(780px, calc(100vw - 32px)); }
 textarea.code { font: 12px/1.45 var(--mono); white-space: pre; overflow: auto; }

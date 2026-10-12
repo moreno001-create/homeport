@@ -167,6 +167,17 @@ func (a App) RenderStep(s Step, v Vars) ([]string, error) {
 	return out, nil
 }
 
+// RenderNotes fills in the notes' template values ({{.Domain}} and the like; secrets stay out of notes). Notes that
+// don't render are shown as they are.
+func (a App) RenderNotes(v Vars) string {
+	v.Secrets = nil
+	text, err := a.fill(a.Notes, v)
+	if err != nil {
+		return strings.TrimSpace(a.Notes)
+	}
+	return strings.TrimSpace(text)
+}
+
 // Render fills in the compose template. Unknown secrets are an error, so a typo can't ship an empty password.
 func (a App) Render(v Vars) (string, error) {
 	text, err := a.fill(a.Compose, v)

@@ -68,7 +68,7 @@ const views = {
       h("td", {}, h("span", { class: "pill " + a.status.split(" ")[0] }, a.status)),
       h("td", { class: "actions" },
         h("button", { onclick: () => accessDialog(a) }, "Access"),
-        a.hasSecrets && h("button", { onclick: () => secretsDialog(a) }, "Secrets"),
+        h("button", { onclick: () => notesDialog(a) }, "Notes"),
         h("button", { onclick: () => runJob("Updating " + a.name, () => api("POST", "/apps/" + a.id + "/update")) }, "Update"),
         h("button", { class: "danger", onclick: () => removeDialog(a) }, "Remove"))));
     return [
@@ -319,15 +319,40 @@ function freeDomainDialog() {
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Get it"))));
 }
 
-async function secretsDialog(a) {
-  try {
-    const s = await api("GET", "/apps/" + a.id + "/secrets");
-    openDialog(h("div", { class: "body" },
-      h("h2", {}, a.name + " secrets"),
-      h("p", { class: "muted small" }, "Made when it was installed. Keep them private."),
-      h("div", { class: "list" }, h("table", {}, h("tbody", {}, Object.entries(s).map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", { class: "mono" }, v)))))),
-      h("div", { class: "buttons" }, h("button", { onclick: () => dialog.close() }, "Close"))));
-  } catch (err) { toast(err.message); }
+// notesDialog is everything to look back at for an installed app: its setup notes, the passwords and keys Homeport made
+// for it (hidden until shown), and the admin's own notes (passwords from the app's own setup, say).
+async function notesDialog(a) {
+  let n;
+  try { n = await api("GET", "/apps/" + a.id + "/notes"); } catch (err) { toast(err.message); return; }
+  const secretRow = ([k, v]) => {
+    const value = h("span", { class: "mono secret" }, "••••••••••");
+    const show = h("button", { type: "button", onclick: () => {
+      const hidden = show.textContent === "Show";
+      value.textContent = hidden ? v : "••••••••••"; show.textContent = hidden ? "Hide" : "Show";
+    } }, "Show");
+    const copy = h("button", { type: "button", onclick: async () => {
+      try { await navigator.clipboard.writeText(v); toast("Copied " + k); } catch { toast("Couldn't copy: select it after Show instead"); }
+    } }, "Copy");
+    return h("tr", {}, h("td", {}, k.replace(/_/g, " ")), h("td", {}, value), h("td", { class: "actions" }, show, copy));
+  };
+  const secrets = Object.entries(n.secrets || {}).sort(([x], [y]) => x.localeCompare(y));
+  const mine = h("textarea", { rows: "6", placeholder: "Passwords you set during its own setup, accounts you made, anything to remember…", "aria-label": "Your notes" });
+  mine.value = n.notes || "";
+  const saved = h("span", { class: "muted small" });
+  mine.addEventListener("input", () => { saved.textContent = "Not saved yet"; });
+  openDialog(h("form", { method: "dialog", class: "wide", onsubmit: async e => {
+    e.preventDefault();
+    try { await api("PUT", "/apps/" + a.id + "/notes", { notes: mine.value }); saved.textContent = "Saved"; toast("Notes saved"); } catch (err) { toast(err.message); }
+  } },
+    h("h2", {}, a.name + " notes"),
+    h("p", { class: "muted small" }, h("a", { href: "https://" + n.domain + "/", target: "_blank", rel: "noopener" }, "https://" + n.domain), " · data in ", h("code", {}, n.data)),
+    n.setup ? h("div", { class: "stack" }, h("h3", {}, "Setting it up"), h("div", { class: "card notes" }, rich(n.setup))) : null,
+    secrets.length ? h("div", { class: "stack" },
+      h("h3", {}, "Passwords and keys Homeport made for it"),
+      h("div", { class: "list" }, h("table", {}, h("tbody", {}, secrets.map(secretRow))))) : null,
+    h("label", {}, h("h3", {}, "Your notes"), mine),
+    h("p", { class: "muted small" }, "Kept on this server only, like the passwords above (never shown to AI helpers). Keep them private."),
+    h("div", { class: "buttons" }, saved, h("button", { type: "button", onclick: () => dialog.close() }, "Close"), h("button", { class: "primary", type: "submit" }, "Save notes"))));
 }
 
 function removeDialog(a) {

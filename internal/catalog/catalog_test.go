@@ -47,6 +47,9 @@ func TestEveryAppRenders(t *testing.T) {
 		if strings.Contains(out, "<no value>") {
 			t.Errorf("%s: a template value is missing", a.ID)
 		}
+		if notes := a.RenderNotes(v); strings.Contains(notes, "{{") || strings.Contains(notes, "<no value>") {
+			t.Errorf("%s: notes not filled in: %q", a.ID, notes)
+		}
 		if a.Name == "" || a.Description == "" {
 			t.Errorf("%s: needs a name and a description", a.ID)
 		}

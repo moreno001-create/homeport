@@ -206,9 +206,27 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 	m.afterInstall(ctx, entry, app, installer, true, log)
 	fmt.Fprintf(log, "Done: %s is at https://%s\n", entry.Name, app.Domain)
 	if entry.Notes != "" {
-		fmt.Fprintf(log, "\n%s\n", strings.TrimSpace(entry.Notes))
+		fmt.Fprintf(log, "\n%s\n", entry.RenderNotes(m.notesVars(app, installer.Name)))
 	}
+	fmt.Fprintf(log, "\nThese notes (and the passwords Homeport made for it) stay under Apps → %s → Notes.\n", entry.Name)
 	return app, nil
+}
+
+// notesVars are the values an app's notes can use.
+func (m *Manager) notesVars(app state.App, admin string) catalog.Vars {
+	var main string
+	m.Store.Read(func(d *state.Data) { main = d.Settings().MainDomain })
+	return catalog.Vars{ID: app.ID, Domain: app.Domain, Port: app.Port, Data: filepath.Join(m.dir(app.ID), "data"),
+		AdminUser: admin, MainDomain: main, Issuer: "https://" + main, ClientID: app.ID}
+}
+
+// Notes is what the admin panel shows for an installed app: its manifest's setup notes, filled in.
+func (m *Manager) Notes(app state.App) string {
+	entry, ok, err := m.entryOf(app)
+	if err != nil || !ok || entry.Notes == "" {
+		return ""
+	}
+	return entry.RenderNotes(m.notesVars(app, ""))
 }
 
 // manifestFile keeps the manifest of an app from outside the catalog, in its folder, for updates.

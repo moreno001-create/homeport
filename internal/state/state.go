@@ -121,6 +121,9 @@ type App struct {
 	Secrets   map[string]string `json:"secrets,omitempty"`
 	Installed time.Time         `json:"installed"`
 	Updated   time.Time         `json:"updated,omitempty"`
+	// Notes are the admin's own notes about the app (passwords made during its own setup, say). Like Secrets, they're
+	// only in this root-only file and the admin panel, never shown to AI helpers.
+	Notes string `json:"notes,omitempty"`
 	// Source is set for an app installed from a repository rather than the catalog (its manifest is homeport.yaml in
 	// the app's folder).
 	Source *Source `json:"source,omitempty"`

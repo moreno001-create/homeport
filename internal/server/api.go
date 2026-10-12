@@ -79,6 +79,8 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("DELETE /api/apps/{id}", guard(s.removeApp))
 	mux.HandleFunc("PUT /api/apps/{id}/access", guard(s.setAccess))
 	mux.HandleFunc("GET /api/apps/{id}/secrets", guard(s.appSecrets))
+	mux.HandleFunc("GET /api/apps/{id}/notes", guard(s.appNotes))
+	mux.HandleFunc("PUT /api/apps/{id}/notes", guard(s.setAppNotes))
 	mux.HandleFunc("GET /api/jobs/{id}", guard(s.getJob))
 	mux.HandleFunc("GET /api/approvals", guard(s.listApprovals))
 	mux.HandleFunc("POST /api/approvals/{id}/{decision}", guard(s.decideApproval))
@@ -980,6 +982,55 @@ func (s *Server) appSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// appNotes is everything to look back at about an installed app: its setup notes, the passwords and keys Homeport made
+// for it, and the admin's own notes.
+func (s *Server) appNotes(w http.ResponseWriter, r *http.Request) {
+	var app state.App
+	found := false
+	s.Store.Read(func(d *state.Data) {
+		if a, ok := d.App(r.PathValue("id")); ok {
+			app, found = *a, true
+		}
+	})
+	if !found {
+		writeError(w, http.StatusNotFound, state.ErrNotFound)
+		return
+	}
+	secrets := map[string]string{}
+	for k, v := range app.Secrets {
+		secrets[k] = v
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": app.Name, "domain": app.Domain, "setup": s.Apps.Notes(app),
+		"secrets": secrets, "notes": app.Notes, "data": s.Apps.Dir(app.ID) + "/data"})
+}
+
+func (s *Server) setAppNotes(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Notes string `json:"notes"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(in.Notes) > 20000 {
+		writeError(w, http.StatusBadRequest, errors.New("notes can be at most 20,000 characters"))
+		return
+	}
+	err := s.Store.Update(func(d *state.Data) error {
+		a, ok := d.App(r.PathValue("id"))
+		if !ok {
+			return state.ErrNotFound
+		}
+		a.Notes = strings.TrimRight(in.Notes, " \n")
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {

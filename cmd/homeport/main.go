@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -126,6 +127,7 @@ func usage() {
   homeport app update ID
   homeport app access ID (--public | --groups a,b)
   homeport app secrets ID
+  homeport app notes ID        its setup notes, passwords Homeport made, and your notes (edit them in the admin panel)
   homeport app remove ID [--purge]
 
   AI helpers (MCP):
@@ -834,6 +836,31 @@ func cmdApp(args []string) error {
 		}
 		for k, v := range s {
 			fmt.Printf("%s: %s\n", k, v)
+		}
+		return nil
+	case "notes":
+		if len(rest) != 1 {
+			return errors.New("usage: homeport app notes ID")
+		}
+		var n struct {
+			Name, Domain, Setup, Notes, Data string
+			Secrets                          map[string]string
+		}
+		if err := call("GET", "/apps/"+rest[0]+"/notes", nil, &n); err != nil {
+			return err
+		}
+		fmt.Printf("%s at https://%s (data in %s)\n", n.Name, n.Domain, n.Data)
+		if n.Setup != "" {
+			fmt.Printf("\nSetting it up:\n%s\n", n.Setup)
+		}
+		if len(n.Secrets) > 0 {
+			fmt.Println("\nPasswords and keys Homeport made for it:")
+			for _, k := range slices.Sorted(maps.Keys(n.Secrets)) {
+				fmt.Printf("  %s: %s\n", k, n.Secrets[k])
+			}
+		}
+		if n.Notes != "" {
+			fmt.Printf("\nYour notes:\n%s\n", n.Notes)
 		}
 		return nil
 	case "remove", "delete":
