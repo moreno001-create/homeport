@@ -129,6 +129,7 @@ func usage() {
   homeport app install CATALOG-ID --domain DOMAIN [--public | --groups a,b] [--id ID]
   homeport app install https://github.com/owner/app --domain DOMAIN [--model claude|local] [--yes]
   homeport app update ID
+  homeport app start|stop|restart ID
   homeport app access ID (--public | --groups a,b)
   homeport app secrets ID
   homeport app notes ID        its setup notes, passwords Homeport made, and your notes (edit them in the admin panel)
@@ -235,6 +236,7 @@ func serve() error {
 	go srv.DynDNS.Run(ctx)
 	go followAddress(ctx, applyProxy)
 	go srv.Backup.Schedule(ctx)
+	go srv.KeepRouterPorts(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- web.ListenAndServe() }()
@@ -841,6 +843,15 @@ func cmdApp(args []string) error {
 			return errors.New("usage: homeport app update ID")
 		}
 		return follow("/apps/"+rest[0]+"/update", nil, "POST")
+	case "start", "stop", "restart":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: homeport app %s ID", sub)
+		}
+		if err := call("POST", "/apps/"+rest[0]+"/"+sub, nil, nil); err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s done.\n", rest[0], sub)
+		return nil
 	case "access":
 		fs := flag.NewFlagSet("app access", flag.ExitOnError)
 		public := fs.Bool("public", false, "anyone can open it")

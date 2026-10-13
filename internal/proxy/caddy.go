@@ -56,17 +56,17 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 
 	if s.MainDomain != "" {
 		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
-		writeTLS(&b, s, s.MainDomain, certs[s.MainDomain])
-		writeHomeport(&b, s)
+		real := writeTLS(&b, s, s.MainDomain, certs[s.MainDomain])
+		writeHomeport(&b, s, real)
 		if len(localAddrs) > 0 {
 			fmt.Fprintf(&b, "\n# This machine's own addresses: the portal and admin panel, by IP\n%s {\n\ttls internal\n", strings.Join(localAddrs, ", "))
-			writeHomeport(&b, s)
+			writeHomeport(&b, s, false)
 		}
 		// The AI page (Homeport serves it and checks who's signed in), unless an app has its name.
 		if ai := AIDomain(s.MainDomain, apps); ai != "" {
 			fmt.Fprintf(&b, "\n# The AI page\n%s {\n", ai)
-			writeTLS(&b, s, ai, certs[ai])
-			writeStripIdentity(&b)
+			real := writeTLS(&b, s, ai, certs[ai])
+			writeStripIdentity(&b, real)
 			fmt.Fprintf(&b, "\treverse_proxy %s\n}\n", Upstream)
 		}
 	}
@@ -76,8 +76,8 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 			continue
 		}
 		fmt.Fprintf(&b, "\n# %s (%s)\n%s {\n", a.Name, a.ID, a.Domain)
-		writeTLS(&b, s, a.Domain, certs[a.Domain])
-		writeStripIdentity(&b)
+		real := writeTLS(&b, s, a.Domain, certs[a.Domain])
+		writeStripIdentity(&b, real)
 		// Homeport answers its own sign-in hand-off on every app domain, so sign-in works across unrelated domains.
 		fmt.Fprintf(&b, "\thandle /.homeport/* {\n\t\treverse_proxy %s\n\t}\n", Upstream)
 		b.WriteString("\thandle {\n")
@@ -102,19 +102,22 @@ func AIDomain(main string, apps []state.App) string {
 }
 
 // writeTLS says where a site's certificate comes from; Let's Encrypt is Caddy's own default, so it needs nothing.
-func writeTLS(b *strings.Builder, s state.Settings, domain string, t SiteTLS) {
+// It says whether browsers trust that certificate (not Caddy's own).
+func writeTLS(b *strings.Builder, s state.Settings, domain string, t SiteTLS) bool {
 	switch state.CertFor(s, domain, t.Mode) {
 	case state.CertInternal:
 		b.WriteString("\ttls internal\n")
+		return false
 	case state.CertCustom:
 		fmt.Fprintf(b, "\ttls %q %q\n", t.CertFile, t.KeyFile)
 	}
+	return true
 }
 
 // writeHomeport finishes a site for the portal and admin panel, with the web terminal when it's on (admins only; Homeport
 // checks before Caddy lets anyone through to it).
-func writeHomeport(b *strings.Builder, s state.Settings) {
-	writeStripIdentity(b)
+func writeHomeport(b *strings.Builder, s state.Settings, hsts bool) {
+	writeStripIdentity(b, hsts)
 	if s.Terminal {
 		fmt.Fprintf(b, "\tredir %s %s/\n\thandle %s/* {\n\t\tforward_auth %s {\n\t\t\turi /auth/admin\n\t\t}\n\t\treverse_proxy 127.0.0.1:%d\n\t}\n",
 			terminal.Path, terminal.Path, terminal.Path, Upstream, terminal.Port)
@@ -124,12 +127,17 @@ func writeHomeport(b *strings.Builder, s state.Settings) {
 	fmt.Fprintf(b, "\treverse_proxy %s\n}\n", Upstream)
 }
 
-func writeStripIdentity(b *strings.Builder) {
+// writeStripIdentity removes identity headers a browser might send, and with a certificate browsers trust (hsts), tells
+// them to only ever use HTTPS there (unless the app sets its own policy). Never with Caddy's own certificates: a browser
+// that remembered it would refuse, with no way past, the next certificate for that name (a reinstall, or another
+// server taking homeport.local).
+func writeStripIdentity(b *strings.Builder, hsts bool) {
 	for _, h := range identityHeaders {
 		fmt.Fprintf(b, "\trequest_header -%s\n", h)
 	}
-	// Browsers should only ever use HTTPS here (unless the app sets its own policy).
-	b.WriteString("\theader ?Strict-Transport-Security \"max-age=31536000\"\n")
+	if hsts {
+		b.WriteString("\theader ?Strict-Transport-Security \"max-age=31536000\"\n")
+	}
 }
 
 // Caddy owns /etc/caddy/Caddyfile; Homeport replaces it and reloads Caddy.

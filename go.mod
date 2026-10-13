@@ -3,13 +3,14 @@ module homeport
 go 1.27.1
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.80.0
+	github.com/huin/goupnp v1.3.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.80.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect

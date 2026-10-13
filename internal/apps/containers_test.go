@@ -3,8 +3,11 @@ package apps
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"homeport/internal/state"
 )
 
 // psRunner answers docker compose ps, docker stats and docker inspect like Docker would.
@@ -53,5 +56,27 @@ func TestContainers(t *testing.T) {
 	}
 	if err := m.ContainerAction(ctx, "x", "app", "rm"); err == nil {
 		t.Error("only restart, stop and start")
+	}
+}
+
+func TestAppAction(t *testing.T) {
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	_ = store.Update(func(d *state.Data) error { d.AddApp(state.App{ID: "x", Name: "X"}); return nil })
+	r := &psRunner{}
+	m := &Manager{Store: store, Root: t.TempDir(), Runner: r}
+	ctx := context.Background()
+	for action, want := range map[string]string{"start": "up --detach", "stop": "stop", "restart": "restart"} {
+		if err := m.AppAction(ctx, "x", action); err != nil {
+			t.Fatal(err)
+		}
+		if last := r.calls[len(r.calls)-1]; last != "docker compose -p hp-x -f compose.yaml "+want {
+			t.Errorf("%s ran %q", action, last)
+		}
+	}
+	if err := m.AppAction(ctx, "x", "rm"); err == nil {
+		t.Error("only start, stop and restart")
+	}
+	if err := m.AppAction(ctx, "nope", "start"); err == nil {
+		t.Error("an app that isn't installed")
 	}
 }

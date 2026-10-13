@@ -289,6 +289,12 @@ func (u *Updater) do(req *http.Request) (string, int, error) {
 }
 
 // publicIPs asks what address this server's requests come from, over IPv4 and over IPv6 (empty when there's none).
+// PublicIPv4 is this home's address on the internet, as the outside sees it ("" when it can't tell).
+func (u *Updater) PublicIPv4(ctx context.Context) string {
+	ip4, _ := u.publicIPs(ctx)
+	return ip4
+}
+
 func (u *Updater) publicIPs(ctx context.Context) (ip4, ip6 string) {
 	ask := func(url, network string) string {
 		dialer := &net.Dialer{Timeout: 5 * time.Second}

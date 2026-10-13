@@ -410,7 +410,8 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, _, err := m.lookup(id); err != nil {
+	app, _, err := m.lookup(id)
+	if err != nil {
 		return err
 	}
 	args := []string{"down", "--remove-orphans"}
@@ -420,7 +421,7 @@ func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writ
 	if err := m.compose(ctx, id, log, args...); err != nil {
 		fmt.Fprintf(log, "Stopping it reported an error (continuing): %v\n", err)
 	}
-	if err := m.Store.Update(func(d *state.Data) error { d.DeleteApp(id); return nil }); err != nil {
+	if err := m.Store.Update(func(d *state.Data) error { d.DeleteApp(id); dropUnused(d, app.Domain); return nil }); err != nil {
 		return err
 	}
 	if m.Apply != nil {
@@ -687,6 +688,122 @@ func (m *Manager) Usage(ctx context.Context, names []string) map[string]Usage {
 		}
 	}
 	return use
+}
+
+// ChangeAddress moves an app to another address: its compose file is written again (apps that know their own address
+// are told the new one), the app is started again with it, Caddy is updated, and the old name leaves the domain list
+// when nothing else uses it.
+func (m *Manager) ChangeAddress(ctx context.Context, id, domain string, log io.Writer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, installer, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if err := auth.ValidDomain(domain); err != nil {
+		return err
+	}
+	if domain == app.Domain {
+		fmt.Fprintf(log, "%s is already at %s.\n", app.Name, domain)
+		return nil
+	}
+	entry, known, err := m.entryOf(app)
+	if err != nil {
+		return err
+	}
+	old := app.Domain
+	err = m.Store.Update(func(d *state.Data) error {
+		switch {
+		case domain == d.Settings().MainDomain:
+			return fmt.Errorf("%s is the main domain (portal and admin panel)", domain)
+		case domain == d.AIDomain():
+			return fmt.Errorf("%s is the AI page's address", domain)
+		}
+		if other, taken := d.AppOn(domain); taken {
+			return fmt.Errorf("%s already serves %s", domain, other.Name)
+		}
+		if !d.HasDomain(domain) {
+			if _, ok := parentDomain(d, domain); !ok {
+				return fmt.Errorf("add %s (or the domain it belongs to) under Domains first", domain)
+			}
+			d.AddDomain(state.Domain{Name: domain, Added: time.Now()})
+		}
+		a, _ := d.App(id)
+		a.Domain = domain
+		if known {
+			a.OIDC = oidcClient(entry, domain)
+		}
+		app = *a
+		dropUnused(d, old)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(log, "Moving %s from %s to %s…\n", app.Name, old, domain)
+	if known {
+		if err := m.writeCompose(entry, app, installer); err != nil {
+			return err
+		}
+	}
+	if err := m.compose(ctx, id, log, "up", "--detach", "--remove-orphans"); err != nil {
+		return fmt.Errorf("starting it at its new address failed: %w", err)
+	}
+	if m.Apply != nil {
+		if err := m.Apply(ctx); err != nil {
+			return err
+		}
+	}
+	if known {
+		m.afterInstall(ctx, entry, app, installer, false, log)
+	}
+	fmt.Fprintf(log, "Done: %s is at https://%s\n", app.Name, domain)
+	return nil
+}
+
+// dropUnused takes a name off the domain list when nothing uses it any more: no app, not the main domain or a name
+// others are under, not a free name, no certificate of its own.
+func dropUnused(d *state.Data, name string) {
+	x, ok := d.Domain(name)
+	if !ok || x.DynDNS != nil || x.Cert != "" || name == d.Settings().MainDomain {
+		return
+	}
+	if _, used := d.AppOn(name); used {
+		return
+	}
+	for _, y := range d.Domains() {
+		if strings.HasSuffix(y.Name, "."+name) {
+			return
+		}
+	}
+	for _, a := range d.Apps() {
+		if strings.HasSuffix(a.Domain, "."+name) {
+			return
+		}
+	}
+	d.DeleteDomain(name)
+}
+
+// AppAction starts, stops or restarts a whole app. Starting brings up whatever is missing (it's docker compose up), so
+// it also works after its containers were removed.
+func (m *Manager) AppAction(ctx context.Context, id, action string) error {
+	if _, _, err := m.lookup(id); err != nil {
+		return err
+	}
+	var args []string
+	switch action {
+	case "start":
+		args = []string{"up", "--detach"}
+	case "stop", "restart":
+		args = []string{action}
+	default:
+		return errors.New("start, stop or restart")
+	}
+	if out, err := m.ComposeOutput(ctx, id, args...); err != nil {
+		return fmt.Errorf("couldn't %s %s: %v %s", action, id, err, strings.TrimSpace(m.redact(id, out)))
+	}
+	return nil
 }
 
 // ContainerAction restarts, stops or starts one of an app's containers (by its service name).

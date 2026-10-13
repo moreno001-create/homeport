@@ -89,23 +89,28 @@ func localRequest(ctx context.Context, method, base, path string, body any, out 
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
 	if res.StatusCode/100 != 2 {
-		msg := strings.TrimSpace(string(data))
-		var e struct {
-			Error any `json:"error"`
-		}
-		if json.Unmarshal(data, &e) == nil && e.Error != nil {
-			if m, ok := e.Error.(map[string]any); ok && m["message"] != nil {
-				msg = fmt.Sprint(m["message"])
-			} else {
-				msg = fmt.Sprint(e.Error)
-			}
-		}
-		return fmt.Errorf("%s answered %d: %s", base, res.StatusCode, clip(msg, 300))
+		return localError(base, res.StatusCode, data)
 	}
 	if out == nil {
 		return nil
 	}
 	return json.Unmarshal(data, out)
+}
+
+// localError makes a local server's error answer readable.
+func localError(base string, status int, data []byte) error {
+	msg := strings.TrimSpace(string(data))
+	var e struct {
+		Error any `json:"error"`
+	}
+	if json.Unmarshal(data, &e) == nil && e.Error != nil {
+		if m, ok := e.Error.(map[string]any); ok && m["message"] != nil {
+			msg = fmt.Sprint(m["message"])
+		} else {
+			msg = fmt.Sprint(e.Error)
+		}
+	}
+	return fmt.Errorf("%s answered %d: %s", base, status, clip(msg, 300))
 }
 
 // LocalModels lists the models a local server offers.
@@ -213,30 +218,39 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 	if canHandOver {
 		system += "\n- You're a small local model. For anything complex, call " + handOverTool + " instead of guessing."
 	}
+	known := map[string]bool{}
+	for _, t := range tools {
+		known[t.Function.Name] = true
+	}
 	empty := 0
 	for step := 0; step < localSteps; step++ {
-		var res struct {
-			Choices []struct {
-				Message struct {
-					Content   string       `json:"content"`
-					ToolCalls []oaToolCall `json:"tool_calls"`
-				} `json:"message"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		body := map[string]any{"model": model, "messages": localHistory(system, c.history(conv)), "stream": false}
+		body := map[string]any{"model": model, "messages": localHistory(system, c.history(conv))}
 		if len(tools) > 0 {
 			body["tools"] = tools
 		}
-		if err := localRequest(ctx, "POST", base, "/chat/completions", body, &res); err != nil {
+		c.status(conv, "Reading the conversation…")
+		res, err := localStream(ctx, base, body, func(text string, thinking bool) {
+			c.update(conv, func(conv *Conversation) {
+				shown := strings.TrimSpace(stripThinking(text))
+				conv.Partial = shown
+				switch {
+				case shown != "":
+					conv.setStatus("Writing…")
+				case thinking || text != "":
+					conv.setStatus("Thinking…")
+				}
+			})
+		})
+		c.update(conv, func(conv *Conversation) { conv.Partial = "" })
+		if err != nil {
 			return "", err
 		}
-		if len(res.Choices) == 0 {
-			return "", errors.New("the local model sent back an empty answer")
-		}
-		m := res.Choices[0].Message
-		turn := Turn{Role: "assistant", By: "local " + model, Text: strings.TrimSpace(stripThinking(m.Content))}
-		for _, tc := range m.ToolCalls {
+		c.noteSpeed(model, res)
+		m := res
+		text, inText := callsInText(stripThinking(m.Content), known)
+		m.Calls = append(m.Calls, inText...)
+		turn := Turn{Role: "assistant", By: "local " + model, Text: strings.TrimSpace(text)}
+		for _, tc := range m.Calls {
 			if tc.Function.Name == handOverTool {
 				var a struct {
 					Reason string `json:"reason"`
@@ -273,6 +287,9 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 		}
 		c.add(conv, turn)
 		if len(turn.Calls) == 0 {
+			if !conv.Plain && shellCommand.MatchString(turn.Text) {
+				c.note(conv, c.commandNote())
+			}
 			return "", nil
 		}
 		c.runTools(ctx, conv, who, turn.Calls)

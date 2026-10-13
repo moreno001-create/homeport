@@ -36,6 +36,7 @@ func (s *Server) aiHandler() http.Handler {
 	mux.HandleFunc("GET /api/ai/me", s.aiUser(s.aiMe))
 	mux.HandleFunc("GET /api/ai/model", s.aiUser(s.aiModel))
 	mux.HandleFunc("POST /api/ai/model/load", s.aiUser(s.aiLoad))
+	mux.HandleFunc("GET /api/ai/busy", s.aiUser(s.aiBusy))
 	mux.HandleFunc("GET /api/ai/chat", s.aiUser(s.listChats))
 	mux.HandleFunc("POST /api/ai/chat", s.aiUser(s.aiSend))
 	mux.HandleFunc("GET /api/ai/chat/{id}", s.aiUser(s.getChat))
@@ -162,6 +163,13 @@ func (s *Server) aiLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// aiBusy is how busy the machine is right now (processor, memory, graphics), for the page's live meter.
+func (s *Server) aiBusy(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.load.Read(ctx))
 }
 
 // aiSend: admins get the full assistant, everyone else a plain chat with the local model. model is one of the local

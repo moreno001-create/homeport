@@ -132,3 +132,20 @@ func TestPrivateNamesGetCaddysOwnCertificate(t *testing.T) {
 		t.Errorf(".local names can't have Let's Encrypt: Caddy's own, whatever the server's setting:\n%s", c)
 	}
 }
+
+func TestHSTSOnlyWithTrustedCertificates(t *testing.T) {
+	s := state.Settings{MainDomain: "wh91.duckdns.org", TLS: state.TLSLetsEncrypt}
+	c := CaddyfileFor(s, []state.App{{ID: "c", Name: "C", Domain: "cloud.homeport.local", Port: 18001}}, []string{"192.168.4.37", "homeport.local"}, nil)
+	site := func(d string) string {
+		i := strings.Index(c, "\n"+d+" {")
+		return c[i : i+strings.Index(c[i+1:], "\n}\n")+1]
+	}
+	if !strings.Contains(site("wh91.duckdns.org"), "Strict-Transport-Security") {
+		t.Error("a Let's Encrypt site keeps HSTS")
+	}
+	for _, d := range []string{"cloud.homeport.local", "192.168.4.37, homeport.local"} {
+		if strings.Contains(site(d), "Strict-Transport-Security") {
+			t.Errorf("%s has Caddy's own certificate: no HSTS, or browsers can't get past a new one", d)
+		}
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"homeport/internal/dyndns"
 	"homeport/internal/firewall"
 	"homeport/internal/state"
+	"homeport/internal/sysload"
 	"homeport/internal/system"
 )
 
@@ -64,6 +65,8 @@ type Server struct {
 	Backup *backup.Manager
 
 	jobs     jobs
+	load     sysload.Meter // how busy the machine is, for the AI page's meter
+	pulls    pulls         // models Ollama is downloading
 	mu       sync.Mutex
 	handoffs map[string]handoff     // one-time codes that carry a sign-in to an app's domain
 	bad      map[string][]time.Time // failed sign-ins by address

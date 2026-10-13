@@ -55,18 +55,23 @@ const views = {
         h("p", {}, "Certificates: ", o.settings.tls === "internal"
           ? "Caddy's own test certificates (browsers will warn; fine for a private network)."
           : "Let's Encrypt" + (o.settings.acmeEmail ? ", notices to " + o.settings.acmeEmail : "") + ".")),
+      systemCard(),
     ];
     function stat(n, label, href) { return h("a", { class: "stat", href, style: null }, h("b", {}, n), h("span", { class: "muted" }, label)); }
   },
 
+  // (systemCard fills itself in: reading the machine takes a moment.)
   async apps() {
     const [installed, catalog] = await Promise.all([api("GET", "/apps"), api("GET", "/catalog")]);
     const rows = installed.map(a => h("tr", {},
       h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])),
-      h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain)),
+      h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain), " ",
+        h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
       h("td", {}, accessText(a.access)),
       h("td", {}, h("span", { class: "pill " + a.status.split(" ")[0] }, a.status)),
       h("td", { class: "actions" },
+        appRunButtons(a),
+        h("button", { onclick: () => addressDialog(a) }, "Address"),
         h("button", { onclick: () => accessDialog(a) }, "Access"),
         h("button", { onclick: () => notesDialog(a) }, "Notes"),
         h("button", { onclick: () => runJob("Updating " + a.name, () => api("POST", "/apps/" + a.id + "/update")) }, "Update"),
@@ -92,7 +97,10 @@ const views = {
     window.servicesTimer = setTimeout(() => { if (location.hash === "#services" && !dialog.open) route(); }, 10000);
     const statePill = (state, label) => h("span", { class: "pill " + ({ running: "running", exited: "stopped", dead: "stopped", failed: "failed", stopped: "stopped" }[state] || "unknown") }, label || state);
     const appCards = data.apps.map(a => h("div", { class: "card stack svc" },
-      h("div", { class: "head" }, h("h2", {}, a.name), h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener", class: "small" }, a.domain)),
+      h("div", { class: "head" },
+        h("div", {}, h("h2", {}, a.name), h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener", class: "small" }, a.domain)),
+        h("div", { class: "row" }, appRunButtons({ id: a.id, name: a.name,
+          status: a.containers.every(c => c.setup || c.state === "running") ? "running" : a.containers.some(c => !c.setup && c.state === "running") ? "partly running" : "stopped" }))),
       a.error ? h("p", { class: "error" }, a.error) : null,
       h("div", { class: "list" }, h("table", {},
         h("thead", {}, h("tr", {}, ["Container", "State", "CPU", "Memory", "Restarts", ""].map(t => h("th", {}, t)))),
@@ -260,6 +268,67 @@ const views = {
     ];
   },
 
+  // Internet access: every link from the internet to this server, checked, and what to do about the missing ones.
+  async internet() {
+    const st = await api("GET", "/internet");
+    const mark = (ok, wait) => h("span", { class: "tick " + (ok ? "ok" : wait ? "wait" : "bad"), "aria-hidden": "true" }, ok ? "✓" : wait ? "…" : "✗");
+    const item = (ok, title, detail, wait) => h("li", {}, mark(ok, wait), h("div", {}, h("b", {}, title), detail ? h("div", { class: "muted small" }, detail) : null));
+    const fw = st.forwards || [];
+    const forwarded = fw.length === 2 && fw.every(f => f.mine);
+    const elsewhere = fw.filter(f => f.to && !f.mine);
+    const certText = c => c.trusted ? "valid until " + new Date(c.notAfter).toLocaleDateString() + " (" + (c.issuer || "") + ")"
+      : c.error ? c.error : c.issuer ? "only Caddy's own certificate so far" : "none yet";
+    const routerBtn = st.router.found && !forwarded && !elsewhere.length
+      ? h("button", { class: "primary", onclick: async () => {
+          if (!confirm("Ask the router (" + st.router.name + ") to send ports 80 and 443 to this server? Apps you put on the internet become reachable by anyone (each still behind its sign-in, unless you made it public).")) return;
+          try { await api("POST", "/internet/router", { open: true }); toast("The router forwards 80 and 443 here now"); } catch (err) { toast(err.message); }
+          route();
+        } }, "Open ports 80 and 443 on the router")
+      : st.routerPorts ? h("button", { onclick: async () => {
+          if (!confirm("Stop forwarding ports 80 and 443 to this server? Apps on the internet become unreachable from outside.")) return;
+          try { await api("POST", "/internet/router", { open: false }); toast("Closed"); } catch (err) { toast(err.message); }
+          route();
+        } }, "Close them again") : null;
+    return [
+      h("div", { class: "head" }, h("h1", {}, "Internet access"), h("span", { class: "pill " + (st.ready ? "running" : "unknown") }, st.ready ? "ready" : "not yet"), h("button", { onclick: () => route() }, "Check again")),
+      h("div", { class: "card stack" },
+        h("ul", { class: "checks" },
+          item(!!st.publicIP && !st.shared, "Internet connection", st.publicIP
+            ? (st.shared ? "Shared address (" + (st.router.outside || st.publicIP) + "): nothing from outside can come in through this connection." : "This home is at " + st.publicIP + " on the internet.")
+            : "Can't reach the internet."),
+          item(st.router.found, "Router", st.router.found ? st.router.name + ": takes automatic port forwarding (UPnP). This server is " + st.router.local + " to it." : st.router.error),
+          item(forwarded, "Ports 80 and 443", forwarded ? "Forwarded to this server" + (st.routerPorts ? " (Homeport keeps them open)." : ".")
+            : elsewhere.length ? "The router already sends them to another device: " + elsewhere.map(f => f.port + " → " + f.to + (f.what ? " (" + f.what + ")" : "")).join(", ") + ". Change that in the router's app (port forwarding), then check again."
+            : "Not forwarded yet."),
+          item(!!st.name && st.namePoints, "Internet name", st.name ? st.name + (st.namePoints ? " points here." : " points at " + ((st.nameIPs || []).join(", ") || "nothing") + ", not here yet.") : "None yet.", st.name && !st.namePoints),
+          item(!!st.cert.trusted, "Certificate", st.name ? certText(st.cert) : "Comes with the internet name.", st.name && !st.cert.trusted)),
+        h("div", { class: "row" }, routerBtn, st.name ? null : h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free internet name"))),
+      st.steps.length ? h("div", { class: "card stack" }, h("h2", {}, "What's left"), h("ol", { class: "steps" }, st.steps.map(t => h("li", {}, t)))) : h("p", {}, "Everything's in place: apps you put on the internet are reachable from anywhere, with real certificates."),
+      h("h2", {}, "Apps"),
+      st.apps.length ? h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["App", "Address", "Certificate", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, st.apps.map(a => h("tr", {},
+          h("td", {}, h("b", {}, a.name)),
+          h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain), " ", h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
+          h("td", { class: "small" }, a.internet ? certText(a.cert) : "Caddy's own (home network)"),
+          h("td", { class: "actions" }, h("button", { onclick: () => {
+            if (!a.internet && !st.name) { toast("Get a free internet name first"); return; }
+            runJob((a.internet ? "Taking " : "Putting ") + a.name + (a.internet ? " off" : " on") + " the internet", () => api("POST", "/apps/" + a.id + "/internet", { on: !a.internet }));
+          } }, a.internet ? "Take off the internet" : "Put on the internet")))))))
+        : h("p", { class: "muted" }, "No apps yet."),
+    ];
+  },
+
+  // AI models: what runs well on this server, downloads with a progress bar, and the one the assistant uses.
+  async models() {
+    const st = await api("GET", "/ai-models");
+    const head = h("div", { class: "head" }, h("h1", {}, "AI models"),
+      h("a", { class: "button", href: "https://ai." + me.settings.mainDomain + "/", target: "_blank", rel: "noopener" }, "Open the AI page ↗"));
+    if (st.error) return [head, h("div", { class: "card stack" }, h("p", {}, st.error),
+      h("p", { class: "muted small" }, "The local model server is set under ", h("a", { href: "#settings" }, "Settings → Assistant chat"), "."))];
+    return [head, h("div", { class: "stack", id: "models-top" }, ...modelsTop(st)), findModels(st)];
+  },
+
   async users() {
     const users = await api("GET", "/users");
     return [
@@ -403,6 +472,34 @@ function installDialog(c) {
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Install"))));
 }
 
+// addressDialog: where an app is. The switch moves it between the home network (app.homeport.local) and the internet
+// (app.yourname.duckdns.org); or type any address.
+async function addressDialog(a) {
+  let bases = { public: "", home: "" };
+  try { bases = await api("GET", "/addresses"); } catch (err) { toast(err.message); }
+  const label = a.domain.split(".")[0];
+  const sw = h("input", { type: "checkbox", checked: a.internet, disabled: !bases.public && !a.internet });
+  const custom = h("input", { value: a.domain, autocapitalize: "none", spellcheck: "false", "aria-label": "Address" });
+  const move = (title, start) => { dialog.close(); runJob(title, start); };
+  openDialog(h("div", { class: "body" },
+    h("h2", {}, a.name + "'s address"),
+    h("p", {}, "Now: ", h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, "https://" + a.domain)),
+    h("label", { class: "check switch" }, sw, h("span", {}, h("b", {}, "On the internet"),
+      h("span", { class: "muted small" }, bases.public
+        ? " — at " + label + "." + bases.public + " with a real certificate (when Internet access is set up)"
+        : " — get a free internet name first (Internet access page)"))),
+    h("p", { class: "muted small" }, "Off: only on your home network, at " + label + "." + (bases.home || "homeport.local") + ". Moving restarts it for a moment; apps that know their own address are told the new one."),
+    h("details", {}, h("summary", {}, "Or another address"),
+      h("div", { class: "row" }, custom, h("button", { onclick: () => move("Moving " + a.name, () => api("POST", "/apps/" + a.id + "/address", { domain: custom.value.trim() })) }, "Move it there"))),
+    h("div", { class: "buttons" },
+      h("button", { onclick: () => dialog.close() }, "Cancel"),
+      h("button", { class: "primary", onclick: () => {
+        if (sw.checked === a.internet) { dialog.close(); return; }
+        move((sw.checked ? "Putting " : "Taking ") + a.name + (sw.checked ? " on the internet" : " off the internet"),
+          () => api("POST", "/apps/" + a.id + "/internet", { on: sw.checked }));
+      } }, "Save"))));
+}
+
 function accessDialog(a) {
   const pub = h("input", { type: "checkbox", checked: !!a.access.public });
   const groups = h("input", { value: (a.access.groups || ["all"]).join(", ") });
@@ -530,6 +627,23 @@ async function notesDialog(a) {
     h("div", { class: "buttons" }, saved, h("button", { type: "button", onclick: () => dialog.close() }, "Close"), h("button", { class: "primary", type: "submit" }, "Save notes"))));
 }
 
+// appRunButtons: Start when an app (or part of it) isn't running, Stop and Restart when it is.
+function appRunButtons(a) {
+  const status = a.status || "";
+  const btns = [];
+  if (!status.startsWith("running")) btns.push(h("button", { class: "primary", onclick: () => appAction(a, "start") }, "Start"));
+  if (status.startsWith("running")) btns.push(h("button", { onclick: () => appAction(a, "restart") }, "Restart"));
+  if (status.startsWith("running") || status.startsWith("partly")) btns.push(h("button", { class: "danger", onclick: () => appAction(a, "stop") }, "Stop"));
+  return btns;
+}
+
+async function appAction(a, action) {
+  if (action === "stop" && !confirm("Stop " + a.name + "? It's unreachable until you start it again.")) return;
+  toast({ start: "Starting ", stop: "Stopping ", restart: "Restarting " }[action] + a.name + "…");
+  try { await api("POST", "/apps/" + a.id + "/" + action); toast(a.name + ": " + { start: "started", stop: "stopped", restart: "restarted" }[action]); } catch (err) { toast(err.message); }
+  route();
+}
+
 async function containerAction(a, c, action) {
   if (action === "stop" && !confirm("Stop " + a.name + "'s " + c.service + "? " + a.name + " may stop working until it's started again.")) return;
   try { await api("POST", "/services/apps/" + a.id + "/" + c.service + "/" + action); toast(a.name + " · " + c.service + ": " + action + " done"); } catch (err) { toast(err.message); }
@@ -558,12 +672,180 @@ function logsDialog(title, path) {
   load();
 }
 
+// systemCard: what this machine is, and how busy it is now.
+function systemCard() {
+  const body = h("p", { class: "muted" }, "Reading this machine…");
+  const card = h("div", { class: "card stack" }, h("h2", {}, "System"), body);
+  api("GET", "/system").then(({ specs: s, load: l, addresses }) => {
+    const gb = n => (n / 1073741824).toFixed(n >= 100 * 1073741824 ? 0 : 1) + " GB";
+    const days = d => { const m = Math.round(d / 6e10); return m < 60 ? m + " minutes" : m < 2880 ? Math.round(m / 60) + " hours" : Math.round(m / 1440) + " days"; };
+    const row = (k, v, extra) => v ? h("tr", {}, h("th", { scope: "row" }, k), h("td", {}, v, extra ? h("span", { class: "muted small" }, " " + extra) : null)) : null;
+    const usedDisk = s.disk.total - s.disk.free;
+    body.replaceWith(h("div", { class: "list" }, h("table", { class: "specs" }, h("tbody", {},
+      row("Operating system", s.os, s.arch),
+      row("Kernel", s.kernel),
+      row("Computer name", s.hostname, addresses.length ? "· " + addresses.join(", ") : ""),
+      row("Processor", s.cpu || s.cores + " cores", s.cpu ? "· " + s.cores + " threads · " + l.cpu + "% busy" : l.cpu + "% busy"),
+      row("Memory", gb(s.memory), "· " + gb(l.memUsed) + " in use"),
+      row("Disk", gb(s.disk.total), "· " + gb(s.disk.free) + " free (" + Math.round(usedDisk * 100 / s.disk.total) + "% used)"),
+      row("Graphics", s.gpu, l.gpu ? "· " + l.gpu.percent + "% busy" : ""),
+      row("Up for", days(s.uptime)),
+      row("Docker", s.docker),
+      row("Caddy", s.caddy),
+      row("Homeport", me.version)))));
+  }).catch(err => body.replaceWith(h("p", { class: "error" }, err.message)));
+  return card;
+}
+
 function sizeText(n) {
   if (!n) return "0 bytes";
   if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
   if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
   if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " kB";
   return n + " bytes";
+}
+
+// MARK: AI models
+
+const modelState = { installed: new Set(), pulling: new Set(), hardware: null };
+
+// modelsTop is the part of the AI models page that follows downloads: this server, downloads, installed models.
+function modelsTop(st) {
+  modelState.installed = new Set((st.installed || []).map(m => m.model));
+  const wasPulling = modelState.pulling;
+  modelState.pulling = new Set((st.pulls || []).filter(p => !p.finished).map(p => p.model));
+  modelState.hardware = st.hardware;
+  clearTimeout(window.modelsTimer);
+  if (modelState.pulling.size) window.modelsTimer = setTimeout(() => { if (location.hash === "#models") refreshModels(); }, 1000);
+  if ([...wasPulling].some(m => !modelState.pulling.has(m)) && modelState.redraw) modelState.redraw();
+  const cur = (st.installed || []).find(m => m.current);
+  return [
+    h("div", { class: "card stack" },
+      h("h2", {}, "This server"),
+      st.hardware ? h("p", {}, hardwareText(st.hardware)) : h("p", {}, "The models run on ", h("b", {}, st.where), ", so Homeport can't tell how fast they'd be there."),
+      h("p", {}, "The assistant and the AI page use ", cur ? [h("b", {}, cur.name), " (", h("code", {}, cur.model), ")"] : h("b", {}, "no model yet"),
+        cur && cur.words ? ", which wrote about " + cur.words.toFixed(1) + " words a second in its last answer." : "."),
+      h("p", { class: "muted small" }, "Speeds are for writing the answer. Before that a model reads the conversation, which on a processor can take a minute or more.")),
+    (st.pulls || []).length ? h("div", { class: "card stack" }, h("h2", {}, "Downloads"), ...st.pulls.map(pullRow)) : null,
+    h("h2", {}, "On this server"),
+    st.installed.length ? h("div", { class: "list" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Model", "Size", "Here", ""].map(t => h("th", {}, t)))),
+      h("tbody", {}, st.installed.map(m => h("tr", {},
+        h("td", {}, h("b", {}, m.name), h("div", { class: "muted small" }, m.model, m.params ? " · " + m.params : "", m.quant ? " · " + m.quant : "")),
+        h("td", {}, gbText(m.size)),
+        h("td", {}, speedPill(m.estimate, m.words)),
+        h("td", { class: "actions" }, m.current ? h("span", { class: "pill running" }, "In use")
+          : [h("button", { onclick: () => useModel(m) }, "Use"), " ", h("button", { class: "danger", onclick: () => removeModel(m) }, "Remove")]))))))
+      : h("p", { class: "muted" }, "No models yet: find one below."),
+  ];
+}
+
+async function refreshModels() {
+  const holder = document.getElementById("models-top");
+  if (!holder) return;
+  try { holder.replaceChildren(...modelsTop(await api("GET", "/ai-models"))); } catch (err) { toast(err.message); }
+}
+
+function hardwareText(x) {
+  const hw = x.hardware, bits = [];
+  bits.push((hw.cpu || "Processor") + " (" + hw.cores + " threads" + (hw.apple ? "" : hw.avx2 ? "" : ", an older kind without AVX2, so models run slower") + ")");
+  bits.push(gbText(hw.memory, true) + " of memory" + (hw.apple ? ", shared with the graphics" : ""));
+  const gpu = (/\[([^\]]+)\]\s*$/.exec(hw.gpu || "") || [])[1] || hw.gpu; // "…Tahiti LE [Radeon HD 7870 XT]"
+  if (hw.gpu) bits.push(gpu + " with " + gbText(hw.gpuMemory, true) + (x.gpuWorks ? ": Ollama runs models on it" : ": Ollama doesn't use it (models run on the processor)"));
+  else if (!hw.apple) bits.push("no graphics card for models (they run on the processor)");
+  return bits.join(" · ") + ".";
+}
+
+// gbText is a size as Ollama's library gives it (1 GB = 10⁹ bytes); memory (binary) rounds to whole GB.
+function gbText(n, memory) {
+  if (memory) return Math.round(n / (1 << 30)) + " GB";
+  return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : Math.round(n / 1e6) + " MB";
+}
+
+function speedPill(e, measured) {
+  if (!e || !e.label) return h("span", { class: "muted small" }, measured ? "about " + measured.toFixed(1) + " words/s" : "");
+  const cls = { Fast: "running", Good: "running", Usable: "partly", Slow: "stopped", "Too big": "stopped" }[e.label] || "";
+  const words = measured || e.words;
+  return h("span", {}, h("span", { class: "pill " + cls }, e.label), e.place ? h("div", { class: "muted small" },
+    "about " + (words < 10 ? words.toFixed(1) : Math.round(words)) + " words/s" + (measured || e.measured ? "" : " (a guess)") + " · " + e.place) : null);
+}
+
+function pullRow(p) {
+  const pct = p.total ? Math.floor(p.done * 100 / p.total) : 0;
+  const what = p.error ? p.error : p.status === "success" ? "Done" : p.total ? gbText(p.done) + " of " + gbText(p.total) + " (" + pct + "%)" : p.status;
+  return h("div", { class: "pull" },
+    h("div", { class: "row" }, h("b", {}, p.model), h("span", { class: p.error ? "error small" : "muted small" }, what),
+      !p.finished ? h("button", { onclick: async () => { try { await api("POST", "/ai-models/stop", { model: p.model }); } catch (err) { toast(err.message); } refreshModels(); } }, "Stop")
+        : p.status === "success" && !p.error ? h("button", { class: "primary", onclick: () => useModel({ model: p.model, name: p.model }) }, "Use this one") : null),
+    h("span", { class: "meter-bar long" }, h("span", { class: "meter-fill w" + (p.status === "success" ? 100 : Math.floor(pct / 5) * 5) })));
+}
+
+async function installModel(model) {
+  try { await api("POST", "/ai-models/pull", { model }); toast("Downloading " + model); } catch (err) { toast(err.message); return; }
+  modelState.pulling.add(model);
+  if (modelState.redraw) modelState.redraw();
+  refreshModels();
+}
+
+async function useModel(m) {
+  try { await api("POST", "/ai-models/use", { model: m.model }); toast("The assistant and the AI page use " + m.model + " now (loading it)"); } catch (err) { toast(err.message); }
+  refreshModels();
+}
+
+async function removeModel(m) {
+  if (!confirm("Remove " + m.model + " from this server? It frees " + gbText(m.size) + "; you can download it again later.")) return;
+  try { await api("POST", "/ai-models/remove", { model: m.model }); toast("Removed"); } catch (err) { toast(err.message); }
+  refreshModels();
+}
+
+// findModels searches Ollama's library: each model's sizes, how they'd run here, and the best fit.
+function findModels(st) {
+  const input = h("input", { type: "search", placeholder: "Search Ollama's library: qwen, llama, gemma, coder… or a name like qwen3.5:4b", "aria-label": "Search models" });
+  const box = h("div", { class: "stack" });
+  const note = h("p", { class: "muted small" });
+  let results = [], query = "";
+  const familyCard = f => {
+    const tools = f.caps.includes("tools");
+    return h("div", { class: "card stack model-family" },
+      h("div", { class: "head" }, h("div", {}, h("h3", {}, f.name), h("p", { class: "muted small" }, f.description)),
+        h("div", { class: "row" }, ...f.caps.map(c => h("span", { class: "pill" + (c === "tools" ? " internet" : "") }, c)), f.downloads ? h("span", { class: "muted small" }, f.downloads + " downloads") : null)),
+      tools ? null : h("p", { class: "muted small" }, "Can't use Homeport's tools: fine on the AI page for chatting, but the assistant can't look after the server with it."),
+      f.error ? h("p", { class: "error small" }, f.error) : null,
+      f.variants.length ? h("div", { class: "list" }, h("table", {}, h("tbody", {}, f.variants.map(v => h("tr", {},
+        h("td", {}, h("b", {}, v.model), v.best ? [" ", h("span", { class: "pill running" }, "Best fit here")] : null,
+          h("div", { class: "muted small" }, gbText(v.download) + " download" + (v.context ? " · reads up to " + v.context + " tokens" : "") + (v.active ? " · " + v.active + "B at work per word" : ""))),
+        h("td", {}, speedPill(v.estimate)),
+        h("td", { class: "actions" }, modelState.installed.has(v.model) ? h("span", { class: "pill done" }, "Installed")
+          : modelState.pulling.has(v.model) ? h("span", { class: "pill partly" }, "Downloading")
+          : h("button", { class: v.best ? "primary" : "", disabled: v.estimate && v.estimate.label === "Too big",
+              title: v.estimate && v.estimate.label === "Too big" ? "Too big for this server's memory" : null,
+              onclick: () => installModel(v.model) }, "Install")))))))
+        : f.error ? null : h("p", { class: "muted small" }, "No sizes to download (it may only run in Ollama's cloud)."));
+  };
+  function redraw() {
+    const exact = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)?:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(query) && !results.some(f => f.variants.some(v => v.model === query));
+    box.replaceChildren(
+      ...(exact ? [h("div", { class: "card row" }, h("span", {}, "Install ", h("code", {}, query), " by its exact name?"),
+        modelState.installed.has(query) ? h("span", { class: "pill done" }, "Installed") : h("button", { class: "primary", onclick: () => installModel(query) }, "Install"))] : []),
+      ...results.map(familyCard));
+  }
+  modelState.redraw = redraw;
+  async function search() {
+    query = input.value.trim();
+    note.textContent = query ? "Looking in Ollama's library…" : "Loading the most popular models…";
+    box.replaceChildren();
+    try {
+      results = await api("GET", "/ai-models/search?q=" + encodeURIComponent(query));
+      note.textContent = results.length ? (query ? "" : "The most popular models in Ollama's library. ") + (modelState.hardware ? "“Best fit here” is the most capable size that still answers at a usable speed on this server." : "")
+        : "Nothing found for “" + query + "”.";
+    } catch (err) { results = []; note.textContent = err.message; }
+    redraw();
+  }
+  search();
+  return h("section", { class: "stack" },
+    h("h2", {}, "Find more models"),
+    h("form", { class: "row", onsubmit: e => { e.preventDefault(); search(); } }, input, h("button", { class: "primary", type: "submit" }, "Search")),
+    note, box);
 }
 
 // destinationDialog adds a place for backups: its fields follow the kind chosen.
@@ -858,6 +1140,7 @@ function chatSettingsForm(cfg) {
     h("div", { class: "row" }, h("label", {}, "Address of an OpenAI-compatible server", url), h("button", { type: "button", onclick: findModels }, "Find models")),
     found,
     h("label", {}, "Model", localModel),
+    h("p", { class: "muted small" }, "To find new models, see how well they'd run here and download them: ", h("a", { href: "#models" }, "AI models"), "."),
     h("div", {}, h("button", { class: "primary", type: "submit" }, "Save")));
 }
 
@@ -904,14 +1187,14 @@ function chatView(list, cfg) {
 
   function draw(conv) {
     const turns = conv ? conv.turns : [];
+    const follow = nearBottom() || turns.length !== chat.renderedTurns;
     if (turns.length !== chat.renderedTurns) {
       thread.replaceChildren(...(turns.length ? turns.map(turnView) : intro()));
       chat.renderedTurns = turns.length;
-      thread.lastElementChild?.scrollIntoView({ block: "end" });
     }
     const bits = [];
     if (conv && conv.partial) bits.push(h("div", { class: "msg bot" }, rich(conv.partial)));
-    if (conv && conv.busy) bits.push(h("p", { class: "muted small status" }, conv.status || "Working…"));
+    if (conv && conv.busy) bits.push(h("p", { class: "muted small status" }, statusLine(conv)));
     if (conv && conv.consent) bits.push(h("div", { class: "card stack consent" },
       h("p", {}, "This would go to Claude, on Anthropic's servers", conv.consentWhy ? " (" + conv.consentWhy + ")" : "", ". Send it?"),
       h("div", { class: "row" },
@@ -920,6 +1203,7 @@ function chatView(list, cfg) {
     live.replaceChildren(...bits);
     const busy = !!(conv && conv.busy);
     send.disabled = busy || !ready; stop.hidden = !busy;
+    if (follow && turns.length) toBottom();
   }
 
   async function cont(body) {

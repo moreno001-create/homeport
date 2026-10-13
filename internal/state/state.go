@@ -34,6 +34,8 @@ type Settings struct {
 	ApprovalMinutes int `json:"approvalMinutes,omitempty"`
 	// Terminal serves a web terminal (the system's login prompt) at /terminal/ on the main domain, for admins.
 	Terminal bool `json:"terminal,omitempty"`
+	// RouterPorts: Homeport keeps ports 80 and 443 forwarded to it on the home router (UPnP).
+	RouterPorts bool `json:"routerPorts,omitempty"`
 	// Chat is how the admin panel's assistant chat picks a model.
 	Chat ChatSettings `json:"chat"`
 }
@@ -504,4 +506,30 @@ func (v *Data) HomeNames() []string {
 		}
 	}
 	return out
+}
+
+// PublicBase is the name apps go under on the internet: the main domain when it's a public name, else the first free
+// name (DuckDNS, deSEC). "" when there's none yet.
+func (v *Data) PublicBase() string {
+	if m := v.d.Settings.MainDomain; m != "" && !PrivateName(m) {
+		return m
+	}
+	for _, d := range v.d.Domains {
+		if d.DynDNS != nil {
+			return d.Name
+		}
+	}
+	return ""
+}
+
+// HomeBase is the name apps go under on the home network: the main domain when it's a .local name, else the first
+// home name (homeport.local). "" when there's none.
+func (v *Data) HomeBase() string {
+	if m := v.d.Settings.MainDomain; strings.HasSuffix(m, ".local") {
+		return m
+	}
+	if h := v.HomeNames(); len(h) > 0 {
+		return h[0]
+	}
+	return ""
 }

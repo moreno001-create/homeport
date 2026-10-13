@@ -35,8 +35,9 @@ type Chat struct {
 	// ClaudeURL replaces Anthropic's address (tests).
 	ClaudeURL string
 
-	mu    sync.Mutex
-	convs map[string]*Conversation
+	mu     sync.Mutex
+	convs  map[string]*Conversation
+	speeds map[string]float64 // local model → words (tokens) a second, as last measured
 }
 
 // Defaults for Claude.
@@ -76,14 +77,16 @@ type ToolResult struct {
 
 // Conversation is one chat. They're kept in memory: a restart of Homeport starts afresh.
 type Conversation struct {
-	ID      string    `json:"id"`
-	Owner   string    `json:"-"`
-	Title   string    `json:"title"`
-	Turns   []Turn    `json:"turns"`
-	Busy    bool      `json:"busy"`
-	Status  string    `json:"status,omitempty"`
-	Partial string    `json:"partial,omitempty"` // Claude's answer as it's written
-	Updated time.Time `json:"updated"`
+	ID     string `json:"id"`
+	Owner  string `json:"-"`
+	Title  string `json:"title"`
+	Turns  []Turn `json:"turns"`
+	Busy   bool   `json:"busy"`
+	Status string `json:"status,omitempty"`
+	// StatusFor is how many seconds the status has been the same (so a slow model is seen to be working).
+	StatusFor int       `json:"statusFor,omitempty"`
+	Partial   string    `json:"partial,omitempty"` // the answer as it's written
+	Updated   time.Time `json:"updated"`
 	// Consent is set when the chat would send this to Claude and the admin asked to be asked first.
 	Consent    bool   `json:"consent,omitempty"`
 	ConsentWhy string `json:"consentWhy,omitempty"`
@@ -96,6 +99,14 @@ type Conversation struct {
 
 	claudeTookOver bool
 	cancel         context.CancelFunc
+	statusAt       time.Time
+}
+
+// setStatus changes the status (under the lock), restarting its clock when it's new.
+func (conv *Conversation) setStatus(s string) {
+	if s != conv.Status {
+		conv.Status, conv.statusAt = s, time.Now()
+	}
 }
 
 // Summary is a conversation in the list.
@@ -197,7 +208,7 @@ func (c *Chat) Continue(owner, id, use string, allowCloud bool) (Conversation, e
 
 func (c *Chat) startLocked(conv *Conversation, use string, allowCloud bool) {
 	ctx, cancel := context.WithCancel(context.Background())
-	conv.Busy, conv.Consent, conv.ConsentWhy, conv.Status, conv.Partial = true, false, "", "Thinking…", ""
+	conv.Busy, conv.Consent, conv.ConsentWhy, conv.Status, conv.Partial, conv.statusAt = true, false, "", "Thinking…", "", time.Now()
 	conv.cancel, conv.Updated = cancel, time.Now()
 	go c.answer(ctx, conv, use, allowCloud)
 }
@@ -273,6 +284,9 @@ func (conv *Conversation) copyLocked() Conversation {
 	out := *conv
 	out.Turns = append([]Turn(nil), conv.Turns...)
 	out.cancel = nil
+	if conv.Busy && !conv.statusAt.IsZero() {
+		out.StatusFor = int(time.Since(conv.statusAt).Seconds())
+	}
 	return out
 }
 
@@ -300,7 +314,37 @@ func (c *Chat) add(conv *Conversation, t Turn) {
 func (c *Chat) note(conv *Conversation, text string) { c.add(conv, Turn{Role: "note", Text: text}) }
 
 func (c *Chat) status(conv *Conversation, s string) {
-	c.update(conv, func(conv *Conversation) { conv.Status = s })
+	c.update(conv, func(conv *Conversation) { conv.setStatus(s) })
+}
+
+// noteSpeed keeps how fast a local model wrote, from an answer long enough to tell.
+func (c *Chat) noteSpeed(model string, res streamed) {
+	if res.Tokens < 20 || res.Writing < time.Second {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.speeds == nil {
+		c.speeds = map[string]float64{}
+	}
+	c.speeds[model] = float64(res.Tokens) / res.Writing.Seconds()
+}
+
+// Speed is how many words (tokens) a second a local model wrote last time (0: not measured since Homeport started).
+func (c *Chat) Speed(model string) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.speeds[model]
+}
+
+// commandNote follows an answer that shows a command but didn't run anything.
+func (c *Chat) commandNote() string {
+	t := "Nothing was run: that command is for you to type on the server (its console, SSH or the web terminal). " +
+		"When the assistant does something itself, an Approve button shows up here first."
+	if !c.A.shellOn() {
+		t += " It can't run commands like that itself: shell commands are off (Assistant → Approvals and activity)."
+	}
+	return t
 }
 
 func (c *Chat) history(conv *Conversation) []Turn {

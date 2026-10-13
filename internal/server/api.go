@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"homeport/internal/sysload"
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,6 +62,7 @@ func (s *Server) browserAdmin(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/overview", guard(s.overview))
 	mux.HandleFunc("PUT /api/settings", guard(s.putSettings))
+	mux.HandleFunc("GET /api/system", guard(s.systemSpecs))
 	mux.HandleFunc("GET /api/users", guard(s.listUsers))
 	mux.HandleFunc("POST /api/users", guard(s.addUser))
 	mux.HandleFunc("PATCH /api/users/{name}", guard(s.changeUser))
@@ -76,6 +79,12 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("POST /api/apps/draft", guard(s.draftApp))
 	mux.HandleFunc("POST /api/apps/check", guard(s.checkApp))
 	mux.HandleFunc("POST /api/apps/{id}/update", guard(s.updateApp))
+	mux.HandleFunc("POST /api/apps/{id}/address", guard(s.changeAddress))
+	mux.HandleFunc("POST /api/apps/{id}/internet", guard(s.setInternet))
+	mux.HandleFunc("GET /api/addresses", guard(s.addressBases))
+	mux.HandleFunc("POST /api/apps/{id}/start", guard(s.appAction("start")))
+	mux.HandleFunc("POST /api/apps/{id}/stop", guard(s.appAction("stop")))
+	mux.HandleFunc("POST /api/apps/{id}/restart", guard(s.appAction("restart")))
 	mux.HandleFunc("DELETE /api/apps/{id}", guard(s.removeApp))
 	mux.HandleFunc("PUT /api/apps/{id}/access", guard(s.setAccess))
 	mux.HandleFunc("GET /api/apps/{id}/secrets", guard(s.appSecrets))
@@ -85,11 +94,13 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	s.serviceRoutes(mux, guard)
 	s.firewallRoutes(mux, guard)
 	s.backupRoutes(mux, guard)
+	s.internetRoutes(mux, guard)
 	mux.HandleFunc("GET /api/approvals", guard(s.listApprovals))
 	mux.HandleFunc("POST /api/approvals/{id}/{decision}", guard(s.decideApproval))
 	mux.HandleFunc("GET /api/audit", guard(s.auditLog))
 	mux.HandleFunc("GET /api/memory", guard(s.memory))
 	s.chatRoutes(mux, guard)
+	s.modelRoutes(mux, guard)
 }
 
 // MARK: AI helpers
@@ -181,6 +192,21 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	})
 	out.Version, out.Me = s.Version, actor(r).Name
 	writeJSON(w, http.StatusOK, out)
+}
+
+// systemSpecs is what this machine is (OS, processor, memory, disk, graphics, uptime, versions), and how busy it is.
+func (s *Server) systemSpecs(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, map[string]any{"specs": sysload.ReadSpecs(ctx, filepath.Dir(s.Apps.Root)), "load": s.load.Read(ctx),
+		"addresses": s.localAddrs()})
+}
+
+func (s *Server) localAddrs() []string {
+	if s.LocalAddrs == nil {
+		return []string{}
+	}
+	return s.LocalAddrs()
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -794,13 +820,15 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		Updated   *time.Time    `json:"updated,omitempty"`
 		HasSecret bool          `json:"hasSecrets"`
 		Source    *state.Source `json:"source,omitempty"`
+		Internet  bool          `json:"internet"` // on a public name (not a home-network one)
 	}
 	var list []state.App
 	s.Store.Read(func(d *state.Data) { list = d.Apps() })
 	out := make([]row, len(list))
 	var wg sync.WaitGroup
 	for i, a := range list {
-		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source}
+		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source,
+			Internet: !state.PrivateName(a.Domain)}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t
@@ -938,6 +966,77 @@ func (s *Server) checkApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, review(in.Manifest))
+}
+
+// addressBases are the names apps go under: on the internet (a free name, or a public main domain) and at home.
+func (s *Server) addressBases(w http.ResponseWriter, r *http.Request) {
+	var public, home string
+	s.Store.Read(func(d *state.Data) { public, home = d.PublicBase(), d.HomeBase() })
+	writeJSON(w, http.StatusOK, map[string]string{"public": public, "home": home})
+}
+
+// changeAddress moves an app to another address (a job: the app restarts with it).
+func (s *Server) changeAddress(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Domain string `json:"domain"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	id := r.PathValue("id")
+	j := s.jobs.start("address "+id, func(ctx context.Context, j *job) error { return s.Apps.ChangeAddress(ctx, id, in.Domain, j) })
+	writeJSON(w, http.StatusAccepted, j.view())
+}
+
+// setInternet moves an app onto the internet (app.<public base>) or back home (app.<home base>), keeping its name.
+func (s *Server) setInternet(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	id := r.PathValue("id")
+	var current, base string
+	s.Store.Read(func(d *state.Data) {
+		if a, ok := d.App(id); ok {
+			current = a.Domain
+		}
+		base = d.HomeBase()
+		if in.On {
+			base = d.PublicBase()
+		}
+	})
+	switch {
+	case current == "":
+		writeError(w, http.StatusNotFound, state.ErrNotFound)
+		return
+	case base == "" && in.On:
+		writeError(w, http.StatusBadRequest, errors.New("there's no internet name yet: get a free one under Internet access (DuckDNS or deSEC) first"))
+		return
+	case base == "":
+		writeError(w, http.StatusBadRequest, errors.New("there's no home name (like homeport.local) to move it to: add one under Domains"))
+		return
+	}
+	label, _, _ := strings.Cut(current, ".")
+	domain := label + "." + base
+	j := s.jobs.start("address "+id, func(ctx context.Context, j *job) error { return s.Apps.ChangeAddress(ctx, id, domain, j) })
+	writeJSON(w, http.StatusAccepted, j.view())
+}
+
+// appAction starts, stops or restarts a whole app.
+func (s *Server) appAction(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+		defer cancel()
+		if err := s.Apps.AppAction(ctx, r.PathValue("id"), action); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {

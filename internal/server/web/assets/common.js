@@ -66,3 +66,22 @@ function turnView(t) {
       h("div", { class: "by" }, t.by || ""));
   }
 }
+
+// Chats follow new text while you're at the bottom of the page, and leave you be when you've scrolled up to read.
+function nearBottom() {
+  const el = document.scrollingElement;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+}
+function toBottom() {
+  const el = document.scrollingElement;
+  el.scrollTop = el.scrollHeight;
+}
+
+// statusLine is what the assistant is doing, with how long it's been at it once that's more than a few seconds
+// (a local model on a slow machine can read for minutes before it writes).
+function statusLine(conv) {
+  const s = conv.status || "Working…";
+  const t = conv.statusFor || 0;
+  if (t < 5) return s;
+  return s + " " + (t < 60 ? t + " s" : Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"));
+}

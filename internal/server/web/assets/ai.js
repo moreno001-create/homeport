@@ -53,8 +53,9 @@ function drawPicker(info, pick) {
   if (state.me.admin) opts.push(h("option", { value: "" }, "Automatic (as in Settings)"));
   for (const c of info.choices || []) opts.push(h("option", { value: c.id }, c.name));
   if (info.claude) opts.push(h("option", { value: "claude" }, "Claude (Anthropic's servers)"));
+  if (state.me.admin) opts.push(h("option", { value: "find" }, "Find more models…"));
   els.model.replaceChildren(...opts);
-  const values = opts.map(o => o.value);
+  const values = opts.map(o => o.value).filter(v => v !== "find");
   els.model.value = values.includes(pick) ? pick : (state.me.admin ? "" : info.default || values[0] || "");
   els.model.disabled = opts.length < 2;
 }
@@ -132,14 +133,14 @@ function draw() {
   const turns = conv ? conv.turns : [];
   document.body.classList.toggle("talking", turns.length > 0);
   els.chips.replaceChildren(...(turns.length ? [] : suggestions()));
+  const follow = nearBottom() || turns.length !== state.renderedTurns;
   if (turns.length !== state.renderedTurns) {
     els.thread.replaceChildren(...turns.map(turnView));
     state.renderedTurns = turns.length;
-    els.thread.lastElementChild?.scrollIntoView({ block: "end" });
   }
   const bits = [];
   if (conv && conv.partial) bits.push(h("div", { class: "msg bot" }, rich(conv.partial)));
-  if (conv && conv.busy) bits.push(h("p", { class: "muted small status" }, conv.status || "Working…"));
+  if (conv && conv.busy) bits.push(h("p", { class: "muted small status" }, statusLine(conv)));
   if (conv && conv.consent) bits.push(h("div", { class: "card stack consent" },
     h("p", {}, "This would go to Claude, on Anthropic's servers", conv.consentWhy ? " (" + conv.consentWhy + ")" : "", ". Send it?"),
     h("div", { class: "row" },
@@ -148,6 +149,7 @@ function draw() {
   els.live.replaceChildren(...bits);
   const busy = !!(conv && conv.busy);
   els.send.disabled = busy; els.stop.hidden = !busy;
+  if (follow && turns.length) toBottom();
 }
 
 async function cont(body) {
@@ -209,6 +211,11 @@ els.stop.addEventListener("click", async () => {
   try { await api("POST", "/chat/" + state.conv.id + "/stop"); } catch (err) { toast(err.message); }
 });
 els.model.addEventListener("change", () => {
+  if (els.model.value === "find") {
+    els.model.value = remembered();
+    window.open("https://" + state.me.mainDomain + "/admin#models", "_blank", "noopener");
+    return;
+  }
   remember(els.model.value);
   loadModel().catch(err => toast(err.message));
 });
@@ -217,7 +224,33 @@ els.menu.addEventListener("click", () => {
   els.menu.setAttribute("aria-expanded", String(openNow));
 });
 
+// MARK: The live meter: processor, graphics and memory, about once a second while the page is in view.
+
+function meter(label, pct, title) {
+  const p = Math.max(0, Math.min(100, pct | 0));
+  return h("span", { class: "meter", title },
+    h("span", { class: "meter-label" }, label),
+    h("span", { class: "meter-bar", "aria-hidden": "true" }, h("span", { class: "meter-fill" + (p > 85 ? " hot" : "") + " w" + Math.round(p / 5) * 5 })),
+    h("span", { class: "meter-num" }, p + "%"));
+}
+
+async function busy() {
+  if (document.visibilityState === "visible") {
+    try {
+      const l = await api("GET", "/busy");
+      const gb = n => (n / 1073741824).toFixed(1);
+      const bits = [meter("CPU", l.cpu, l.cores + " cores")];
+      if (l.gpu) bits.push(meter("GPU", l.gpu.percent, l.gpu.name + (l.gpu.memTotal ? ": " + gb(l.gpu.memUsed) + " of " + gb(l.gpu.memTotal) + " GB" : "")));
+      if (l.memTotal) bits.push(meter("RAM", l.memUsed * 100 / l.memTotal, gb(l.memUsed) + " of " + gb(l.memTotal) + " GB in use"));
+      $("busy").replaceChildren(...bits);
+      $("busy").hidden = false;
+    } catch { /* signed out, or the server's busy: try again next time */ }
+  }
+  setTimeout(busy, state.conv && state.conv.busy ? 1000 : 2000);
+}
+
 (async () => {
+  busy();
   try {
     state.me = await api("GET", "/me");
     $("domain").textContent = state.me.mainDomain;
