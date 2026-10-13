@@ -95,3 +95,30 @@ func TestPublishOnAMac(t *testing.T) {
 		t.Fatalf("the Mac announces its own name itself; the app's goes through dns-sd -P: %s", b)
 	}
 }
+
+func TestHostsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	orig := "127.0.0.1\tlocalhost\n127.0.1.1\tmemorydelta\n\n# The following lines are desirable for IPv6 capable hosts\n::1 ip6-localhost\n"
+	_ = os.WriteFile(path, []byte(orig), 0o644)
+	if err := writeHosts(path, []string{"ai.homeport.local", "homeport.local", "librespeed.homeport.local"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	want := orig + "\n" + hostsStart + "\n127.0.0.1\tai.homeport.local homeport.local librespeed.homeport.local\n" + hostsEnd + "\n"
+	if string(b) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", b, want)
+	}
+	// Names change: the block is replaced, the rest kept; no names: it's gone.
+	_ = writeHosts(path, []string{"homeport.local"})
+	b, _ = os.ReadFile(path)
+	if strings.Count(string(b), hostsStart) != 1 || strings.Contains(string(b), "librespeed") || !strings.HasPrefix(string(b), orig) {
+		t.Errorf("got:\n%s", b)
+	}
+	_ = writeHosts(path, nil)
+	if b, _ = os.ReadFile(path); string(b) != orig {
+		t.Errorf("got:\n%q\nwant:\n%q", b, orig)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v", fi.Mode().Perm())
+	}
+}

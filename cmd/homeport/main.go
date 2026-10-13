@@ -167,7 +167,7 @@ func serve() error {
 	switch plat.Name {
 	case "linux":
 		host, _ := os.Hostname()
-		announce = &mdns.Publisher{OS: "linux", Hostname: host}
+		announce = &mdns.Publisher{OS: "linux", Hostname: host, HostsFile: "/etc/hosts"}
 	case "macos":
 		// The Mac announces its own Local hostname (System Settings → General → Sharing) itself.
 		host, _ := exec.Command("scutil", "--get", "LocalHostName").Output()

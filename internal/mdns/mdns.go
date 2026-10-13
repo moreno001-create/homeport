@@ -12,7 +12,9 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"log"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -39,6 +41,9 @@ type Publisher struct {
 	Command  string        // default avahi-publish (Linux) or dns-sd (macOS)
 	Hostname string        // this machine's name; Avahi announces Hostname.local itself
 	Retry    time.Duration // wait before announcing a name again after its avahi-publish ended (default 10s)
+	// HostsFile gets this machine's own names too (Linux: /etc/hosts), so they open on the server itself: Ubuntu
+	// looks up .local names with mdns4_minimal, which ignores names with more than two parts (cloud.homeport.local).
+	HostsFile string
 
 	mu    sync.Mutex
 	names map[string]chan struct{} // "name address" → closed to stop announcing it
@@ -64,6 +69,11 @@ func (p *Publisher) Publish(_ context.Context, names, ips []string) error {
 			}
 		}
 	}
+	if p.HostsFile != "" {
+		if err := writeHosts(p.HostsFile, Local(names)); err != nil {
+			log.Printf("Couldn't add this server's names to %s: %v", p.HostsFile, err)
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.names == nil {
@@ -83,6 +93,58 @@ func (p *Publisher) Publish(_ context.Context, names, ips []string) error {
 		}
 	}
 	return nil
+}
+
+const (
+	hostsStart = "# Homeport: this server's own names (rewritten by Homeport)"
+	hostsEnd   = "# Homeport: end"
+)
+
+// writeHosts keeps Homeport's block in a hosts file: names at this machine (127.0.0.1). It's only rewritten when
+// the names change.
+func writeHosts(path string, names []string) error {
+	b, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var kept []string
+	in := false
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		switch {
+		case line == hostsStart:
+			in = true
+		case line == hostsEnd:
+			in = false
+		case !in && (line != "" || len(kept) > 0):
+			kept = append(kept, line)
+		}
+	}
+	for len(kept) > 0 && kept[len(kept)-1] == "" {
+		kept = kept[:len(kept)-1]
+	}
+	if len(names) > 0 {
+		kept = append(kept, "", hostsStart)
+		for i := 0; i < len(names); i += 4 { // a few names per line
+			kept = append(kept, "127.0.0.1\t"+strings.Join(names[i:min(i+4, len(names))], " "))
+		}
+		kept = append(kept, hostsEnd)
+	}
+	text := strings.Join(kept, "\n") + "\n"
+	if text == string(b) {
+		return nil
+	}
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	}
+	tmp := path + ".homeport-new"
+	if err := os.WriteFile(tmp, []byte(text), mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Announced is what's being announced now ("name address"), sorted.
