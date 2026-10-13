@@ -190,7 +190,28 @@ apt_update || die "apt-get update failed (see the lines above); check this serve
 # Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
 # lets this server find them too.
 # restic makes the backups (Backups page); zstd unpacks Ollama (the local AI); rsync moves things between drives (Storage page).
-run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic zstd rsync
+pkgs="ca-certificates curl gnupg avahi-daemon avahi-utils libnss-mdns restic zstd rsync"
+# Docker: Ubuntu's (docker.io), unless Docker's own (docker-ce, from download.docker.com) is installed; and Compose to
+# match, unless a Compose plugin is already installed (Docker's docker-compose-plugin and Ubuntu's docker-compose-v2
+# both install the same file, so apt refuses to have both).
+installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; }
+if installed docker-ce; then
+  note "Docker's own Docker (docker-ce) is installed: using it"
+else
+  pkgs="$pkgs docker.io"
+fi
+if installed docker-compose-plugin; then
+  note "Docker's Compose plugin is installed: using it"
+elif ! installed docker-compose-v2; then
+  pkgs="$pkgs docker-compose-v2"
+fi
+# Packages an earlier, interrupted install left half set up are finished first (apt refuses to go on otherwise).
+if dpkg --audit 2>/dev/null | grep -q .; then
+  note "Finishing packages an earlier install left half set up"
+  run dpkg --configure -a || true
+fi
+# shellcheck disable=SC2086
+run apt-get install -y -q $pkgs
 
 say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
