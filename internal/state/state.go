@@ -36,6 +36,8 @@ type Settings struct {
 	Terminal bool `json:"terminal,omitempty"`
 	// RouterPorts: Homeport keeps ports 80 and 443 forwarded to it on the home router (UPnP).
 	RouterPorts bool `json:"routerPorts,omitempty"`
+	// NoDailyCheck stops the daily check of the server (it runs unless this is set).
+	NoDailyCheck bool `json:"noDailyCheck,omitempty"`
 	// Chat is how the admin panel's assistant chat picks a model.
 	Chat ChatSettings `json:"chat"`
 }

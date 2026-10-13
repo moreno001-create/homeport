@@ -99,6 +99,9 @@ type Assistant struct {
 	Memory    *Memory
 	// ApplyProxy rewrites Caddy's configuration after changes outside the app manager (domains).
 	ApplyProxy func(ctx context.Context) error
+	// Extra adds tools that need more of Homeport than this package has (the server's pages: internet access,
+	// backups, the checks…).
+	Extra func() []Tool
 
 	tools []Tool
 }
@@ -112,7 +115,10 @@ const (
 
 func (a *Assistant) all() []Tool {
 	if a.tools == nil {
-		a.tools = a.define()
+		a.tools = append(a.define(), a.guideTool())
+		if a.Extra != nil {
+			a.tools = append(a.tools, a.Extra()...)
+		}
 	}
 	return a.tools
 }

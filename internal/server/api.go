@@ -101,6 +101,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("GET /api/memory", guard(s.memory))
 	s.chatRoutes(mux, guard)
 	s.modelRoutes(mux, guard)
+	s.selfCareRoutes(mux, guard)
 }
 
 // MARK: AI helpers
@@ -217,6 +218,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		AssistantShell  *bool          `json:"assistantShell"`
 		ApprovalMinutes *int           `json:"approvalMinutes"`
 		Terminal        *bool          `json:"terminal"`
+		DailyCheck      *bool          `json:"dailyCheck"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -251,6 +253,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		st := d.Settings()
 		if in.Terminal != nil {
 			st.Terminal = *in.Terminal
+		}
+		if in.DailyCheck != nil {
+			st.NoDailyCheck = !*in.DailyCheck
 		}
 		if in.MainDomain != nil && *in.MainDomain != st.MainDomain {
 			// Apps that sign in with Homeport were configured with the old address (their OIDC issuer).

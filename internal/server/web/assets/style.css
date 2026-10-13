@@ -315,3 +315,13 @@ table.specs td { overflow-wrap: anywhere; }
 .model-family .head .row { justify-content: flex-end; align-items: center; flex-wrap: wrap; }
 .model-family .head .row > *, .pull .row > button, .card.row > * { flex: 0 0 auto; }
 .pull .row > b { flex: 0 1 auto; }
+
+/* Check and fix */
+.checks-card .checks li .row { gap: 8px; }
+.checks-card .checks li .row > * { flex: 0 0 auto; }
+.checks-card details ul { margin-top: 10px; }
+dialog .guide { max-width: 720px; }
+dialog .guide p { margin: 0; }
+.doc-list { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.doc-list li.sub { margin-left: 18px; list-style: circle; }
+dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-size: 15px; }

@@ -342,7 +342,7 @@ func (c *Chat) commandNote() string {
 	t := "Nothing was run: that command is for you to type on the server (its console, SSH or the web terminal). " +
 		"When the assistant does something itself, an Approve button shows up here first."
 	if !c.A.shellOn() {
-		t += " It can't run commands like that itself: shell commands are off (Assistant → Approvals and activity)."
+		t += " It can't run commands like that itself: shell commands are off (Settings → AI helpers)."
 	}
 	return t
 }

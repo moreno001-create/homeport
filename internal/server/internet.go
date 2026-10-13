@@ -60,7 +60,12 @@ type appAddress struct {
 }
 
 func (s *Server) internetStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	writeJSON(w, http.StatusOK, s.readInternet(r.Context()))
+}
+
+// readInternet checks every link between the internet and this server.
+func (s *Server) readInternet(ctx context.Context) internetStatus {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	var st internetStatus
 	var list []state.App
@@ -121,7 +126,7 @@ func (s *Server) internetStatus(w http.ResponseWriter, r *http.Request) {
 	if st.Apps == nil {
 		st.Apps = []appAddress{}
 	}
-	writeJSON(w, http.StatusOK, st)
+	return st
 }
 
 // internetSteps says what's still missing between the internet and this server, first thing first.

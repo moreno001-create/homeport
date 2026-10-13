@@ -224,6 +224,7 @@ func serve() error {
 	srv.Firewall = &firewall.Manager{Runner: sys, OS: plat.Name}
 	srv.Backup = &backup.Manager{Store: store, Apps: manager, StateDir: stateDir, Dir: filepath.Join(stateDir, "backup"), Run: backup.RunRestic,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, SSHDir: backupSSHDir(stateDir)}
+	helper.Extra = srv.AssistantTools
 	if plat.Name == "linux" {
 		srv.SetTerminal = func(ctx context.Context, on bool) error { return terminal.Set(ctx, sys, on) }
 	}
@@ -236,6 +237,7 @@ func serve() error {
 	go srv.DynDNS.Run(ctx)
 	go followAddress(ctx, applyProxy)
 	go srv.Backup.Schedule(ctx)
+	go srv.DailyChecks(ctx)
 	go srv.KeepRouterPorts(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)

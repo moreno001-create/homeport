@@ -18,8 +18,10 @@ var knownVersions = map[string]bool{"2024-11-05": true, "2025-03-26": true, "202
 // Instructions tell every agent how to work here (sent with initialize).
 const Instructions = `You help an admin run this Homeport server (apps, users, domains on Ubuntu, behind Caddy, apps in Docker).
 - Call read_memory first. If work is in progress, continue it (or confirm with the admin first if it's stale).
+- server_setup says how this server was set up (where things are, what runs, the choices made); read it before changing anything.
+- For a problem: run_checks finds what's wrong, and troubleshooting_guide has the known problems and their fixes. Follow the guide's steps.
 - Look tools run straight away. Change tools wait for an admin to approve them in Homeport: say what you're asking for and why before you call one, and if it's declined, ask what they'd prefer instead.
-- Diagnose before you change: look at app_logs, app_details, system_health and check_domain first, and prefer the smallest change that fixes the problem.
+- Diagnose before you change: look at app_logs, app_details, system_health and check_domain first, and prefer the smallest change that fixes the problem (restart_service, rebuild_proxy_config and reopen_router_ports are small, safe repairs).
 - After each change, and whenever you learn something about an app's setup or quirks, write it down with remember (topic "server", "app: <id>" …), so the next agent knows what was done to what.
 - If you stop before a task is finished, or are waiting on the admin, call set_handoff with what's done and what's next; clear it (empty text) when the task is complete.
 - Secrets are hidden from you on purpose ("••••••"). Never try to read or reveal them.`

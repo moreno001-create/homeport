@@ -54,7 +54,9 @@ const views = {
         h("p", {}, "Portal and admin panel at ", h("b", {}, o.settings.mainDomain), "."),
         h("p", {}, "Certificates: ", o.settings.tls === "internal"
           ? "Caddy's own test certificates (browsers will warn; fine for a private network)."
-          : "Let's Encrypt" + (o.settings.acmeEmail ? ", notices to " + o.settings.acmeEmail : "") + ".")),
+          : "Let's Encrypt" + (o.settings.acmeEmail ? ", notices to " + o.settings.acmeEmail : "") + "."),
+        h("div", {}, h("button", { onclick: setupDialog }, "How this server is set up"))),
+      checksCard(),
       systemCard(),
     ];
     function stat(n, label, href) { return h("a", { class: "stat", href, style: null }, h("b", {}, n), h("span", { class: "muted" }, label)); }
@@ -420,6 +422,7 @@ const views = {
       h("option", { value: "internal", selected: o.settings.tls === "internal" }, "Caddy's own certificates (test or private network)"));
     const email = h("input", { name: "email", type: "email", value: o.settings.acmeEmail || "", placeholder: "you@example.com" });
     const shell = h("input", { type: "checkbox", checked: !!o.settings.assistantShell });
+    const daily = h("input", { type: "checkbox", checked: !o.settings.noDailyCheck });
     const minutes = h("input", { type: "number", min: "1", max: "240", value: o.settings.approvalMinutes || 10 });
     return [
       h("div", { class: "head" }, h("h1", {}, "Settings")),
@@ -433,11 +436,12 @@ const views = {
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
       h("form", { class: "card stack", onsubmit: async e => {
         e.preventDefault();
-        try { await api("PUT", "/settings", { assistantShell: shell.checked, approvalMinutes: +minutes.value }); toast("Saved"); } catch (err) { toast(err.message); }
+        try { await api("PUT", "/settings", { assistantShell: shell.checked, approvalMinutes: +minutes.value, dailyCheck: daily.checked }); toast("Saved"); } catch (err) { toast(err.message); }
       } },
         h("h2", {}, "AI helpers"),
         h("label", { class: "check" }, shell, "Let helpers ask to run shell commands as root (each one still needs your approval)"),
         h("label", {}, "Minutes a change waits for approval before it's dropped", minutes),
+        h("label", { class: "check" }, daily, "Check the server every day (results on the Overview page, and in the assistants' notebook)"),
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
       terminalForm(o.settings),
       chatSettingsForm(cfg),
@@ -703,6 +707,97 @@ function sizeText(n) {
   if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
   if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " kB";
   return n + " bytes";
+}
+
+// MARK: Check and fix
+
+const ASK = "homeport-ask"; // a question to put in the assistant's box (from "Ask the assistant")
+
+// checksCard shows the last round of checks, with a repair for what Homeport can fix and the guide for the rest.
+function checksCard() {
+  const body = h("div", { class: "stack" }, h("p", { class: "muted" }, "Loading…"));
+  const runBtn = h("button", { class: "primary", onclick: () => draw(api("POST", "/checks"), true) }, "Check now");
+  const card = h("div", { class: "card stack checks-card" }, h("div", { class: "head" }, h("h2", {}, "Check and fix"), runBtn), body);
+  function draw(p, running) {
+    if (running) { runBtn.disabled = true; body.replaceChildren(h("p", { class: "muted" }, "Checking services, the main address, disk, apps, internet access, the local AI and backups… (up to a minute)")); }
+    p.then(x => {
+      runBtn.disabled = false;
+      const run = x.run;
+      if (!run) { body.replaceChildren(h("p", { class: "muted" }, "Not checked yet" + (x.daily ? " (the daily check runs a few minutes after Homeport starts)" : "") + ".")); return; }
+      const bad = run.checks.filter(c => c.state !== "ok"), ok = run.checks.filter(c => c.state === "ok");
+      body.replaceChildren(
+        h("p", {}, h("span", { class: "pill " + (run.problems ? "failed" : run.warnings ? "partly" : "done") },
+          run.problems ? run.problems + " problem" + (run.problems > 1 ? "s" : "") : run.warnings ? run.warnings + " to look at" : "All fine"),
+          " ", h("span", { class: "muted small" }, "Checked " + new Date(run.at).toLocaleString() + (x.daily ? " · every day" : " · daily check off (Settings)"))),
+        bad.length ? h("ul", { class: "checks" }, bad.map(c => h("li", {},
+          h("span", { class: "tick " + (c.state === "bad" ? "bad" : "wait"), "aria-hidden": "true" }, c.state === "bad" ? "✗" : "!"),
+          h("div", { class: "stack" }, h("div", {}, h("b", {}, c.title), h("div", { class: "muted small" }, c.detail)),
+            h("div", { class: "row" },
+              c.fix ? h("button", { class: "primary", onclick: e => fix(c, e.target) }, c.fixLabel || "Fix it") : null,
+              c.guide ? h("button", { onclick: () => guideDialog(c.guide) }, "How to fix") : null,
+              h("button", { onclick: () => askAssistant("The server check found: " + c.title + ". " + c.detail + " Can you look into it and fix it?") }, "Ask the assistant")))))) : null,
+        ok.length ? h("details", {}, h("summary", { class: "muted small" }, ok.length + " fine"),
+          h("ul", { class: "checks" }, ok.map(c => h("li", {}, h("span", { class: "tick ok", "aria-hidden": "true" }, "✓"), h("div", {}, h("b", {}, c.title), h("div", { class: "muted small" }, c.detail)))))) : null);
+    }).catch(err => { runBtn.disabled = false; body.replaceChildren(h("p", { class: "error" }, err.message)); });
+  }
+  async function fix(c, btn) {
+    if (!confirm(c.fixLabel + "?")) return;
+    btn.disabled = true; btn.textContent = "Working…";
+    try { await api("POST", "/checks/fix", { fix: c.fix }); toast("Done. Checking again…"); draw(api("POST", "/checks"), true); }
+    catch (err) { toast(err.message); btn.disabled = false; btn.textContent = c.fixLabel; }
+  }
+  draw(api("GET", "/checks"));
+  return card;
+}
+
+async function guideDialog(id) {
+  try {
+    const [e] = await api("GET", "/guide?id=" + encodeURIComponent(id));
+    if (!e) return;
+    openDialog(h("form", { method: "dialog", class: "stack guide" }, ...doc(e.text.replace(/^Signs:.*$/m, "").replace(/^Applies:.*$/m, "")),
+      h("div", { class: "row" }, h("button", { class: "primary" }, "Close"))));
+  } catch (err) { toast(err.message); }
+}
+
+async function setupDialog() {
+  openDialog(h("div", { class: "stack" }, h("p", { class: "muted" }, "Reading this server…")));
+  try {
+    const { text } = await api("GET", "/setup");
+    openDialog(h("form", { method: "dialog", class: "stack guide" },
+      h("p", { class: "muted small" }, "Homeport writes this from the machine itself, so assistants (and anyone fixing this server later) know how it's set up. It's also saved as server-setup.md in Homeport's folder."),
+      ...doc(text),
+      h("div", { class: "row" }, h("button", { class: "primary" }, "Close"))));
+  } catch (err) { dialog.close(); toast(err.message); }
+}
+
+// doc shows a Markdown page with headings and lists (the guide, the setup page).
+function doc(text) {
+  const inline = t => t.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map(bit =>
+    bit.startsWith("`") && bit.endsWith("`") && bit.length > 2 ? h("code", {}, bit.slice(1, -1))
+    : bit.startsWith("**") && bit.endsWith("**") && bit.length > 4 ? h("b", {}, bit.slice(2, -2)) : bit);
+  const out = [];
+  let list = null, para = [];
+  const flush = () => { if (para.length) out.push(h("p", {}, inline(para.join(" ")))); para = []; };
+  for (const line of text.split("\n")) {
+    const head = /^(#{1,3})\s+(.*)$/.exec(line), item = /^(\s*)(?:-|\d+\.)\s+(.*)$/.exec(line);
+    if (head) { flush(); list = null; out.push(h(head[1].length === 1 ? "h2" : "h3", {}, head[2])); continue; }
+    if (item) {
+      flush();
+      if (!list) { list = h(/^\s*\d/.test(line) ? "ol" : "ul", { class: "doc-list" }); out.push(list); }
+      list.append(h("li", { class: item[1].length ? "sub" : null }, inline(item[2])));
+      continue;
+    }
+    if (!line.trim()) { flush(); list = null; continue; }
+    if (list && /^\s+\S/.test(line)) { list.lastChild.append(" ", ...inline(line.trim())); continue; }
+    list = null; para.push(line.trim());
+  }
+  flush();
+  return out;
+}
+
+function askAssistant(text) {
+  try { sessionStorage.setItem(ASK, text); } catch { /* private window */ }
+  location.hash = "#assistant";
 }
 
 // MARK: AI models
@@ -1158,6 +1253,7 @@ function chatView(list, cfg) {
   const live = h("div", { class: "live", "aria-live": "polite" });
   const approvals = h("div", { class: "stack" });
   const input = h("textarea", { rows: "3", placeholder: "Ask about this server, or ask for a change…", "aria-label": "Message" });
+  try { const ask = sessionStorage.getItem(ASK); if (ask) { input.value = ask; sessionStorage.removeItem(ASK); setTimeout(() => input.focus(), 0); } } catch { /* private window */ }
   const use = h("select", { "aria-label": "Which model answers" },
     h("option", { value: "" }, "Model: as in settings"),
     cfg.settings.localURL ? h("option", { value: "local" }, "Local model") : null,
