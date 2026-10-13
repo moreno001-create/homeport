@@ -36,6 +36,8 @@ type Settings struct {
 	Terminal bool `json:"terminal,omitempty"`
 	// RouterPorts: Homeport keeps ports 80 and 443 forwarded to it on the home router (UPnP).
 	RouterPorts bool `json:"routerPorts,omitempty"`
+	// NewAppsDrive is where new apps' folders go: a folder on another drive ("" for Homeport's own folder).
+	NewAppsDrive string `json:"newAppsDrive,omitempty"`
 	// NoDailyCheck stops the daily check of the server (it runs unless this is set).
 	NoDailyCheck bool `json:"noDailyCheck,omitempty"`
 	// Chat is how the admin panel's assistant chat picks a model.
@@ -135,6 +137,9 @@ type App struct {
 	// OIDC is set for apps that sign people in with Homeport over OpenID Connect (client id = app id; the client
 	// secret is Secrets["oidc_client_secret"]).
 	OIDC *OIDCClient `json:"oidc,omitempty"`
+	// Unfinished is a job on the app that was cut off (Homeport stopped during it): "install", "update", "address",
+	// "move" (to another drive), "remove" or "remove-purge". Homeport finishes it when it starts again.
+	Unfinished string `json:"unfinished,omitempty"`
 }
 
 // Source is where an app from outside the catalog came from.

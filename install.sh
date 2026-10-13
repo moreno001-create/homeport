@@ -189,8 +189,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt_update || die "apt-get update failed (see the lines above); check this server's internet connection and apt sources"
 # Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
 # lets this server find them too.
-# restic makes the backups (Backups page); zstd unpacks Ollama (the local AI).
-run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic zstd
+# restic makes the backups (Backups page); zstd unpacks Ollama (the local AI); rsync moves things between drives (Storage page).
+run apt-get install -y -q ca-certificates curl gnupg docker.io docker-compose-v2 avahi-daemon avahi-utils libnss-mdns restic zstd rsync
 
 say 30 38 "Installing Caddy"
 # Caddy's own repository has current versions (Ubuntu's is older); if it can't be used, Ubuntu's Caddy works too.
@@ -251,6 +251,10 @@ Type=simple
 ExecStart=/usr/local/bin/homeport serve
 Restart=on-failure
 RestartSec=3
+# Stopping (an update, say) lets an app install or update under way finish first: Homeport waits for it, and its
+# docker compose keeps running until then.
+KillMode=mixed
+TimeoutStopSec=35min
 RuntimeDirectory=homeport
 RuntimeDirectoryMode=0700
 StateDirectory=homeport
@@ -271,6 +275,9 @@ UNIT
 run systemctl daemon-reload
 run systemctl enable --now docker caddy
 run systemctl enable homeport
+if busy="$(homeport status 2>/dev/null | sed -n 's/^Working on: //p')" && [ -n "$busy" ]; then
+  note "Homeport is busy ($busy): it restarts as soon as that's finished"
+fi
 run systemctl restart homeport
 
 if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then

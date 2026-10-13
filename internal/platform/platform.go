@@ -19,6 +19,8 @@ type Platform struct {
 	SystemCA, CaddyRoot string
 	// ReloadCaddy is the command that makes Caddy load the new configuration.
 	ReloadCaddy []string
+	// ReloadCaddyFallback is tried when ReloadCaddy fails (Caddy's admin address turned off, say).
+	ReloadCaddyFallback []string
 	// Health lists the commands whose output describes the machine's health.
 	Health [][]string
 	// LogsCommand returns the command that prints a service's recent log lines (homeport, caddy or docker).

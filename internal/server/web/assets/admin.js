@@ -331,6 +331,101 @@ const views = {
     return [head, h("div", { class: "stack", id: "models-top" }, ...modelsTop(st)), findModels(st)];
   },
 
+  // Storage: a switchboard of what lives on which drive. Flip switches, then move them all in one go.
+  async storage() {
+    const st = await api("GET", "/storage");
+    const drives = st.drives;
+    const targets = drives.filter(d => d.mounted && d.usable);
+    const chosen = {}; // item id → drive mount
+    const head = h("div", { class: "head" }, h("h1", {}, "Storage"), h("button", { onclick: () => { route(); } }, "Check again"));
+    const driveCard = d => {
+      const used = d.size ? Math.round((d.size - d.free) * 100 / d.size) : 0;
+      const actions = [];
+      if (d.why && !d.mounted && d.uuid && ["ext4", "ext3", "xfs", "btrfs", "f2fs"].includes(d.fs)) actions.push(h("button", { class: "primary", onclick: () => mountDrive(d) }, "Mount it"));
+      else if (d.mounted && !d.lasting) actions.push(h("button", { class: "primary", onclick: () => mountDrive(d) }, "Keep it mounted"));
+      return h("div", { class: "card stack drive" + (d.usable && d.mounted ? "" : " off") },
+        h("div", { class: "row" }, h("b", {}, driveName(d)), d.system ? h("span", { class: "pill" }, "system") : null, h("span", { class: "muted small" }, d.fs)),
+        d.mounted ? [h("span", { class: "meter-bar long" }, h("span", { class: "meter-fill w" + Math.min(100, Math.round(used / 5) * 5) + (used > 90 ? " hot" : "") })),
+          h("div", { class: "muted small" }, gbText(d.free) + " free of " + gbText(d.size))] : h("div", { class: "muted small" }, gbText(d.size) + " · not mounted"),
+        d.why ? h("p", { class: "small " + (d.usable ? "muted" : "warn-text") }, d.why) : null,
+        actions.length ? h("div", { class: "row" }, actions) : null);
+    };
+    const summary = h("div", { class: "card stack move-summary", hidden: true });
+    const rows = st.items.map(it => {
+      const cells = targets.map(d => {
+        const here = it.drive === d.mount;
+        const input = h("input", { type: "radio", name: "to-" + it.id, value: d.mount, checked: here, disabled: !!it.fixed || !it.drive,
+          onchange: () => { if (here) delete chosen[it.id]; else chosen[it.id] = d.mount; tr.classList.toggle("moving", !!chosen[it.id]); drawSummary(); } });
+        return h("td", { class: "switch-cell" }, h("label", { class: "switch-opt", title: here ? "It's here now" : "Move it here" }, input, h("span", {}, here ? "here" : "move here")));
+      });
+      const tr = h("tr", {},
+        h("td", {}, h("b", {}, it.name), h("div", { class: "muted small" }, it.about),
+          it.fixed ? h("div", { class: "muted small" }, it.fixed) : !it.drive ? h("div", { class: "error small" }, "Its drive isn't there") : null),
+        h("td", { class: "small" }, gbText(it.size)),
+        ...cells);
+      return tr;
+    });
+    function drawSummary() {
+      const ids = Object.keys(chosen);
+      summary.hidden = !ids.length;
+      if (!ids.length) return;
+      const byDrive = {};
+      for (const id of ids) {
+        const it = st.items.find(x => x.id === id);
+        (byDrive[chosen[id]] ||= []).push(it);
+      }
+      summary.replaceChildren(
+        h("h2", {}, "Ready to move"),
+        ...Object.entries(byDrive).map(([mount, its]) => {
+          const d = drives.find(x => x.mount === mount);
+          const total = its.reduce((n, it) => n + it.size, 0);
+          return h("p", {}, its.map(it => it.name).join(", "), " → ", h("b", {}, driveName(d)), ": " + gbText(total) + " (" + gbText(d.free) + " free there)",
+            total * 1.05 > d.free ? h("span", { class: "error" }, " Not enough room.") : null);
+        }),
+        h("ul", { class: "small muted" }, ids.map(id => h("li", {}, st.items.find(x => x.id === id).down))),
+        h("p", { class: "muted small" }, "Each one is copied while it keeps running, stopped only for a last copy of what changed, then started from its new place and checked. The old copy is deleted only once it works; if anything goes wrong it goes back where it was. Big things take a while (about an hour per 500 GB on a typical hard drive)."),
+        h("div", { class: "row" }, h("button", { class: "primary", onclick: () => startMove(ids.map(id => ({ item: id, drive: chosen[id] }))) }, "Move " + ids.length + (ids.length > 1 ? " things" : " thing")),
+          h("button", { onclick: () => route() }, "Start over")));
+    }
+    const newApps = h("select", { onchange: async () => {
+      try { await api("PUT", "/storage/new-apps", { drive: newApps.value }); toast("New apps go to " + newApps.selectedOptions[0].textContent); } catch (err) { toast(err.message); route(); }
+    } }, targets.map(d => h("option", { value: d.mount, selected: st.newApps ? d.mount === st.newApps : d.system }, driveName(d))));
+    const progress = h("div", { class: "stack" });
+    const running = (st.busy || []).find(b => b.startsWith("move "));
+    let saved = null;
+    try { saved = sessionStorage.getItem("homeport-move-job"); } catch { /* private window */ }
+    if (saved) followMove(saved, progress);
+    return [
+      head,
+      st.missing && st.missing.length ? h("p", { class: "error" }, "These apps' drive isn't there (unplugged, or not mounted): " + st.missing.join(", ") + ". Plug it back in, or mount it, and start them again.") : null,
+      running && !saved ? h("p", { class: "warn-text" }, "A move is under way (" + running.slice(5) + ").") : null,
+      progress,
+      h("div", { class: "drives" }, drives.map(driveCard)),
+      targets.length < 2
+        ? h("div", { class: "card stack" }, h("p", {}, "There's only one drive to put things on. Plug in or mount another drive (formatted as ext4 on Linux), then check again."))
+        : [h("div", { class: "list switchboard" }, h("table", {},
+            h("thead", {}, h("tr", {}, h("th", {}, "What"), h("th", {}, "Size"), ...targets.map(d => h("th", {}, driveName(d))))),
+            h("tbody", {}, rows))),
+          summary,
+          h("div", { class: "card stack" }, h("label", {}, "Where new apps go (the install window asks too)", newApps))],
+    ];
+
+    async function mountDrive(d) {
+      if (!confirm((d.mounted ? "Keep " : "Mount ") + driveName(d) + " mounted, also after restarts? Homeport adds it to /etc/fstab (with nofail, so the server still starts if the drive is missing).")) return;
+      try { const r = await api("POST", "/storage/mount", { device: d.device }); toast("Mounted at " + r.mount); } catch (err) { toast(err.message); }
+      route();
+    }
+    async function startMove(moves) {
+      if (!confirm("Move " + moves.length + (moves.length > 1 ? " things" : " thing") + " now? Each stops briefly near the end of its copy.")) return;
+      try {
+        const j = await api("POST", "/storage/move", { moves });
+        try { sessionStorage.setItem("homeport-move-job", j.id); } catch { /* private window */ }
+        summary.hidden = true;
+        followMove(j.id, progress);
+      } catch (err) { toast(err.message); }
+    }
+  },
+
   async users() {
     const users = await api("GET", "/users");
     return [
@@ -457,8 +552,29 @@ function signInText(s) {
 
 // MARK: Dialogs
 
+// driveField: where a new app's files go, when there's more than one drive to choose from (filled in when the drives
+// are known; hidden otherwise).
+function driveField() {
+  const select = h("select", { name: "drive" });
+  const label = h("label", { hidden: true }, "Where its files go", select,
+    h("span", { class: "muted small" }, "Its settings, database and files (for Jellyfin, all the media) live on this drive. It can move later on the Storage page."));
+  api("GET", "/storage/drives").then(x => {
+    if (x.drives.length < 2) return;
+    select.replaceChildren(...x.drives.map(d => h("option", { value: d.mount, selected: d.mount === (x.newApps || "") || (!x.newApps && d.system) },
+      driveName(d) + " · " + gbText(d.free) + " free")));
+    label.hidden = false;
+  }).catch(() => {});
+  return { el: label, value: () => label.hidden ? "" : select.value };
+}
+
+function driveName(d) {
+  if (d.system) return "System drive" + (d.model ? " (" + d.model + ")" : "");
+  return (d.label || d.model || d.device) + " (" + (d.mount || d.device) + ")";
+}
+
 function installDialog(c) {
   const main = me.settings.mainDomain;
+  const drive = driveField();
   const domain = h("input", { name: "domain", value: c.id + "." + main, required: true, autocapitalize: "none", spellcheck: "false" });
   const pub = h("input", { type: "checkbox", name: "public", checked: c.signIn === "own" });
   const groups = h("input", { name: "groups", value: "all", placeholder: "all" });
@@ -466,12 +582,13 @@ function installDialog(c) {
     e.preventDefault();
     const access = pub.checked ? { public: true } : { groups: splitGroups(groups.value) };
     dialog.close();
-    runJob("Installing " + c.name, () => api("POST", "/apps", { catalog: c.id, domain: domain.value.trim(), access }));
+    runJob("Installing " + c.name, () => api("POST", "/apps", { catalog: c.id, domain: domain.value.trim(), access, drive: drive.value() }));
   } },
     h("h2", {}, "Install " + c.name),
     h("label", {}, "Address", domain),
     h("label", { class: "check" }, pub, "Anyone can open it (no Homeport sign-in in front)"),
     h("label", {}, "Or only these groups (comma-separated; \"all\" is every user)", groups),
+    drive.el,
     h("p", { class: "muted small" }, signInText(c.signIn), " Its DNS must point at this server."),
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Install"))));
 }
@@ -635,6 +752,7 @@ async function notesDialog(a) {
 function appRunButtons(a) {
   const status = a.status || "";
   const btns = [];
+  if (["installing", "updating", "moving", "removing"].includes(status)) return btns; // a job is on it
   if (!status.startsWith("running")) btns.push(h("button", { class: "primary", onclick: () => appAction(a, "start") }, "Start"));
   if (status.startsWith("running")) btns.push(h("button", { onclick: () => appAction(a, "restart") }, "Restart"));
   if (status.startsWith("running") || status.startsWith("partly")) btns.push(h("button", { class: "danger", onclick: () => appAction(a, "stop") }, "Stop"));
@@ -707,6 +825,29 @@ function sizeText(n) {
   if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
   if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " kB";
   return n + " bytes";
+}
+
+// MARK: Storage
+
+// followMove shows a move's progress until it ends, then shows the switchboard again.
+async function followMove(id, box) {
+  let j;
+  try { j = await api("GET", "/jobs/" + id); } catch {
+    try { sessionStorage.removeItem("homeport-move-job"); } catch { /* private window */ }
+    box.replaceChildren(); return;
+  }
+  const p = j.result || {};
+  const pct = p.total ? Math.min(100, Math.floor(p.done * 100 / p.total)) : 0;
+  const lastLine = (j.log.trim().split("\n").pop() || "");
+  box.replaceChildren(h("div", { class: "card stack" },
+    h("div", { class: "head" }, h("h2", {}, j.status === "running" ? "Moving" : j.status === "done" ? "Moved" : "Some things weren't moved"),
+      j.status !== "running" ? h("button", { onclick: () => { try { sessionStorage.removeItem("homeport-move-job"); } catch { /* */ } route(); } }, "Done") : null),
+    j.status === "running" && p.name ? [h("p", {}, h("b", {}, p.name), " (" + p.step + " of " + p.of + ")" + (p.total ? ": " + gbText(p.done) + " of " + gbText(p.total) + " copied" : "")),
+      h("span", { class: "meter-bar long" }, h("span", { class: "meter-fill w" + Math.floor(pct / 5) * 5 })),
+      h("p", { class: "muted small" }, lastLine)] : null,
+    j.error ? h("p", { class: "error" }, j.error) : null,
+    h("details", {}, h("summary", { class: "muted small" }, "Details"), h("pre", { class: "log" }, j.log))));
+  if (j.status === "running" && location.hash === "#storage") setTimeout(() => followMove(id, box), 1500);
 }
 
 // MARK: Check and fix
@@ -1139,12 +1280,13 @@ function reviewDialog(res) {
   show(res.review);
   manifest.addEventListener("input", () => { edited = true; install.disabled = true; });
   const recheck = h("button", { type: "button", onclick: async () => { try { show(await api("POST", "/apps/check", { manifest: manifest.value })); } catch (err) { toast(err.message); } } }, "Check again");
+  const drive = driveField();
   const by = res.source.by === "repository" ? "the repository's own homeport.yaml" : "written by " + res.source.by + " from " + (res.compose || "the repository");
   openDialog(h("form", { method: "dialog", class: "wide", onsubmit: async e => {
     e.preventDefault();
     const access = pub.checked ? { public: true } : { groups: splitGroups(groups.value) };
     const src = { ...res.source, by: edited ? "admin" : res.source.by };
-    const j = await runJob("Installing from " + res.source.url, () => api("POST", "/apps", { manifest: manifest.value, source: src, domain: domain.value.trim(), access }));
+    const j = await runJob("Installing from " + res.source.url, () => api("POST", "/apps", { manifest: manifest.value, source: src, domain: domain.value.trim(), access, drive: drive.value() }));
     if (j && j.status === "done") toast("Installed");
   } },
     h("h2", {}, "Review before installing"),
@@ -1156,6 +1298,7 @@ function reviewDialog(res) {
     h("label", {}, "Address", domain),
     h("label", { class: "check" }, pub, "Anyone can open it (no Homeport sign-in in front)"),
     h("label", {}, "Or only these groups (comma-separated; \"all\" is every user)", groups),
+    drive.el,
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), install)));
 }
 
@@ -1362,7 +1505,7 @@ async function route() {
   const fn = views[name] || views.overview;
   for (const a of document.querySelectorAll(".side nav a")) a.toggleAttribute("aria-current", a.getAttribute("href") === "#" + name);
   document.querySelector('.side nav a[href="#' + name + '"]')?.setAttribute("aria-current", "page");
-  try { view.replaceChildren(...(await fn())); }
+  try { view.replaceChildren(...(await fn()).flat(2).filter(x => x != null && x !== false)); }
   catch (err) { view.replaceChildren(h("p", { class: "error" }, err.message)); }
 }
 

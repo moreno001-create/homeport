@@ -347,6 +347,11 @@ func (s *Server) RunChecks(ctx context.Context) CheckRun {
 	// Apps.
 	for _, a := range apps {
 		do(func() {
+			if doing := unfinishedStatus[a.Unfinished]; doing != "" {
+				add(Check{Title: a.Name + " is " + doing, State: "warn",
+					Detail: "Under way now, or cut off when Homeport stopped: Homeport finishes it when it starts again (or press Update on the Apps page)."})
+				return
+			}
 			switch status := s.Apps.Status(ctx, a.ID); status {
 			case "running":
 				add(Check{Title: a.Name, State: "ok", Detail: "Running."})
@@ -367,6 +372,19 @@ func (s *Server) RunChecks(ctx context.Context) CheckRun {
 	if public != "" || internetApps || !state.PrivateName(st.MainDomain) {
 		do(func() { add(s.internetChecks(ctx, st, public)...) })
 	}
+
+	// Drives things were moved to.
+	do(func() {
+		missing := s.Apps.Missing()
+		if s.platformName() != "macos" {
+			missing = append(missing, dockerPlace.Missing(ctx)...)
+		}
+		if len(missing) > 0 {
+			add(Check{Title: "A drive is missing", State: "bad",
+				Detail: "These are on a drive that isn't there (unplugged, or not mounted): " + strings.Join(missing, ", ") + ". Plug it back in (or mount it on the Storage page), then restart what depends on it.",
+				Guide:  "drive-missing"})
+		}
+	})
 
 	// The local AI.
 	if st.Chat.LocalURL != "" {

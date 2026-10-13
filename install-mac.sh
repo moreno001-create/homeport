@@ -141,6 +141,7 @@ agent() { # agent NAME PROGRAM ARGS...
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
+  <key>ExitTimeOut</key><integer>2100</integer>
   <key>StandardOutPath</key><string>$STATE/logs/$name.log</string>
   <key>StandardErrorPath</key><string>$STATE/logs/$name.log</string>
 </dict></plist>
@@ -148,7 +149,8 @@ PLIST
   launchctl bootout "gui/$UID_NUM/$LABEL.$name" 2>/dev/null || true
   # bootout returns before the old one is fully gone, and starting it again too soon fails ("Bootstrap failed: 5"):
   # wait until it's gone, and try a few times.
-  for _ in $(seq 1 50); do launchctl print "gui/$UID_NUM/$LABEL.$name" >/dev/null 2>&1 || break; sleep 0.2; done
+  # Homeport finishes an app install or update under way before it stops (up to 30 minutes).
+  for _ in $(seq 1 "${AGENT_WAIT:-50}"); do launchctl print "gui/$UID_NUM/$LABEL.$name" >/dev/null 2>&1 || break; sleep 0.2; done
   for _ in 1 2 3 4 5; do
     launchctl bootstrap "gui/$UID_NUM" "$plist" 2>/dev/null && return 0
     sleep 1
@@ -156,7 +158,10 @@ PLIST
   launchctl bootstrap "gui/$UID_NUM" "$plist" || die "couldn't start $name in the background (launchctl bootstrap)"
 }
 agent caddy "$(command -v caddy)" run --config "$STATE/Caddyfile" --adapter caddyfile
-agent homeport "$BREW_PREFIX/bin/homeport" serve
+if busy="$(homeport status 2>/dev/null | sed -n 's/^Working on: //p')" && [ -n "$busy" ]; then
+  echo "Homeport is busy ($busy): it restarts as soon as that's finished"
+fi
+AGENT_WAIT=10500 agent homeport "$BREW_PREFIX/bin/homeport" serve
 
 # Started when it answers (its socket file can be left from before, so that alone doesn't say).
 for _ in $(seq 1 60); do homeport status >/dev/null 2>&1 && break; sleep 0.5; done

@@ -325,3 +325,20 @@ dialog .guide p { margin: 0; }
 .doc-list { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
 .doc-list li.sub { margin-left: 18px; list-style: circle; }
 dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-size: 15px; }
+.pill.installing, .pill.updating, .pill.moving, .pill.removing { color: var(--link); background: color-mix(in srgb, var(--link) 13%, transparent); }
+
+/* Storage */
+.drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.drive.off { opacity: .75; }
+.drive .row { align-items: center; gap: 8px; }
+.drive .row > * { flex: 0 0 auto; }
+.warn-text { color: var(--warn); }
+.switchboard td.switch-cell { text-align: center; }
+.switch-opt { display: inline-flex; cursor: pointer; }
+.switch-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-opt span { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); white-space: nowrap; }
+.switch-opt input:checked + span { background: var(--link); border-color: var(--link); color: var(--bg); font-weight: 600; }
+.switch-opt input:focus-visible + span { outline: 2px solid var(--link); outline-offset: 2px; }
+.switch-opt input:disabled + span { opacity: .45; cursor: default; }
+.switchboard tr.moving td { background: color-mix(in srgb, var(--link) 8%, transparent); }
+.move-summary .row > * { flex: 0 0 auto; }

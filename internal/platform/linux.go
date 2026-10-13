@@ -6,14 +6,17 @@ import "fmt"
 
 func current() Platform {
 	return Platform{
-		Name:        "linux",
-		StateDir:    "/var/lib/homeport",
-		Socket:      "/run/homeport/homeport.sock",
-		Caddyfile:   "/etc/caddy/Caddyfile",
-		CertDir:     "/etc/caddy/homeport-certs",
-		SystemCA:    "/etc/ssl/certs/ca-certificates.crt",
-		CaddyRoot:   "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt",
-		ReloadCaddy: []string{"systemctl", "reload", "caddy"},
+		Name:      "linux",
+		StateDir:  "/var/lib/homeport",
+		Socket:    "/run/homeport/homeport.sock",
+		Caddyfile: "/etc/caddy/Caddyfile",
+		CertDir:   "/etc/caddy/homeport-certs",
+		SystemCA:  "/etc/ssl/certs/ca-certificates.crt",
+		CaddyRoot: "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt",
+		// Straight to Caddy (what its service's own reload runs): `systemctl reload caddy` would wait behind Homeport's
+		// own stop (Homeport starts after Caddy), so an install finishing while Homeport stops would never end.
+		ReloadCaddy:         []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile", "--force"},
+		ReloadCaddyFallback: []string{"systemctl", "reload", "--no-block", "caddy"},
 		Health: [][]string{{"uptime"}, {"free", "-h"}, {"df", "-h", "-x", "tmpfs", "-x", "overlay"},
 			{"docker", "system", "df"}, {"systemctl", "--failed", "--no-legend", "--no-pager"}},
 		LogsCommand: func(svc string, n int) []string {

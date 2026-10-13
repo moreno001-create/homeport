@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"homeport/internal/sysload"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -25,6 +25,7 @@ import (
 	"homeport/internal/dyndns"
 	"homeport/internal/source"
 	"homeport/internal/state"
+	"homeport/internal/sysload"
 )
 
 type actorKey struct{}
@@ -102,6 +103,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	s.chatRoutes(mux, guard)
 	s.modelRoutes(mux, guard)
 	s.selfCareRoutes(mux, guard)
+	s.storageRoutes(mux, guard)
 }
 
 // MARK: AI helpers
@@ -186,12 +188,13 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		Domains  int            `json:"domains"`
 		Apps     int            `json:"apps"`
 		Me       string         `json:"me"`
+		Working  []string       `json:"working"` // jobs running now
 	}
 	s.Store.Read(func(d *state.Data) {
 		out.Settings = *d.Settings()
 		out.Users, out.Domains, out.Apps = len(d.Users()), len(d.Domains()), len(d.Apps())
 	})
-	out.Version, out.Me = s.Version, actor(r).Name
+	out.Version, out.Me, out.Working = s.Version, actor(r).Name, s.jobs.busy()
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -813,6 +816,10 @@ func (s *Server) listCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// unfinishedStatus is what the Apps page says about an app with a job under way.
+var unfinishedStatus = map[string]string{"install": "installing", "update": "updating", "address": "moving",
+	"move": "moving", "remove": "removing", "remove-purge": "removing"}
+
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		ID        string        `json:"id"`
@@ -838,6 +845,10 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 			t := a.Updated
 			out[i].Updated = &t
 		}
+		if doing := unfinishedStatus[a.Unfinished]; doing != "" {
+			out[i].Status = doing // in progress, or cut off and about to be finished
+			continue
+		}
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
@@ -855,6 +866,14 @@ func (s *Server) installApp(w http.ResponseWriter, r *http.Request) {
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if in.Drive != "" {
+		place, err := s.appsPlace(r.Context(), in.Drive)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		in.Place = place
 	}
 	who := actor(r)
 	installer := who
@@ -1199,14 +1218,22 @@ func (j *job) view() jobView {
 }
 
 type jobs struct {
-	mu   sync.Mutex
-	all  map[string]*job
-	keep []string
+	mu      sync.Mutex
+	all     map[string]*job
+	keep    []string
+	running sync.WaitGroup
+	closing bool // Homeport is stopping: no new jobs
 }
 
 func (js *jobs) start(what string, run func(ctx context.Context, j *job) error) *job {
 	j := &job{id: auth.NewToken()[:12], what: what, started: time.Now()}
 	js.mu.Lock()
+	if js.closing {
+		js.mu.Unlock()
+		j.done, j.err = true, errors.New("Homeport is restarting (an update, say): try again in a minute")
+		return j
+	}
+	js.running.Add(1)
 	if js.all == nil {
 		js.all = map[string]*job{}
 	}
@@ -1218,6 +1245,7 @@ func (js *jobs) start(what string, run func(ctx context.Context, j *job) error) 
 	}
 	js.mu.Unlock()
 	go func() {
+		defer js.running.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		err := run(ctx, j)
@@ -1226,6 +1254,65 @@ func (js *jobs) start(what string, run func(ctx context.Context, j *job) error) 
 		j.mu.Unlock()
 	}()
 	return j
+}
+
+// busy lists what the running jobs are doing ("install mattermost").
+func (js *jobs) busy() []string {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	out := []string{}
+	for _, id := range js.keep {
+		j := js.all[id]
+		j.mu.Lock()
+		if !j.done {
+			out = append(out, j.what)
+		}
+		j.mu.Unlock()
+	}
+	return out
+}
+
+// StopJobs is for when Homeport is asked to stop: no new jobs start, and it waits (up to limit) for the running ones,
+// so an install or update isn't cut off half way. It says whether they all finished.
+func (s *Server) StopJobs(limit time.Duration) bool {
+	s.jobs.mu.Lock()
+	s.jobs.closing = true
+	s.jobs.mu.Unlock()
+	if busy := s.jobs.busy(); len(busy) > 0 {
+		log.Printf("Stopping: waiting for %s to finish first", strings.Join(busy, ", "))
+	}
+	done := make(chan struct{})
+	go func() { s.jobs.running.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(limit):
+		log.Printf("Stopping: %s still running after %s; it's finished when Homeport starts again", strings.Join(s.jobs.busy(), ", "), limit)
+		return false
+	}
+}
+
+// FinishInterrupted finishes the apps' jobs that were cut off when Homeport last stopped (a power cut, say), one at a
+// time, as ordinary jobs.
+func (s *Server) FinishInterrupted() {
+	for _, a := range s.Apps.Unfinished() {
+		id, what := a.ID, a.Unfinished
+		log.Printf("Finishing the %s of %s, cut off when Homeport last stopped", what, a.Name)
+		done := make(chan struct{})
+		j := s.jobs.start("finish "+what+" "+id, func(ctx context.Context, j *job) error {
+			defer close(done)
+			return s.Apps.Finish(ctx, id, j)
+		})
+		if j.done { // Homeport is stopping again
+			return
+		}
+		<-done
+		if v := j.view(); v.Error != "" {
+			log.Printf("Finishing the %s of %s failed: %s", what, a.Name, v.Error)
+		} else {
+			log.Printf("Finished the %s of %s", what, a.Name)
+		}
+	}
 }
 
 func (js *jobs) get(id string) (*job, bool) {

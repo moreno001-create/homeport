@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"homeport/internal/state"
 )
 
 func TestChecksAndRepairs(t *testing.T) {
@@ -113,5 +116,50 @@ func TestAssistantTools(t *testing.T) {
 				t.Error("restart_service restarted something it doesn't look after")
 			}
 		}
+	}
+}
+
+// Stopping waits for the job under way (an install, say), refuses new ones meanwhile, and says what it's waiting for.
+func TestStopWaitsForJobs(t *testing.T) {
+	r := newRig(t)
+	release := make(chan struct{})
+	r.srv.jobs.start("install mattermost", func(context.Context, *job) error { <-release; return nil })
+	if w := r.local(t, "GET", "/api/overview", ""); !strings.Contains(w.Body.String(), `"working":["install mattermost"]`) {
+		t.Errorf("overview: %s", w.Body.String())
+	}
+	stopped := make(chan bool)
+	go func() { stopped <- r.srv.StopJobs(5 * time.Second) }()
+	time.Sleep(50 * time.Millisecond)
+	if j := r.srv.jobs.start("update jellyfin", func(context.Context, *job) error { return nil }); !strings.Contains(j.view().Error, "restarting") {
+		t.Errorf("a new job started while stopping: %+v", j.view())
+	}
+	select {
+	case <-stopped:
+		t.Fatal("stopped before the install finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if !<-stopped {
+		t.Error("StopJobs says the job didn't finish")
+	}
+	// Past the limit, it gives up waiting (the job is finished when Homeport starts again).
+	r2 := newRig(t)
+	r2.srv.jobs.start("install slow", func(context.Context, *job) error { select {} })
+	if r2.srv.StopJobs(50 * time.Millisecond) {
+		t.Error("a job that never ends counted as finished")
+	}
+}
+
+// Cut-off jobs are finished when Homeport starts.
+func TestFinishInterruptedOnStart(t *testing.T) {
+	r := newRig(t)
+	app := r.install("mealie", "mealie.home.test", nil)
+	_ = r.srv.Store.Update(func(d *state.Data) error { a, _ := d.App(app.ID); a.Unfinished = "install"; return nil })
+	if w := r.local(t, "GET", "/api/apps", ""); !strings.Contains(w.Body.String(), `"status":"installing"`) {
+		t.Errorf("apps: %s", w.Body.String())
+	}
+	r.srv.FinishInterrupted()
+	if left := r.srv.Apps.Unfinished(); len(left) != 0 {
+		t.Errorf("still unfinished: %+v", left)
 	}
 }

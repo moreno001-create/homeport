@@ -53,6 +53,11 @@ type InstallRequest struct {
 	ID       string        `json:"id,omitempty"` // defaults to the catalog id (with -2, -3… if taken)
 	Domain   string        `json:"domain"`
 	Access   *state.Access `json:"access,omitempty"` // defaults by the app's sign-in style
+	// Drive is the drive its folder goes on (a mount point; "" for the drive chosen for new apps). The server turns it
+	// into Place.
+	Drive string `json:"drive,omitempty"`
+	// Place is the folder its folder goes in: "" for the drive chosen for new apps, "home" for Homeport's own folder.
+	Place string `json:"-"`
 }
 
 func (m *Manager) dir(id string) string { return filepath.Join(m.Root, id) }
@@ -163,7 +168,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 			secrets[name] = auth.NewSecret(32)
 		}
 		app = state.App{ID: id, Catalog: entry.ID, Name: entry.Name, Domain: domain, Port: port, Access: access,
-			Secrets: secrets, Installed: time.Now(), OIDC: oidcClient(entry, domain)}
+			Secrets: secrets, Installed: time.Now(), OIDC: oidcClient(entry, domain), Unfinished: "install"}
 		if req.Manifest != "" {
 			src := *req.Source
 			app.Catalog, app.Source = "", &src
@@ -179,11 +184,14 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 	undo := func(cause error) (state.App, error) {
 		fmt.Fprintf(log, "Install failed: %v\nCleaning up…\n", cause)
 		_ = m.compose(context.Background(), app.ID, log, "down", "--volumes", "--remove-orphans")
-		_ = os.RemoveAll(m.dir(app.ID))
+		m.removeDir(app.ID)
 		_ = m.Store.Update(func(d *state.Data) error { d.DeleteApp(app.ID); return nil })
 		return state.App{}, cause
 	}
 
+	if err := m.placeNew(app.ID, req.Place); err != nil {
+		return undo(err)
+	}
 	if err := m.writeCompose(entry, app, installer); err != nil {
 		return undo(err)
 	}
@@ -205,6 +213,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest, installer sta
 		}
 	}
 	m.afterInstall(ctx, entry, app, installer, true, log)
+	m.setUnfinished(app.ID, "")
 	fmt.Fprintf(log, "Done: %s is at https://%s\n", entry.Name, app.Domain)
 	if entry.Notes != "" {
 		fmt.Fprintf(log, "\n%s\n", entry.RenderNotes(m.notesVars(app, installer.Name)))
@@ -350,10 +359,18 @@ func (m *Manager) writeCompose(entry catalog.App, app state.App, installer state
 func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.update(ctx, id, log)
+}
+
+func (m *Manager) update(ctx context.Context, id string, log io.Writer) error {
 	app, installer, err := m.lookup(id)
 	if err != nil {
 		return err
 	}
+	if app.Unfinished == "" {
+		m.setUnfinished(id, "update")
+	}
+	defer m.setUnfinished(id, "")
 	entry, known, err := m.entryOf(app)
 	if err != nil {
 		return err
@@ -410,10 +427,16 @@ func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
 func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.remove(ctx, id, purge, log)
+}
+
+func (m *Manager) remove(ctx context.Context, id string, purge bool, log io.Writer) error {
 	app, _, err := m.lookup(id)
 	if err != nil {
 		return err
 	}
+	m.setUnfinished(id, map[bool]string{false: "remove", true: "remove-purge"}[purge])
+	defer m.setUnfinished(id, "") // only matters if it fails before the app is gone
 	args := []string{"down", "--remove-orphans"}
 	if purge {
 		args = append(args, "--volumes")
@@ -430,10 +453,11 @@ func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writ
 		}
 	}
 	if purge {
-		fmt.Fprintf(log, "Deleting %s\n", m.dir(id))
-		return os.RemoveAll(m.dir(id))
+		fmt.Fprintf(log, "Deleting %s\n", m.realDir(id))
+		m.removeDir(id)
+		return nil
 	}
-	fmt.Fprintf(log, "Its data is kept in %s\n", m.dir(id))
+	fmt.Fprintf(log, "Its data is kept in %s\n", m.realDir(id))
 	return nil
 }
 
@@ -441,6 +465,89 @@ func (m *Manager) Remove(ctx context.Context, id string, purge bool, log io.Writ
 var stepPatience, stepRetry = 10 * time.Minute, 5 * time.Second
 
 // afterInstall runs the manifest's steps in the running app. A step that never works is reported, not fatal: the app
+// setUnfinished marks the job under way on an app (kept in the state, so a job cut off by Homeport stopping is
+// finished when it starts again), or clears it ("").
+func (m *Manager) setUnfinished(id, what string) {
+	_ = m.Store.Update(func(d *state.Data) error {
+		if a, ok := d.App(id); ok {
+			a.Unfinished = what
+		}
+		return nil
+	})
+}
+
+// Unfinished lists the apps whose last job was cut off.
+func (m *Manager) Unfinished() []state.App {
+	var out []state.App
+	m.Store.Read(func(d *state.Data) {
+		for _, a := range d.Apps() {
+			if a.Unfinished != "" {
+				out = append(out, a)
+			}
+		}
+	})
+	return out
+}
+
+// Finish completes an app's cut-off job. An install is brought up from its settings with its first-run steps, an
+// update or address change is done again as an update, and a removal is done again.
+func (m *Manager) Finish(ctx context.Context, id string, log io.Writer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, installer, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	switch app.Unfinished {
+	case "":
+		return nil
+	case "move":
+		// Cut off while moving drives: the app goes back to where it was if the switch didn't happen, and starts.
+		fmt.Fprintf(log, "Starting %s again after a move to another drive was cut off\n", app.Name)
+		defer m.setUnfinished(id, "")
+		link := m.dir(id)
+		if _, err := os.Lstat(link); errors.Is(err, os.ErrNotExist) {
+			if err := os.Rename(link+".homeport-old", link); err != nil {
+				return fmt.Errorf("%s's folder is missing: %w", app.Name, err)
+			}
+		}
+		return m.compose(ctx, id, log, "up", "--detach")
+	case "remove", "remove-purge":
+		fmt.Fprintf(log, "Finishing the removal of %s\n", app.Name)
+		return m.remove(ctx, id, app.Unfinished == "remove-purge", log)
+	case "install":
+		fmt.Fprintf(log, "Finishing the install of %s\n", app.Name)
+		defer m.setUnfinished(id, "")
+		entry, ok, err := m.entryOf(app)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%s's catalog entry is gone", app.Name)
+		}
+		if err := m.writeCompose(entry, app, installer); err != nil {
+			return err
+		}
+		if err := m.compose(ctx, id, log, "pull"); err != nil {
+			return fmt.Errorf("downloading the app failed: %w", err)
+		}
+		if err := m.compose(ctx, id, log, "up", "--detach", "--remove-orphans"); err != nil {
+			return fmt.Errorf("starting the app failed: %w", err)
+		}
+		if m.Apply != nil {
+			if err := m.Apply(ctx); err != nil {
+				return err
+			}
+		}
+		m.afterInstall(ctx, entry, app, installer, true, log)
+		fmt.Fprintf(log, "Done: %s is at https://%s\n", app.Name, app.Domain)
+		return nil
+	default:
+		fmt.Fprintf(log, "Finishing the %s of %s\n", app.Unfinished, app.Name)
+		return m.update(ctx, id, log)
+	}
+}
+
 // is installed and running, and the step can be run by hand.
 func (m *Manager) afterInstall(ctx context.Context, entry catalog.App, app state.App, installer state.User, firstInstall bool, log io.Writer) {
 	id := app.ID
@@ -708,6 +815,8 @@ func (m *Manager) ChangeAddress(ctx context.Context, id, domain string, log io.W
 		fmt.Fprintf(log, "%s is already at %s.\n", app.Name, domain)
 		return nil
 	}
+	m.setUnfinished(id, "address")
+	defer m.setUnfinished(id, "")
 	entry, known, err := m.entryOf(app)
 	if err != nil {
 		return err
@@ -824,8 +933,47 @@ func (m *Manager) ContainerAction(ctx context.Context, id, service, action strin
 	return nil
 }
 
-// Dir is the app's folder (compose.yaml and data/).
-func (m *Manager) Dir(id string) string { return m.dir(id) }
+// Dir is the app's folder (compose.yaml and data/), where it really is (it may be on another drive).
+func (m *Manager) Dir(id string) string { return m.realDir(id) }
+
+// realDir is where an app's folder really is: Root/<id> is the folder, or a link to it on another drive.
+func (m *Manager) realDir(id string) string {
+	if real, err := filepath.EvalSymlinks(m.dir(id)); err == nil {
+		return real
+	}
+	return m.dir(id)
+}
+
+// removeDir deletes an app's folder, wherever it is, and the link to it.
+func (m *Manager) removeDir(id string) {
+	if real := m.realDir(id); real != m.dir(id) {
+		_ = os.RemoveAll(real)
+	}
+	_ = os.RemoveAll(m.dir(id))
+}
+
+// placeNew puts a new app's folder in place (a folder on another drive, linked from Root/<id>): "" is the drive
+// chosen for new apps, "home" Homeport's own folder.
+func (m *Manager) placeNew(id, place string) error {
+	base := place
+	if base == "" {
+		m.Store.Read(func(d *state.Data) { base = d.Settings().NewAppsDrive })
+	}
+	if base == "" || base == "home" {
+		return nil
+	}
+	if _, err := os.Stat(base); err != nil {
+		return fmt.Errorf("the drive chosen for new apps (%s) isn't there: %w", base, err)
+	}
+	real := filepath.Join(base, id)
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.Root, 0o700); err != nil {
+		return err
+	}
+	return os.Symlink(real, m.dir(id))
+}
 
 // ComposeOutput runs a docker compose command for the app and returns what it printed.
 func (m *Manager) ComposeOutput(ctx context.Context, id string, args ...string) (string, error) {

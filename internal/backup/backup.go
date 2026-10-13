@@ -367,6 +367,7 @@ type Snapshot struct {
 	Time  time.Time `json:"time"`
 	What  string    `json:"what"` // "homeport", or an app's id
 	Size  int64     `json:"size,omitempty"`
+	Paths []string  `json:"paths,omitempty"` // the folders it holds, where they were then
 }
 
 func (m *Manager) Snapshots(ctx context.Context, destID string) ([]Snapshot, error) {
@@ -383,6 +384,7 @@ func (m *Manager) Snapshots(ctx context.Context, destID string) ([]Snapshot, err
 		ShortID string    `json:"short_id"`
 		Time    time.Time `json:"time"`
 		Tags    []string  `json:"tags"`
+		Paths   []string  `json:"paths"`
 		Summary struct {
 			TotalBytes int64 `json:"total_bytes_processed"`
 		} `json:"summary"`
@@ -392,7 +394,7 @@ func (m *Manager) Snapshots(ctx context.Context, destID string) ([]Snapshot, err
 	}
 	list := []Snapshot{}
 	for _, r := range raw {
-		s := Snapshot{ID: r.ID, Short: r.ShortID, Time: r.Time, Size: r.Summary.TotalBytes}
+		s := Snapshot{ID: r.ID, Short: r.ShortID, Time: r.Time, Size: r.Summary.TotalBytes, Paths: r.Paths}
 		for _, t := range r.Tags {
 			if t == "homeport" {
 				s.What = "homeport"
@@ -426,9 +428,11 @@ func (m *Manager) RestoreApp(ctx context.Context, destID, snapshotID, appID stri
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(snaps, func(s Snapshot) bool { return s.ID == snapshotID && s.What == appID }) {
+	i := slices.IndexFunc(snaps, func(s Snapshot) bool { return s.ID == snapshotID && s.What == appID })
+	if i < 0 || len(snaps[i].Paths) != 1 {
 		return errors.New("that backup isn't one of this app's")
 	}
+	from := snaps[i].Paths[0] // where the app's folder was when it was backed up (it may have moved drives since)
 	if err := m.start("restoring " + appID); err != nil {
 		return err
 	}
@@ -443,7 +447,12 @@ func (m *Manager) RestoreApp(ctx context.Context, destID, snapshotID, appID stri
 		return err
 	}
 	fmt.Fprintf(w, "Its current folder is kept as %s.\nRestoring the backup…\n", aside)
-	if _, err := m.output(ctx, d, "restore", snapshotID, "--target", "/"); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		_ = os.Rename(aside, dir)
+		return err
+	}
+	// The folder's contents go where the app's folder is now.
+	if _, err := m.output(ctx, d, "restore", snapshotID+":"+from, "--target", dir); err != nil {
 		_ = os.RemoveAll(dir)
 		_ = os.Rename(aside, dir)
 		_, _ = m.Apps.ComposeOutput(context.Background(), appID, "up", "--detach")

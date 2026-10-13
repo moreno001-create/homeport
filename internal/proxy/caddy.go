@@ -144,8 +144,10 @@ func writeStripIdentity(b *strings.Builder, hsts bool) {
 type Caddy struct {
 	Path   string // /etc/caddy/Caddyfile on Linux
 	Runner runner.Runner
-	// Reload makes Caddy load the new file (systemctl reload caddy on Linux, caddy reload on a Mac).
+	// Reload makes Caddy load the new file (caddy reload, straight to Caddy's admin address).
 	Reload []string
+	// ReloadFallback is tried when Reload fails.
+	ReloadFallback []string
 }
 
 // Apply checks the new configuration with Caddy, puts it in place and reloads. A configuration Caddy rejects never
@@ -173,7 +175,13 @@ func (c Caddy) Apply(ctx context.Context, config string) error {
 	if len(reload) == 0 {
 		reload = []string{"systemctl", "reload", "caddy"}
 	}
-	if out, err := c.Runner.Output(ctx, "", reload[0], reload[1:]...); err != nil {
+	out, err := c.Runner.Output(ctx, "", reload[0], reload[1:]...)
+	if err != nil && len(c.ReloadFallback) > 0 {
+		if _, err2 := c.Runner.Output(ctx, "", c.ReloadFallback[0], c.ReloadFallback[1:]...); err2 == nil {
+			return nil
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("couldn't reload Caddy: %v\n%s", err, lastLines(out, 8))
 	}
 	return nil

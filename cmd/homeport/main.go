@@ -162,7 +162,7 @@ func serve() error {
 		return err
 	}
 	sys := runner.System{}
-	caddy := proxy.Caddy{Path: caddyfile, Runner: sys, Reload: plat.ReloadCaddy}
+	caddy := proxy.Caddy{Path: caddyfile, Runner: sys, Reload: plat.ReloadCaddy, ReloadFallback: plat.ReloadCaddyFallback}
 	var announce *mdns.Publisher // .local names, through Avahi (Linux) or dns-sd (macOS)
 	switch plat.Name {
 	case "linux":
@@ -238,6 +238,7 @@ func serve() error {
 	go followAddress(ctx, applyProxy)
 	go srv.Backup.Schedule(ctx)
 	go srv.DailyChecks(ctx)
+	go srv.FinishInterrupted()
 	go srv.KeepRouterPorts(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
@@ -246,6 +247,8 @@ func serve() error {
 	log.Printf("Homeport %s listening on %s and %s", version, proxy.Upstream, socketPath)
 	select {
 	case <-ctx.Done():
+		// Installs and updates under way finish first (the service manager gives Homeport the time).
+		srv.StopJobs(30 * time.Minute)
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return web.Shutdown(shut)
@@ -521,6 +524,7 @@ func cmdStatus() error {
 		Users    int
 		Domains  int
 		Apps     int
+		Working  []string
 	}
 	if err := call("GET", "/overview", nil, &o); err != nil {
 		return err
@@ -530,6 +534,9 @@ func cmdStatus() error {
 		return nil
 	}
 	fmt.Printf("Homeport %s on %s (certificates: %s)\n%d users, %d domains, %d apps\n", o.Version, o.Settings.MainDomain, o.Settings.TLS, o.Users, o.Domains, o.Apps)
+	if len(o.Working) > 0 {
+		fmt.Printf("Working on: %s\n", strings.Join(o.Working, ", "))
+	}
 	return nil
 }
 
