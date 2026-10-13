@@ -404,7 +404,7 @@ const views = {
         h("tbody", {}, audit.map(e => h("tr", {},
           h("td", { class: "small" }, new Date(e.time).toLocaleString()),
           h("td", { class: "small" }, e.client),
-          h("td", {}, h("b", {}, e.tool), h("div", { class: "muted small mono" }, (e.args || "").slice(0, 140))),
+          h("td", {}, h("b", {}, e.tool), h("div", { class: "muted small mono" }, argsText(typeof e.args === "string" ? safeJSON(e.args) : e.args))),
           h("td", {}, h("span", { class: "pill " + (e.ok ? "done" : "failed") }, e.decision + (e.by ? " by " + e.by : "")),
             e.error ? h("div", { class: "muted small" }, e.error.slice(0, 160)) : null))))))
         : h("p", { class: "muted" }, "No tool calls yet."),

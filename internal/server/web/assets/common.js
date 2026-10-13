@@ -85,3 +85,5 @@ function statusLine(conv) {
   if (t < 5) return s;
   return s + " " + (t < 60 ? t + " s" : Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"));
 }
+
+function safeJSON(s) { try { return JSON.parse(s); } catch { return { "": s }; } }
