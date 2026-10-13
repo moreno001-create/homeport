@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,8 +73,9 @@ func Drives(ctx context.Context, systemDir string) ([]Drive, error) {
 		for _, c := range d.Children {
 			walk(c, model)
 		}
+		// (ZFS pools are listed from their mounts instead: lsblk doesn't show where their datasets are.)
 		if d.FSType == "" || d.FSType == "swap" || d.FSType == "LVM2_member" || d.FSType == "crypto_LUKS" ||
-			d.FSType == "linux_raid_member" || d.FSType == "squashfs" {
+			d.FSType == "linux_raid_member" || d.FSType == "squashfs" || d.FSType == "zfs_member" {
 			return
 		}
 		mount := ""
@@ -115,6 +117,14 @@ func Drives(ctx context.Context, systemDir string) ([]Drive, error) {
 	for _, d := range tree.Blockdevices {
 		walk(d, "")
 	}
+	list = append(list, zfsDrives(ctx, systemDir)...)
+	if slices.ContainsFunc(list, func(d Drive) bool { return d.FS == "zfs" && d.System }) {
+		for i := range list {
+			if list[i].FS != "zfs" {
+				list[i].System = false
+			}
+		}
+	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].System && !list[j].System })
 	return list, nil
 }
@@ -154,6 +164,61 @@ func (d *lsblkDev) UnmarshalJSON(b []byte) error {
 	*d = lsblkDev{Path: raw.Path, Type: raw.Type, FSType: raw.FSType, Label: raw.Label, UUID: raw.UUID, Size: int64(size),
 		Mountpoints: raw.Mountpoints, Model: raw.Model, RO: ro == "true" || ro == "1", Children: raw.Children}
 	return nil
+}
+
+// zfsDrives are the ZFS pools with mounted datasets, each as one drive at its top mount point (/ for the system's
+// pool). ZFS mounts them itself at startup.
+func zfsDrives(ctx context.Context, systemDir string) []Drive {
+	out, err := exec.CommandContext(ctx, "findmnt", "-n", "-l", "-o", "TARGET,SOURCE", "-t", "zfs").Output()
+	if err != nil {
+		return nil
+	}
+	tops := zfsTops(string(out))
+	var sysPool string
+	if src, err := exec.CommandContext(ctx, "findmnt", "-n", "-o", "SOURCE", "-T", systemDir).Output(); err == nil {
+		sysPool = strings.SplitN(strings.TrimSpace(string(src)), "/", 2)[0]
+	}
+	sizes := map[string]int64{}
+	if b, err := exec.CommandContext(ctx, "zpool", "list", "-H", "-p", "-o", "name,size").Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if f := strings.Fields(line); len(f) == 2 {
+				sizes[f[0]], _ = strconv.ParseInt(f[1], 10, 64)
+			}
+		}
+	}
+	var list []Drive
+	for pool, mount := range tops {
+		if mount == "/boot" || strings.HasPrefix(mount, "/boot/") {
+			continue
+		}
+		d := Drive{Mount: mount, Device: pool, Label: pool + " (ZFS)", FS: "zfs", Mounted: true, Lasting: true, Usable: true,
+			System: pool == sysPool, Size: sizes[pool]}
+		var st syscall.Statfs_t
+		if syscall.Statfs(mount, &st) == nil {
+			d.Free = int64(st.Bavail) * int64(st.Bsize)
+			if d.Size == 0 {
+				d.Size = int64(st.Blocks) * int64(st.Bsize)
+			}
+		}
+		list = append(list, d)
+	}
+	return list
+}
+
+// zfsTops reads findmnt's "TARGET SOURCE" lines: each pool's shortest mount point.
+func zfsTops(out string) map[string]string {
+	tops := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		pool := strings.SplitN(f[1], "/", 2)[0]
+		if cur, ok := tops[pool]; !ok || len(f[0]) < len(cur) {
+			tops[pool] = f[0]
+		}
+	}
+	return tops
 }
 
 func deviceOf(path string) uint64 {

@@ -72,3 +72,17 @@ func TestCopyAndSame(t *testing.T) {
 		t.Error("the last pass should delete what's gone")
 	}
 }
+
+func TestZFSTops(t *testing.T) {
+	out := `/                rpool/ROOT/ubuntu_z2t75d
+/home            rpool/USERDATA/home_r5ue7s
+/boot            bpool/BOOT/ubuntu_z2t75d
+/var/lib         rpool/ROOT/ubuntu_z2t75d/var/lib
+/tank/media      tank/media
+/tank            tank
+`
+	got := zfsTops(out)
+	if got["rpool"] != "/" || got["bpool"] != "/boot" || got["tank"] != "/tank" || len(got) != 3 {
+		t.Errorf("got %v", got)
+	}
+}

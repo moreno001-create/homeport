@@ -98,6 +98,14 @@ func (s *Server) storageItems(ctx context.Context, drives []storage.Drive) []sto
 		Down: "Every app stops for the last copy (a minute or two)"}
 	if linux {
 		docker.Where = strings.Join(dockerPlace.Existing().Where(), " and ")
+		// Overlay storage works on any Linux drive; Docker's zfs or btrfs drivers only on their own kind.
+		out, err := exec.CommandContext(ctx, "docker", "info", "-f", "{{.Driver}}").Output()
+		switch driver := strings.TrimSpace(string(out)); {
+		case err != nil:
+			docker.Fixed = "Docker isn't running"
+		case !strings.HasPrefix(driver, "overlay"):
+			docker.Fixed = "Docker keeps its images with its " + driver + " driver, which only works on that kind of drive"
+		}
 	} else {
 		docker.Fixed = "On a Mac, move them in OrbStack's (or Docker Desktop's) settings"
 	}
