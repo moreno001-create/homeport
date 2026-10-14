@@ -1,4 +1,4 @@
-# The home name (yourname.dedyn.io) doesn't work, or its certificate is missing
+# The home name (yourname.dedyn.io, or home.yourdomain.com) doesn't work, or its certificate is missing
 Signs: home name, dedyn.io, deSEC, certificate, wildcard, DNS rebinding, rebind protection, can't find the name, NXDOMAIN, at home
 Applies: any
 
@@ -9,6 +9,7 @@ breaks when:
 - the router or a DNS filter (Pi-hole, AdGuard, some ISP routers) refuses DNS answers that point at home addresses
   ("DNS rebinding protection"), so devices find nothing;
 - the deSEC token was deleted, so Homeport can't update the name or prove it owns it;
+- a domain of your own stopped using deSEC's nameservers (ns1.desec.io, ns2.desec.org), or its registration ran out;
 - Let's Encrypt limits how often it gives out certificates for the same name (about 5 a week).
 
 ## Fix

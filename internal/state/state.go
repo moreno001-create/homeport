@@ -125,6 +125,9 @@ type DynDNS struct {
 	CertError string    `json:"certError,omitempty"`
 	// Internet is what its internet records were last set to ("ip label…"), for home names.
 	Internet string `json:"internet,omitempty"`
+	// Zone is the deSEC domain a home name is in, when it's a part of one (home.example.com in example.com); ""
+	// when the name is the whole domain (myhome.dedyn.io).
+	Zone string `json:"zone,omitempty"`
 }
 
 // Access says who may open an app: everyone on the internet, or signed-in users in one of the groups.

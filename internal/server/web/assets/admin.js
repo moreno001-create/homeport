@@ -698,18 +698,29 @@ function homeNameDialog() {
   const name = h("input", { required: true, placeholder: "myhome", autocapitalize: "none", spellcheck: "false" });
   const token = h("input", { type: "password", required: true, autocomplete: "off" });
   const main = h("input", { type: "checkbox", checked: true });
+  const suffix = h("span", { class: "muted" }, ".dedyn.io");
+  const own = h("p", { class: "muted small", hidden: true });
+  const full = () => { const v = name.value.trim().toLowerCase().replace(/\.$/, ""); return !v || !v.includes(".") ? (v || "myhome") + ".dedyn.io" : v; };
+  name.addEventListener("input", () => {
+    const v = name.value.trim().toLowerCase();
+    const custom = v.includes(".") && !v.endsWith(".dedyn.io");
+    suffix.hidden = v.includes(".");
+    own.hidden = !custom;
+    own.textContent = "Your own domain: add it to your deSEC account (Homeport adds it if it isn't there), and at the registrar where you bought it, set its nameservers to ns1.desec.io and ns2.desec.org. Homeport only changes the records for " + full() + " and the names under it.";
+  });
   openDialog(h("form", { method: "dialog", onsubmit: async e => {
     e.preventDefault();
     const body = { name: name.value.trim(), token: token.value, main: main.checked };
     dialog.close();
-    const j = await runJob("Setting up " + body.name.replace(/\.dedyn\.io$/, "") + ".dedyn.io", () => api("POST", "/domains/home", body));
+    const j = await runJob("Setting up " + full(), () => api("POST", "/domains/home", body));
     if (j && j.status === "done") toast("Home name ready");
   } },
     h("h2", {}, "Set up a home name"),
     h("p", {}, "A free name like ", h("b", {}, "myhome.dedyn.io"), " that points at this server's address on your home network. Every device at home finds it (phones, Android, other subnets, the server itself), and Homeport gets a real certificate for it and every app under it: no more warnings, and signing in works everywhere. Nothing becomes reachable from the internet; you can still put apps there one by one."),
     h("ol", { class: "small" }, h("li", {}, "Open ", h("a", { href: "https://desec.io", target: "_blank", rel: "noopener" }, "desec.io"), ", sign up (email and password) and confirm your email."),
       h("li", {}, "Under Token Management, add a token and copy it.")),
-    h("label", {}, "Name", h("span", { class: "suffixed" }, name, h("span", { class: "muted" }, ".dedyn.io"))),
+    h("label", {}, "Name: a free one (myhome, for myhome.dedyn.io), or one in your own domain (home.example.com)", h("span", { class: "suffixed" }, name, suffix)),
+    own,
     h("label", {}, "deSEC token", token),
     h("label", { class: "check" }, main, "Make it the main address (portal and admin panel)"),
     h("p", { class: "muted small" }, "Getting the certificate takes a minute or two. Apps you already have keep their addresses: move them to the new name afterwards (Domains → Move apps to the home name)."),

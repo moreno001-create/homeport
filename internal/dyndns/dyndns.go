@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,6 +53,23 @@ func FullName(provider, name string) (string, error) {
 	}
 	return name + suffix, nil
 }
+
+var domainName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
+
+// HomeName turns what someone typed into a home name: "myhome" (or "myhome.dedyn.io") is myhome.dedyn.io, a free name;
+// anything else with a dot is a domain of their own on deSEC (home.example.com, or example.com).
+func HomeName(typed string) (string, error) {
+	name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(typed)), ".")
+	if !strings.Contains(name, ".") || strings.HasSuffix(name, Suffix["desec"]) {
+		return FullName("desec", name)
+	}
+	if len(name) > 253 || !domainRe(name) {
+		return "", fmt.Errorf("%q isn't a domain name like home.example.com (or type just a name, for name.dedyn.io)", typed)
+	}
+	return name, nil
+}
+
+func domainRe(name string) bool { return domainName.MatchString(name) }
 
 // Updater keeps free domains pointed at this server.
 type Updater struct {
@@ -106,7 +124,17 @@ func (u *Updater) register(ctx context.Context, provider, domain, token string, 
 	if taken {
 		return fmt.Errorf("%s is already added", domain)
 	}
-	if provider == "desec" {
+	var zone string
+	switch {
+	case home:
+		z, err := u.desecHomeZone(ctx, domain, token)
+		if err != nil {
+			return err
+		}
+		if z != domain {
+			zone = z
+		}
+	case provider == "desec":
 		if err := u.desecCreate(ctx, domain, token); err != nil {
 			return err
 		}
@@ -121,7 +149,7 @@ func (u *Updater) register(ctx context.Context, provider, domain, token string, 
 		if d.HasDomain(domain) {
 			return fmt.Errorf("%s is already added", domain)
 		}
-		x := state.Domain{Name: domain, Added: time.Now(), DynDNS: &state.DynDNS{Provider: provider, Home: home}}
+		x := state.Domain{Name: domain, Added: time.Now(), DynDNS: &state.DynDNS{Provider: provider, Home: home, Zone: zone}}
 		if home {
 			x.Cert = state.CertDNS
 		}
@@ -213,8 +241,8 @@ func (u *Updater) Sync(ctx context.Context, force bool) error {
 		}
 		var err error
 		if dd.Home {
-			if err = u.pointHome(ctx, x.Name, ip4); err == nil {
-				err = u.setInternetNames(ctx, x.Name, pub4)
+			if err = u.pointHome(ctx, x, ip4); err == nil {
+				err = u.setInternetNames(ctx, x, pub4)
 			}
 		} else {
 			err = u.update(ctx, x.Name, dd.Provider, ip4, ip6)
@@ -340,44 +368,59 @@ func (u *Updater) internetNames(domain, ip string) string {
 	return ip + " " + strings.Join(labels, " ")
 }
 
+// zoneParts is the deSEC domain a home name is in, and the name's part of it ("" when it's the whole domain).
+func zoneParts(x state.Domain) (zone, part string) {
+	zone = x.Name
+	if x.DynDNS != nil && x.DynDNS.Zone != "" {
+		zone = x.DynDNS.Zone
+	}
+	return zone, strings.TrimSuffix(strings.TrimSuffix(x.Name, zone), ".")
+}
+
+// under is a record's name in the zone for a name under part (label "" is part itself).
+func under(part, label string) string {
+	switch {
+	case label == "":
+		return part
+	case part == "":
+		return label
+	}
+	return label + "." + part
+}
+
 // setInternetNames points the home name's apps that are on the internet at the public address (their own records
-// win over the wildcard), and removes the records of apps that aren't any more.
-func (u *Updater) setInternetNames(ctx context.Context, domain, ip string) error {
-	token, err := u.token(domain)
+// win over the wildcard), and removes the records it set before for apps that aren't any more. It only ever touches
+// those records: anything else in the domain (a website, mail) is left alone.
+func (u *Updater) setInternetNames(ctx context.Context, x state.Domain, ip string) error {
+	token, err := u.token(x.Name)
 	if err != nil {
 		return err
 	}
-	want := map[string]bool{}
-	if f := strings.Fields(u.internetNames(domain, ip)); len(f) > 1 {
-		for _, l := range f[1:] {
-			want[l] = true
+	zone, part := zoneParts(x)
+	labels := func(set string) map[string]bool {
+		out := map[string]bool{}
+		if f := strings.Fields(set); len(f) > 1 {
+			for _, l := range f[1:] {
+				out[l] = true
+			}
 		}
+		return out
 	}
-	body, status, err := u.api(ctx, "GET", "/domains/"+domain+"/rrsets/?type=A", token, nil)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusOK {
-		return fmt.Errorf("deSEC said %d %s", status, short(body))
-	}
-	var have []struct {
-		Subname string `json:"subname"`
-	}
-	_ = json.Unmarshal([]byte(body), &have)
-	ttl := u.minTTL(ctx, domain, token)
+	want, had := labels(u.internetNames(x.Name, ip)), labels(x.DynDNS.Internet)
+	ttl := u.minTTL(ctx, zone, token)
 	var changes []map[string]any
-	for _, h := range have {
-		if h.Subname != "" && h.Subname != "*" && !want[h.Subname] {
-			changes = append(changes, map[string]any{"subname": h.Subname, "type": "A", "ttl": ttl, "records": []string{}})
+	for l := range had {
+		if !want[l] {
+			changes = append(changes, map[string]any{"subname": under(part, l), "type": "A", "ttl": ttl, "records": []string{}})
 		}
 	}
 	for l := range want {
-		changes = append(changes, map[string]any{"subname": l, "type": "A", "ttl": ttl, "records": []string{ip}})
+		changes = append(changes, map[string]any{"subname": under(part, l), "type": "A", "ttl": ttl, "records": []string{ip}})
 	}
 	if len(changes) == 0 {
 		return nil
 	}
-	body, status, err = u.api(ctx, "PATCH", "/domains/"+domain+"/rrsets/", token, changes)
+	body, status, err := u.api(ctx, "PATCH", "/domains/"+zone+"/rrsets/", token, changes)
 	if err != nil {
 		return err
 	}
@@ -387,17 +430,19 @@ func (u *Updater) setInternetNames(ctx context.Context, domain, ip string) error
 	return nil
 }
 
-// pointHome points a home name at the server's home address (the update service may refuse private addresses, so
-// it's set through deSEC's API), with no IPv6 address.
-func (u *Updater) pointHome(ctx context.Context, domain, ip string) error {
-	token, err := u.token(domain)
+// pointHome points a home name, and every name under it, at the server's home address (set through deSEC's API: the
+// update service may refuse private addresses), with no IPv6 address.
+func (u *Updater) pointHome(ctx context.Context, x state.Domain, ip string) error {
+	token, err := u.token(x.Name)
 	if err != nil {
 		return err
 	}
-	ttl := u.minTTL(ctx, domain, token)
-	body, status, err := u.api(ctx, "PATCH", "/domains/"+domain+"/rrsets/", token, []map[string]any{
-		{"subname": "", "type": "A", "ttl": ttl, "records": []string{ip}},
-		{"subname": "", "type": "AAAA", "ttl": ttl, "records": []string{}},
+	zone, part := zoneParts(x)
+	ttl := u.minTTL(ctx, zone, token)
+	body, status, err := u.api(ctx, "PATCH", "/domains/"+zone+"/rrsets/", token, []map[string]any{
+		{"subname": part, "type": "A", "ttl": ttl, "records": []string{ip}},
+		{"subname": part, "type": "AAAA", "ttl": ttl, "records": []string{}},
+		{"subname": under(part, "*"), "type": "CNAME", "ttl": ttl, "records": []string{x.Name + "."}},
 	})
 	if err != nil {
 		return err
@@ -406,28 +451,106 @@ func (u *Updater) pointHome(ctx context.Context, domain, ip string) error {
 		return errors.New("deSEC refused the token")
 	}
 	if status/100 != 2 {
-		return fmt.Errorf("deSEC couldn't point %s at %s: %d %s", domain, ip, status, short(body))
+		return fmt.Errorf("deSEC couldn't point %s at %s: %d %s", x.Name, ip, status, short(body))
 	}
 	return nil
 }
 
-// SetTXT sets (values) or removes (none) the TXT records at name, a name under one of the free domains on deSEC
-// (_acme-challenge.home.dedyn.io, for a certificate).
+// lookupNS asks who answers for a domain (tests replace it).
+var lookupNS = net.DefaultResolver.LookupNS
+
+// desecHomeZone finds (or makes) the deSEC domain a home name goes in: the name itself for a dedyn.io name, else the
+// account's domain it's under (home.example.com in example.com), added to the account when it isn't there yet. A
+// domain of your own must use deSEC's nameservers, or nothing would find the records.
+func (u *Updater) desecHomeZone(ctx context.Context, name, token string) (string, error) {
+	body, status, err := u.api(ctx, "GET", "/domains/", token, nil)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return "", errors.New("deSEC refused the token")
+	}
+	var have []struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal([]byte(body), &have)
+	zone := ""
+	for _, d := range have {
+		if (name == d.Name || strings.HasSuffix(name, "."+d.Name)) && len(d.Name) > len(zone) {
+			zone = d.Name
+		}
+	}
+	if zone == "" && strings.HasSuffix(name, Suffix["desec"]) {
+		if err := u.desecCreate(ctx, name, token); err != nil {
+			return "", err
+		}
+		return name, nil
+	}
+	if zone == "" {
+		// The shortest part deSEC takes (it refuses public suffixes like co.uk): example.com for home.example.com.
+		labels := strings.Split(name, ".")
+		for i := len(labels) - 2; i >= 0 && zone == ""; i-- {
+			cand := strings.Join(labels[i:], ".")
+			body, status, err := u.api(ctx, "POST", "/domains/", token, map[string]string{"name": cand})
+			switch {
+			case err != nil:
+				return "", err
+			case status == http.StatusCreated:
+				zone = cand
+			case strings.Contains(body, "already") || status == http.StatusConflict:
+				return "", fmt.Errorf("%s is in someone else's deSEC account", cand)
+			case strings.Contains(strings.ToLower(body), "limit"):
+				return "", fmt.Errorf("deSEC won't add %s: %s", cand, short(body))
+			}
+		}
+		if zone == "" {
+			return "", fmt.Errorf("deSEC wouldn't add %s: add it in your deSEC account first", name)
+		}
+	}
+	if !strings.HasSuffix(zone, Suffix["desec"]) {
+		ns, _ := lookupNS(ctx, zone)
+		ok := false
+		var names []string
+		for _, n := range ns {
+			names = append(names, strings.TrimSuffix(n.Host, "."))
+			ok = ok || strings.Contains(n.Host, "desec.")
+		}
+		if !ok {
+			now := "no nameservers yet"
+			if len(names) > 0 {
+				now = "its nameservers are " + strings.Join(names, ", ")
+			}
+			return "", fmt.Errorf("%s is in your deSEC account, but %s. At the registrar where you bought it, set them to ns1.desec.io and ns2.desec.org, then try again (it can take a few hours to take effect)", zone, now)
+		}
+	}
+	return zone, nil
+}
+
+// SetTXT sets (values) or removes (none) the TXT records at name, a name under one of the free domains or home names
+// on deSEC (_acme-challenge.home.example.com, for a certificate).
 func (u *Updater) SetTXT(ctx context.Context, name string, values []string) error {
-	domain, sub, err := u.zoneOf(name)
+	var x state.Domain
+	u.Store.Read(func(d *state.Data) {
+		for _, y := range d.Domains() {
+			if y.DynDNS != nil && y.DynDNS.Provider == "desec" && strings.HasSuffix(name, "."+y.Name) && len(y.Name) > len(x.Name) {
+				x = y
+			}
+		}
+	})
+	if x.Name == "" {
+		return fmt.Errorf("%s isn't under a name from deSEC", name)
+	}
+	token, err := u.token(x.Name)
 	if err != nil {
 		return err
 	}
-	token, err := u.token(domain)
-	if err != nil {
-		return err
-	}
+	zone, _ := zoneParts(x)
 	records := []string{}
 	for _, v := range values {
 		records = append(records, strconv.Quote(v))
 	}
-	body, status, err := u.api(ctx, "PATCH", "/domains/"+domain+"/rrsets/", token, []map[string]any{
-		{"subname": sub, "type": "TXT", "ttl": u.minTTL(ctx, domain, token), "records": records}})
+	body, status, err := u.api(ctx, "PATCH", "/domains/"+zone+"/rrsets/", token, []map[string]any{
+		{"subname": strings.TrimSuffix(name, "."+zone), "type": "TXT", "ttl": u.minTTL(ctx, zone, token), "records": records}})
 	if err != nil {
 		return err
 	}
@@ -435,21 +558,6 @@ func (u *Updater) SetTXT(ctx context.Context, name string, values []string) erro
 		return fmt.Errorf("deSEC couldn't set %s: %d %s", name, status, short(body))
 	}
 	return nil
-}
-
-// zoneOf finds the free domain a name is under, and the name's part before it.
-func (u *Updater) zoneOf(name string) (domain, sub string, err error) {
-	u.Store.Read(func(d *state.Data) {
-		for _, x := range d.Domains() {
-			if x.DynDNS != nil && x.DynDNS.Provider == "desec" && strings.HasSuffix(name, "."+x.Name) {
-				domain, sub = x.Name, strings.TrimSuffix(name, "."+x.Name)
-			}
-		}
-	})
-	if domain == "" {
-		return "", "", fmt.Errorf("%s isn't under a free domain from deSEC", name)
-	}
-	return domain, sub, nil
 }
 
 // minTTL is the shortest time records may be cached for on this domain (deSEC sets it per domain; dedyn.io names

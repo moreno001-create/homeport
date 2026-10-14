@@ -470,7 +470,8 @@ ddns="" # the free name's provider, once registered
 home_name="" # the home name, once set up
 home_setup() { # home_setup NAME TOKEN: registers the home name and gets its certificate; on success it's the main domain
   if printf '%s\n' "$2" | homeport domain home "$1" --keep-main; then
-    HOMEPORT_DOMAIN="$(printf '%s' "${1%.dedyn.io}" | tr '[:upper:]' '[:lower:]').dedyn.io" HOMEPORT_TLS=letsencrypt
+    HOMEPORT_DOMAIN="$(printf '%s' "${1%.}" | tr '[:upper:]' '[:lower:]')" HOMEPORT_TLS=letsencrypt
+    case "$HOMEPORT_DOMAIN" in *.*) ;; *) HOMEPORT_DOMAIN="$HOMEPORT_DOMAIN.dedyn.io" ;; esac
     home_name=$HOMEPORT_DOMAIN
     return 0
   fi
@@ -481,10 +482,12 @@ guide_home_name() { # asks for a home name, with how to get the token, until it 
   printf '\n  A home name like yourname.dedyn.io, free from deSEC (a non-profit):\n' >/dev/tty
   printf '  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n' >/dev/tty
   printf '  2. Open "Token Management", add a token and copy it.\n' >/dev/tty
-  printf '  Homeport makes the name in your account and points it at this server (%s) for you.\n\n' "${first_ip:-its home address}" >/dev/tty
+  printf '  Homeport makes the name in your account and points it at this server (%s) for you.\n' "${first_ip:-its home address}" >/dev/tty
+  printf '  A domain of your own works too (home.example.com): add it to your deSEC account and set its nameservers\n' >/dev/tty
+  printf '  to ns1.desec.io and ns2.desec.org at the registrar where you bought it.\n\n' >/dev/tty
   while :; do
     name=""; token=""
-    printf 'Name (yourname, for yourname.dedyn.io), or Enter to go back: ' >/dev/tty; read -r name </dev/tty
+    printf 'Name (yourname for yourname.dedyn.io, or home.yourdomain.com), or Enter to go back: ' >/dev/tty; read -r name </dev/tty
     [ -n "$name" ] || return 1
     printf 'Token: ' >/dev/tty; read -r -s token </dev/tty; echo >/dev/tty
     if home_setup "$name" "$token" >/dev/tty 2>&1; then return 0; fi
@@ -539,9 +542,9 @@ if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
 fi
 while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
   printf '\nHow should people reach this server?\n' >/dev/tty
-  printf '  1) A home name, free from deSEC (yourname.dedyn.io) - recommended. Every device at home finds it, with\n' >/dev/tty
-  printf '     real certificates for it and every app: no warnings. Nothing is reachable from outside until you choose\n' >/dev/tty
-  printf '     so, app by app. Needs a free deSEC account (2 minutes).\n' >/dev/tty
+  printf '  1) A home name (recommended): free from deSEC (yourname.dedyn.io), or in a domain of your own. Every device\n' >/dev/tty
+  printf '     at home finds it, with real certificates for it and every app: no warnings. Nothing is reachable from\n' >/dev/tty
+  printf '     outside until you choose so, app by app. Needs a free deSEC account (2 minutes).\n' >/dev/tty
   printf '  2) homeport.local: nothing to set up, but browsers warn about every certificate, and some devices\n' >/dev/tty
   printf '     (Android, other subnets) can'"'"'t find it\n' >/dev/tty
   printf '  3) A free name from DuckDNS (yourname.duckdns.org) for the internet: needs ports 80 and 443 on the router\n' >/dev/tty

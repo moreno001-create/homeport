@@ -22,7 +22,8 @@ import (
 
 // MARK: Home name
 //
-// A home name is a free name from deSEC (home.dedyn.io) that points at this server's address on the home network.
+// A home name is a free name from deSEC (home.dedyn.io), or a name in a domain of your own that uses deSEC's
+// nameservers (home.example.com), that points at this server's address on the home network.
 // Every device at home finds it with ordinary DNS (phones, Android, other subnets, the server itself), nothing
 // outside can reach it, and Homeport gets it a real certificate from Let's Encrypt for it and every name under it,
 // proving it owns the name through its DNS: no ports to open. So every app is trusted out of the box, and signing
@@ -56,7 +57,7 @@ func (s *Server) addHomeName(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	name, err := dyndns.FullName("desec", in.Name)
+	name, err := dyndns.HomeName(in.Name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

@@ -120,8 +120,10 @@ func usage() {
   homeport domain list | add DOMAIN | remove DOMAIN
   homeport domain main DOMAIN [--tls internal|letsencrypt]   move the portal and admin panel
   homeport domain free desec|duckdns NAME    a free NAME.dedyn.io or NAME.duckdns.org, kept pointed here
-  homeport domain home NAME [--keep-main]    a home name: NAME.dedyn.io pointed at this server's home address,
-                                             with a real certificate for it and every name under it (deSEC token)
+  homeport domain home NAME [--keep-main]    a home name pointed at this server's home address, with a real
+                                             certificate for it and every name under it (deSEC token): NAME is
+                                             myhome (myhome.dedyn.io) or a name in your own domain on deSEC
+                                             (home.example.com)
   homeport domain cert DOMAIN auto|letsencrypt|internal      where its certificate comes from
   homeport domain cert DOMAIN custom --cert FULLCHAIN.pem --key KEY.pem
   homeport domain certs                      the certificate each site really has
