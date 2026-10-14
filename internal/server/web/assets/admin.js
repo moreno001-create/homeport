@@ -695,33 +695,51 @@ function certDialog(d) {
 // homeNameDialog sets up a home name: a free deSEC name pointed at this server's home address, with real certificates
 // for it and every name under it, so every device at home finds the server and trusts it.
 function homeNameDialog() {
-  const name = h("input", { required: true, placeholder: "myhome", autocapitalize: "none", spellcheck: "false" });
+  const provider = h("select", {}, h("option", { value: "cloudflare" }, "Cloudflare: a domain of yours there"),
+    h("option", { value: "desec" }, "deSEC: a free name (myhome.dedyn.io) or a domain of yours there"));
+  const name = h("input", { required: true, placeholder: "home.example.com", autocapitalize: "none", spellcheck: "false" });
   const token = h("input", { type: "password", required: true, autocomplete: "off" });
   const main = h("input", { type: "checkbox", checked: true });
-  const suffix = h("span", { class: "muted" }, ".dedyn.io");
-  const own = h("p", { class: "muted small", hidden: true });
-  const full = () => { const v = name.value.trim().toLowerCase().replace(/\.$/, ""); return !v || !v.includes(".") ? (v || "myhome") + ".dedyn.io" : v; };
-  name.addEventListener("input", () => {
-    const v = name.value.trim().toLowerCase();
-    const custom = v.includes(".") && !v.endsWith(".dedyn.io");
-    suffix.hidden = v.includes(".");
-    own.hidden = !custom;
-    own.textContent = "Your own domain: add it to your deSEC account (Homeport adds it if it isn't there), and at the registrar where you bought it, set its nameservers to ns1.desec.io and ns2.desec.org. Homeport only changes the records for " + full() + " and the names under it.";
-  });
+  const suffix = h("span", { class: "muted", hidden: true }, ".dedyn.io");
+  const steps = h("ol", { class: "small" });
+  const tokenLabel = h("span", {});
+  const full = () => {
+    const v = name.value.trim().toLowerCase().replace(/\.$/, "");
+    if (provider.value === "desec" && (!v || !v.includes("."))) return (v || "myhome") + ".dedyn.io";
+    return v || "home.example.com";
+  };
+  const link = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text);
+  const show = () => {
+    const cf = provider.value === "cloudflare";
+    name.placeholder = cf ? "home.example.com" : "myhome, or home.example.com";
+    suffix.hidden = cf || name.value.includes(".");
+    tokenLabel.textContent = cf ? "Cloudflare API token" : "deSEC token";
+    steps.replaceChildren(...(cf ? [
+      h("li", {}, "In ", link("https://dash.cloudflare.com", "Cloudflare"), ", your domain must be added and active (its nameservers set to Cloudflare's at the registrar)."),
+      h("li", {}, "My Profile → API Tokens → Create Token → use the ", h("b", {}, "Edit zone DNS"), " template; under Zone Resources choose your domain; create it and copy the token."),
+      h("li", {}, "Type a name in the domain, like ", h("b", {}, "home.example.com"), " (apps become photos.home.example.com), or the domain itself. Homeport only changes that name's records; the rest of the domain (website, mail) is left alone."),
+    ] : [
+      h("li", {}, "Open ", link("https://desec.io", "desec.io"), ", sign up (email and password) and confirm your email."),
+      h("li", {}, "Under Token Management, add a token and copy it."),
+      h("li", {}, "Type a free name (myhome, for myhome.dedyn.io), or a name in a domain of yours on deSEC (its nameservers set to ns1.desec.io and ns2.desec.org)."),
+    ]));
+  };
+  provider.addEventListener("change", show);
+  name.addEventListener("input", show);
+  show();
   openDialog(h("form", { method: "dialog", onsubmit: async e => {
     e.preventDefault();
-    const body = { name: name.value.trim(), token: token.value, main: main.checked };
+    const body = { provider: provider.value, name: name.value.trim(), token: token.value, main: main.checked };
     dialog.close();
     const j = await runJob("Setting up " + full(), () => api("POST", "/domains/home", body));
     if (j && j.status === "done") toast("Home name ready");
   } },
     h("h2", {}, "Set up a home name"),
-    h("p", {}, "A free name like ", h("b", {}, "myhome.dedyn.io"), " that points at this server's address on your home network. Every device at home finds it (phones, Android, other subnets, the server itself), and Homeport gets a real certificate for it and every app under it: no more warnings, and signing in works everywhere. Nothing becomes reachable from the internet; you can still put apps there one by one."),
-    h("ol", { class: "small" }, h("li", {}, "Open ", h("a", { href: "https://desec.io", target: "_blank", rel: "noopener" }, "desec.io"), ", sign up (email and password) and confirm your email."),
-      h("li", {}, "Under Token Management, add a token and copy it.")),
-    h("label", {}, "Name: a free one (myhome, for myhome.dedyn.io), or one in your own domain (home.example.com)", h("span", { class: "suffixed" }, name, suffix)),
-    own,
-    h("label", {}, "deSEC token", token),
+    h("p", {}, "A name that points at this server's address on your home network. Every device at home finds it (phones, Android, other subnets, the server itself), and Homeport gets a real certificate for it and every app under it: no more warnings, and signing in works everywhere. Nothing becomes reachable from the internet; you can still put apps there one by one."),
+    h("label", {}, "DNS service", provider),
+    steps,
+    h("label", {}, "Name", h("span", { class: "suffixed" }, name, suffix)),
+    h("label", {}, tokenLabel, token),
     h("label", { class: "check" }, main, "Make it the main address (portal and admin panel)"),
     h("p", { class: "muted small" }, "Getting the certificate takes a minute or two. Apps you already have keep their addresses: move them to the new name afterwards (Domains → Move apps to the home name)."),
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Set it up"))));

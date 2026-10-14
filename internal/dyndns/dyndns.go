@@ -108,24 +108,37 @@ func (u *Updater) Register(ctx context.Context, provider, domain, token string) 
 	return u.register(ctx, provider, domain, token, false)
 }
 
-// RegisterHome sets up a home name on deSEC: it points at this server's home-network address (it and every name under
-// it), so every device at home finds the server with ordinary DNS, and it can have a real certificate (see Solver).
-func (u *Updater) RegisterHome(ctx context.Context, domain, token string) error {
-	return u.register(ctx, "desec", domain, token, true)
+// HomeProviders are the DNS services a home name can be on.
+var HomeProviders = map[string]string{"desec": "deSEC", "cloudflare": "Cloudflare"}
+
+// RegisterHome sets up a home name on deSEC or Cloudflare: it points at this server's home-network address (it and
+// every name under it), so every device at home finds the server with ordinary DNS, and it can have a real
+// certificate (SetTXT).
+func (u *Updater) RegisterHome(ctx context.Context, provider, domain, token string) error {
+	if HomeProviders[provider] == "" {
+		return fmt.Errorf(`unknown DNS service %q (use "desec" or "cloudflare")`, provider)
+	}
+	return u.register(ctx, provider, domain, token, true)
 }
 
 func (u *Updater) register(ctx context.Context, provider, domain, token string, home bool) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return errors.New("paste the token from your " + map[string]string{"desec": "deSEC", "duckdns": "DuckDNS"}[provider] + " account")
+		return errors.New("paste the token from your " + map[string]string{"desec": "deSEC", "duckdns": "DuckDNS", "cloudflare": "Cloudflare"}[provider] + " account")
 	}
 	var taken bool
 	u.Store.Read(func(d *state.Data) { taken = d.HasDomain(domain) })
 	if taken {
 		return fmt.Errorf("%s is already added", domain)
 	}
-	var zone string
+	var zone, zoneID string
 	switch {
+	case home && provider == "cloudflare":
+		z, err := u.cfHomeZone(ctx, domain, token)
+		if err != nil {
+			return err
+		}
+		zone, zoneID = z.Name, z.ID
 	case home:
 		z, err := u.desecHomeZone(ctx, domain, token)
 		if err != nil {
@@ -149,7 +162,7 @@ func (u *Updater) register(ctx context.Context, provider, domain, token string, 
 		if d.HasDomain(domain) {
 			return fmt.Errorf("%s is already added", domain)
 		}
-		x := state.Domain{Name: domain, Added: time.Now(), DynDNS: &state.DynDNS{Provider: provider, Home: home, Zone: zone}}
+		x := state.Domain{Name: domain, Added: time.Now(), DynDNS: &state.DynDNS{Provider: provider, Home: home, Zone: zone, ZoneID: zoneID}}
 		if home {
 			x.Cert = state.CertDNS
 		}
@@ -240,11 +253,16 @@ func (u *Updater) Sync(ctx context.Context, force bool) error {
 			continue
 		}
 		var err error
-		if dd.Home {
+		switch {
+		case dd.Home && dd.Provider == "cloudflare":
+			if err = u.cfPointHome(ctx, x, ip4); err == nil {
+				err = u.cfInternetNames(ctx, x, pub4)
+			}
+		case dd.Home:
 			if err = u.pointHome(ctx, x, ip4); err == nil {
 				err = u.setInternetNames(ctx, x, pub4)
 			}
-		} else {
+		default:
 			err = u.update(ctx, x.Name, dd.Provider, ip4, ip6)
 		}
 		u.Store.Update(func(d *state.Data) error {
@@ -397,16 +415,7 @@ func (u *Updater) setInternetNames(ctx context.Context, x state.Domain, ip strin
 		return err
 	}
 	zone, part := zoneParts(x)
-	labels := func(set string) map[string]bool {
-		out := map[string]bool{}
-		if f := strings.Fields(set); len(f) > 1 {
-			for _, l := range f[1:] {
-				out[l] = true
-			}
-		}
-		return out
-	}
-	want, had := labels(u.internetNames(x.Name, ip)), labels(x.DynDNS.Internet)
+	want, had := labelSet(u.internetNames(x.Name, ip)), labelSet(x.DynDNS.Internet)
 	ttl := u.minTTL(ctx, zone, token)
 	var changes []map[string]any
 	for l := range had {
@@ -527,18 +536,14 @@ func (u *Updater) desecHomeZone(ctx context.Context, name, token string) (string
 }
 
 // SetTXT sets (values) or removes (none) the TXT records at name, a name under one of the free domains or home names
-// on deSEC (_acme-challenge.home.example.com, for a certificate).
+// on deSEC or Cloudflare (_acme-challenge.home.example.com, for a certificate).
 func (u *Updater) SetTXT(ctx context.Context, name string, values []string) error {
-	var x state.Domain
-	u.Store.Read(func(d *state.Data) {
-		for _, y := range d.Domains() {
-			if y.DynDNS != nil && y.DynDNS.Provider == "desec" && strings.HasSuffix(name, "."+y.Name) && len(y.Name) > len(x.Name) {
-				x = y
-			}
-		}
-	})
-	if x.Name == "" {
-		return fmt.Errorf("%s isn't under a name from deSEC", name)
+	x, err := u.homeFor(name)
+	if err != nil {
+		return err
+	}
+	if x.DynDNS.Provider == "cloudflare" {
+		return u.cfSetTXT(ctx, x, name, values)
 	}
 	token, err := u.token(x.Name)
 	if err != nil {
@@ -558,6 +563,42 @@ func (u *Updater) SetTXT(ctx context.Context, name string, values []string) erro
 		return fmt.Errorf("deSEC couldn't set %s: %d %s", name, status, short(body))
 	}
 	return nil
+}
+
+// homeFor finds the name from deSEC or Cloudflare another name is under.
+func (u *Updater) homeFor(name string) (state.Domain, error) {
+	var x state.Domain
+	u.Store.Read(func(d *state.Data) {
+		for _, y := range d.Domains() {
+			ok := y.DynDNS != nil && (y.DynDNS.Provider == "desec" || y.DynDNS.Provider == "cloudflare")
+			if ok && strings.HasSuffix(name, "."+y.Name) && len(y.Name) > len(x.Name) {
+				x = y
+			}
+		}
+	})
+	if x.Name == "" {
+		return x, fmt.Errorf("%s isn't under a name from deSEC or Cloudflare", name)
+	}
+	return x, nil
+}
+
+// Nameservers are the servers that answer for a home name (host:port), to see a change has arrived before Let's
+// Encrypt looks: deSEC's, or the ones Cloudflare gave the domain.
+func (u *Updater) Nameservers(ctx context.Context, name string) []string {
+	x, err := u.homeFor("_acme-challenge." + name)
+	if err != nil || x.DynDNS.Provider != "cloudflare" {
+		return []string{"ns1.desec.io:53", "ns2.desec.org:53"}
+	}
+	token, err := u.token(x.Name)
+	var z cfZone
+	if err == nil && u.cf(ctx, "GET", "/zones/"+x.DynDNS.ZoneID, token, nil, &z) == nil && len(z.NameServers) > 0 {
+		var out []string
+		for _, ns := range z.NameServers {
+			out = append(out, ns+":53")
+		}
+		return out
+	}
+	return nil // unknown: Let's Encrypt is asked after a short wait instead
 }
 
 // minTTL is the shortest time records may be cached for on this domain (deSEC sets it per domain; dedyn.io names

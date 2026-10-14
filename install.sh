@@ -464,13 +464,14 @@ shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
 # A home name (yourname.dedyn.io, free from deSEC) points at this server's home address: every device at home finds it
 # with ordinary DNS, and Homeport gets a real certificate for it and every name under it through deSEC's DNS (no ports
 # opened, nothing reachable from outside), so nothing warns and signing in works everywhere.
-# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_HOME_NAME with HOMEPORT_HOME_TOKEN, or HOMEPORT_DDNS=duckdns|desec with
+# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_HOME_NAME with HOMEPORT_HOME_TOKEN (and HOMEPORT_HOME_PROVIDER=cloudflare|desec),
+# or HOMEPORT_DDNS=duckdns|desec with
 # HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
 ddns="" # the free name's provider, once registered
 home_name="" # the home name, once set up
-home_setup() { # home_setup NAME TOKEN: registers the home name and gets its certificate; on success it's the main domain
-  if printf '%s\n' "$2" | homeport domain home "$1" --keep-main; then
-    HOMEPORT_DOMAIN="$(printf '%s' "${1%.}" | tr '[:upper:]' '[:lower:]')" HOMEPORT_TLS=letsencrypt
+home_setup() { # home_setup PROVIDER NAME TOKEN: registers the home name and gets its certificate; on success it's the main domain
+  if printf '%s\n' "$3" | homeport domain home "$2" --provider "$1" --keep-main; then
+    HOMEPORT_DOMAIN="$(printf '%s' "${2%.}" | tr '[:upper:]' '[:lower:]')" HOMEPORT_TLS=letsencrypt
     case "$HOMEPORT_DOMAIN" in *.*) ;; *) HOMEPORT_DOMAIN="$HOMEPORT_DOMAIN.dedyn.io" ;; esac
     home_name=$HOMEPORT_DOMAIN
     return 0
@@ -478,19 +479,35 @@ home_setup() { # home_setup NAME TOKEN: registers the home name and gets its cer
   return 1
 }
 guide_home_name() { # asks for a home name, with how to get the token, until it works or they go back
-  local name token
-  printf '\n  A home name like yourname.dedyn.io, free from deSEC (a non-profit):\n' >/dev/tty
-  printf '  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n' >/dev/tty
-  printf '  2. Open "Token Management", add a token and copy it.\n' >/dev/tty
-  printf '  Homeport makes the name in your account and points it at this server (%s) for you.\n' "${first_ip:-its home address}" >/dev/tty
-  printf '  A domain of your own works too (home.example.com): add it to your deSEC account and set its nameservers\n' >/dev/tty
-  printf '  to ns1.desec.io and ns2.desec.org at the registrar where you bought it.\n\n' >/dev/tty
+  local name token provider pick
+  printf '\n  Where is the name?\n' >/dev/tty
+  printf '    1) Cloudflare: a domain of yours there (home.example.com)\n' >/dev/tty
+  printf '    2) deSEC: a free name (yourname.dedyn.io), or a domain of yours there\n' >/dev/tty
+  pick=""; printf '  Choose 1-2 [1]: ' >/dev/tty; read -r pick </dev/tty
+  if [ "${pick:-1}" = 2 ]; then
+    provider=desec
+    printf '\n  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n' >/dev/tty
+    printf '  2. Open "Token Management", add a token and copy it.\n' >/dev/tty
+    printf '  A domain of your own there needs its nameservers set to ns1.desec.io and ns2.desec.org.\n' >/dev/tty
+  else
+    provider=cloudflare
+    printf '\n  1. In Cloudflare (dash.cloudflare.com) your domain must be added and active.\n' >/dev/tty
+    printf '  2. My Profile, API Tokens, Create Token: use the "Edit zone DNS" template, choose your domain under\n' >/dev/tty
+    printf '     Zone Resources, create it and copy the token.\n' >/dev/tty
+    printf '  Homeport only changes the records for the name you choose (and names under it).\n' >/dev/tty
+  fi
+  printf '  It points the name at this server (%s) and gets real certificates for it.\n\n' "${first_ip:-its home address}" >/dev/tty
   while :; do
     name=""; token=""
-    printf 'Name (yourname for yourname.dedyn.io, or home.yourdomain.com), or Enter to go back: ' >/dev/tty; read -r name </dev/tty
+    if [ "$provider" = desec ]; then
+      printf 'Name (yourname for yourname.dedyn.io, or home.yourdomain.com), or Enter to go back: ' >/dev/tty
+    else
+      printf 'Name (home.yourdomain.com, or yourdomain.com), or Enter to go back: ' >/dev/tty
+    fi
+    read -r name </dev/tty
     [ -n "$name" ] || return 1
     printf 'Token: ' >/dev/tty; read -r -s token </dev/tty; echo >/dev/tty
-    if home_setup "$name" "$token" >/dev/tty 2>&1; then return 0; fi
+    if home_setup "$provider" "$name" "$token" >/dev/tty 2>&1; then return 0; fi
     printf 'That didn'"'"'t work (see above). Try again.\n' >/dev/tty
   done
 }
@@ -535,16 +552,16 @@ guide_free_name() { # asks for a free name, with how to get one, until it works 
   done
 }
 if [ -n "${HOMEPORT_HOME_NAME:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
-  home_setup "$HOMEPORT_HOME_NAME" "${HOMEPORT_HOME_TOKEN:-}" || die "couldn't set up the home name (see above)"
+  home_setup "${HOMEPORT_HOME_PROVIDER:-cloudflare}" "$HOMEPORT_HOME_NAME" "${HOMEPORT_HOME_TOKEN:-}" || die "couldn't set up the home name (see above)"
 fi
 if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
   free_name "$HOMEPORT_DDNS" "${HOMEPORT_DDNS_NAME:-}" "${HOMEPORT_DDNS_TOKEN:-}" || die "couldn't set up the free name (see above)"
 fi
 while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
   printf '\nHow should people reach this server?\n' >/dev/tty
-  printf '  1) A home name (recommended): free from deSEC (yourname.dedyn.io), or in a domain of your own. Every device\n' >/dev/tty
+  printf '  1) A home name (recommended): a name in your domain on Cloudflare, or a free one from deSEC. Every device\n' >/dev/tty
   printf '     at home finds it, with real certificates for it and every app: no warnings. Nothing is reachable from\n' >/dev/tty
-  printf '     outside until you choose so, app by app. Needs a free deSEC account (2 minutes).\n' >/dev/tty
+  printf '     outside until you choose so, app by app.\n' >/dev/tty
   printf '  2) homeport.local: nothing to set up, but browsers warn about every certificate, and some devices\n' >/dev/tty
   printf '     (Android, other subnets) can'"'"'t find it\n' >/dev/tty
   printf '  3) A free name from DuckDNS (yourname.duckdns.org) for the internet: needs ports 80 and 443 on the router\n' >/dev/tty

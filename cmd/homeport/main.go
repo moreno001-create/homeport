@@ -120,9 +120,10 @@ func usage() {
   homeport domain list | add DOMAIN | remove DOMAIN
   homeport domain main DOMAIN [--tls internal|letsencrypt]   move the portal and admin panel
   homeport domain free desec|duckdns NAME    a free NAME.dedyn.io or NAME.duckdns.org, kept pointed here
-  homeport domain home NAME [--keep-main]    a home name pointed at this server's home address, with a real
-                                             certificate for it and every name under it (deSEC token): NAME is
-                                             myhome (myhome.dedyn.io) or a name in your own domain on deSEC
+  homeport domain home NAME [--keep-main] [--provider desec|cloudflare]
+                                             a home name pointed at this server's home address, with a real
+                                             certificate for it and every name under it: NAME is myhome
+                                             (myhome.dedyn.io) or a name in your own domain on deSEC or Cloudflare
                                              (home.example.com)
   homeport domain cert DOMAIN auto|letsencrypt|internal      where its certificate comes from
   homeport domain cert DOMAIN custom --cert FULLCHAIN.pem --key KEY.pem
@@ -715,15 +716,21 @@ func cmdDomain(args []string) error {
 	case "home":
 		fs := flag.NewFlagSet("domain home", flag.ExitOnError)
 		keep := fs.Bool("keep-main", false, "keep the main domain as it is")
+		provider := fs.String("provider", "desec", "the DNS service: desec or cloudflare")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
 			return errors.New("usage: homeport domain home NAME [--keep-main]")
 		}
-		token, err := readSecret("Token from https://desec.io (Token management): ")
+		where := map[string]string{"desec": "Token from https://desec.io (Token management): ",
+			"cloudflare": "Cloudflare API token (My Profile → API Tokens → \"Edit zone DNS\" for the domain): "}[*provider]
+		if where == "" {
+			return errors.New(`--provider is "desec" or "cloudflare"`)
+		}
+		token, err := readSecret(where)
 		if err != nil {
 			return err
 		}
-		return follow("/domains/home", map[string]any{"name": pos[0], "token": token, "main": !*keep}, "POST")
+		return follow("/domains/home", map[string]any{"provider": *provider, "name": pos[0], "token": token, "main": !*keep}, "POST")
 	case "cert":
 		fs := flag.NewFlagSet("domain cert", flag.ExitOnError)
 		certFile := fs.String("cert", "", "the certificate with its chain (PEM)")

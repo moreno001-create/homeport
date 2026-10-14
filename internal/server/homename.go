@@ -22,8 +22,8 @@ import (
 
 // MARK: Home name
 //
-// A home name is a free name from deSEC (home.dedyn.io), or a name in a domain of your own that uses deSEC's
-// nameservers (home.example.com), that points at this server's address on the home network.
+// A home name is a free name from deSEC (home.dedyn.io), or a name in a domain of your own on deSEC or Cloudflare
+// (home.example.com), that points at this server's address on the home network.
 // Every device at home finds it with ordinary DNS (phones, Android, other subnets, the server itself), nothing
 // outside can reach it, and Homeport gets it a real certificate from Let's Encrypt for it and every name under it,
 // proving it owns the name through its DNS: no ports to open. So every app is trusted out of the box, and signing
@@ -37,8 +37,8 @@ func (s *Server) homeNameRoutes(mux *http.ServeMux, guard func(http.HandlerFunc)
 // renewBefore is how long before a certificate runs out a new one is got.
 const renewBefore = 30 * 24 * time.Hour
 
-func (s *Server) acmeClient() *acmedns.Client {
-	return &acmedns.Client{Dir: filepath.Join(s.stateDir(), "acme"), Email: s.settings().ACMEEmail, Nameservers: acmedns.DesecNameservers}
+func (s *Server) acmeClient(ctx context.Context, name string) *acmedns.Client {
+	return &acmedns.Client{Dir: filepath.Join(s.stateDir(), "acme"), Email: s.settings().ACMEEmail, Nameservers: s.DynDNS.Nameservers(ctx, name)}
 }
 
 // addHomeName sets up a home name (a job): the name on deSEC pointed at this server's home address, its certificate,
@@ -49,15 +49,17 @@ func (s *Server) addHomeName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name  string `json:"name"`
-		Token string `json:"token"`
-		Main  bool   `json:"main"`
+		Provider string `json:"provider"` // desec (default) or cloudflare
+		Name     string `json:"name"`
+		Token    string `json:"token"`
+		Main     bool   `json:"main"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	name, err := dyndns.HomeName(in.Name)
+	provider := cmpOr(in.Provider, "desec")
+	name, err := homeNameFor(provider, in.Name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -68,7 +70,7 @@ func (s *Server) addHomeName(w http.ResponseWriter, r *http.Request) {
 	}
 	token := in.Token
 	j := s.jobs.start("home name "+name, func(ctx context.Context, j *job) error {
-		return s.SetUpHomeName(ctx, name, token, in.Main, j)
+		return s.SetUpHomeName(ctx, provider, name, token, in.Main, j)
 	})
 	writeJSON(w, http.StatusAccepted, j.view())
 }
@@ -80,10 +82,24 @@ func (s *Server) HomeName() string {
 	return h
 }
 
-// SetUpHomeName registers name on deSEC as the home name, gets its certificate, and (main) makes it the main domain.
-func (s *Server) SetUpHomeName(ctx context.Context, name, token string, main bool, log io.Writer) error {
-	fmt.Fprintf(log, "Setting up %s on deSEC, pointed at this server's home address…\n", name)
-	if err := s.DynDNS.RegisterHome(ctx, name, token); err != nil {
+// homeNameFor checks a home name for its DNS service: on deSEC, "myhome" is myhome.dedyn.io; on Cloudflare it's a
+// name in your own domain there.
+func homeNameFor(provider, typed string) (string, error) {
+	if dyndns.HomeProviders[provider] == "" {
+		return "", fmt.Errorf(`the DNS service is "desec" or "cloudflare"`)
+	}
+	name, err := dyndns.HomeName(typed)
+	if err == nil && provider == "cloudflare" && (!strings.Contains(strings.TrimSpace(typed), ".") || strings.HasSuffix(name, ".dedyn.io")) {
+		return "", errors.New("on Cloudflare, type a name in your domain there: home.example.com, or example.com")
+	}
+	return name, err
+}
+
+// SetUpHomeName registers name on deSEC or Cloudflare as the home name, gets its certificate, and (main) makes it the
+// main domain.
+func (s *Server) SetUpHomeName(ctx context.Context, provider, name, token string, main bool, log io.Writer) error {
+	fmt.Fprintf(log, "Setting up %s on %s, pointed at this server's home address…\n", name, dyndns.HomeProviders[provider])
+	if err := s.DynDNS.RegisterHome(ctx, provider, name, token); err != nil {
 		return err
 	}
 	if err := s.renewHomeCert(ctx, name, log); err != nil {
@@ -130,7 +146,7 @@ func (s *Server) makeMain(name string) error {
 func (s *Server) renewHomeCert(ctx context.Context, name string, log io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	cert, key, until, err := s.acmeClient().Obtain(ctx, name, s.DynDNS, log)
+	cert, key, until, err := s.acmeClient(ctx, name).Obtain(ctx, name, s.DynDNS, log)
 	if err == nil {
 		err = certs.Save(s.CertDir, name, cert, key)
 	}

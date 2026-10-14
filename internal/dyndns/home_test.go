@@ -149,10 +149,10 @@ func homeSetup(t *testing.T) (*Updater, *desecRecords) {
 func TestHomeName(t *testing.T) {
 	u, f := homeSetup(t)
 	ctx := context.Background()
-	if err := u.RegisterHome(ctx, "home.dedyn.io", "bad"); err == nil {
+	if err := u.RegisterHome(ctx, "desec", "home.dedyn.io", "bad"); err == nil {
 		t.Fatal("a refused token should fail")
 	}
-	if err := u.RegisterHome(ctx, "home.dedyn.io", "good"); err != nil {
+	if err := u.RegisterHome(ctx, "desec", "home.dedyn.io", "good"); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.all(); got != " A=192.168.7.3 * CNAME=home.dedyn.io." {
@@ -252,7 +252,7 @@ func TestHomeNameOnYourOwnDomain(t *testing.T) {
 	t.Cleanup(func() { lookupNS = net.DefaultResolver.LookupNS })
 
 	// Not using deSEC's nameservers yet: added to the account, but refused, with what to do.
-	err := u.RegisterHome(ctx, "home.example.org", "good")
+	err := u.RegisterHome(ctx, "desec", "home.example.org", "good")
 	if err == nil || !strings.Contains(err.Error(), "ns1.desec.io") || !strings.Contains(err.Error(), "ns1.registrar.example") {
 		t.Fatalf("err = %v", err)
 	}
@@ -263,7 +263,7 @@ func TestHomeNameOnYourOwnDomain(t *testing.T) {
 	// co.uk is a public suffix: example.co.uk is the domain.
 	f.records["www A"] = []string{"198.51.100.1"} // the domain's own website stays
 	f.first = "example.co.uk"
-	if err := u.RegisterHome(ctx, "home.example.co.uk", "good"); err != nil {
+	if err := u.RegisterHome(ctx, "desec", "home.example.co.uk", "good"); err != nil {
 		t.Fatal(err)
 	}
 	d, _ := domain(u, "home.example.co.uk")
@@ -290,7 +290,7 @@ func TestHomeNameOnYourOwnDomain(t *testing.T) {
 
 	// Someone else's domain.
 	f.others["taken.net"] = true
-	if err := u.RegisterHome(ctx, "home.taken.net", "good"); err == nil || !strings.Contains(err.Error(), "someone else") {
+	if err := u.RegisterHome(ctx, "desec", "home.taken.net", "good"); err == nil || !strings.Contains(err.Error(), "someone else") {
 		t.Errorf("err = %v", err)
 	}
 }

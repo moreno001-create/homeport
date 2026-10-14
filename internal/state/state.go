@@ -111,7 +111,7 @@ const (
 // DynDNS is a free domain kept pointed at this server's public address. Its token isn't here: it's kept in its own
 // root-only file.
 type DynDNS struct {
-	Provider string    `json:"provider"` // "desec" or "duckdns"
+	Provider string    `json:"provider"` // "desec" or "duckdns"; home names: "desec" or "cloudflare"
 	IPv4     string    `json:"ipv4,omitempty"`
 	IPv6     string    `json:"ipv6,omitempty"`
 	Updated  time.Time `json:"updated,omitempty"` // last successful update
@@ -128,6 +128,8 @@ type DynDNS struct {
 	// Zone is the deSEC domain a home name is in, when it's a part of one (home.example.com in example.com); ""
 	// when the name is the whole domain (myhome.dedyn.io).
 	Zone string `json:"zone,omitempty"`
+	// ZoneID is the domain's id at the DNS provider, when it has one (Cloudflare).
+	ZoneID string `json:"zoneId,omitempty"`
 }
 
 // Access says who may open an app: everyone on the internet, or signed-in users in one of the groups.

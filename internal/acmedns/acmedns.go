@@ -156,6 +156,13 @@ func (c *Client) waitFor(ctx context.Context, name string, values []string) erro
 		wait = 5 * time.Minute
 	}
 	end := time.Now().Add(wait)
+	if len(c.Nameservers) == 0 { // not known: give the change time to spread
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(45 * time.Second):
+		}
+	}
 	for _, ns := range c.Nameservers {
 		r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, ns)
