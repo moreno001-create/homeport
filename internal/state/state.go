@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -555,6 +556,17 @@ func (v *Data) SignInName() string {
 		return "signin." + h
 	}
 	return ""
+}
+
+// AppAddress is the address to open an app at: its name, with the internet port when it's on the internet under the
+// home name and that isn't 443 (photos.home.example.com:8443).
+func (v *Data) AppAddress(a App) string {
+	if a.Internet && v.UnderHome(a.Domain) {
+		if p := v.d.Settings.InternetPort; p != 0 && p != 443 {
+			return a.Domain + ":" + strconv.Itoa(p)
+		}
+	}
+	return a.Domain
 }
 
 // UnderHome says whether a name is the home name or under it.

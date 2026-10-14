@@ -35,6 +35,7 @@ type pageData struct {
 	Main   string
 	User   *state.User
 	Apps   []state.App
+	Links  map[string]string // app id → its address (with the internet port when it has one)
 	App    *state.App
 	Return string
 	Error  string
@@ -83,7 +84,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   {{if or .Apps .AI}}
   <ul class="tiles">
     {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
-    {{range .Apps}}<li><a class="tile" href="https://{{.Domain}}/"><span class="glyph" aria-hidden="true">{{initial .Name}}</span><span class="tname">{{.Name}}</span><span class="tdomain">{{.Domain}}</span></a></li>{{end}}
+    {{range .Apps}}<li><a class="tile" href="https://{{index $.Links .ID}}/"><span class="glyph" aria-hidden="true">{{initial .Name}}</span><span class="tname">{{.Name}}</span><span class="tdomain">{{index $.Links .ID}}</span></a></li>{{end}}
   </ul>
   {{else}}
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>

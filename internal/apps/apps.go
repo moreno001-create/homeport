@@ -828,6 +828,8 @@ func (m *Manager) ChangeAddress(ctx context.Context, id, domain string, log io.W
 			return fmt.Errorf("%s is the main domain (portal and admin panel)", domain)
 		case domain == d.AIDomain():
 			return fmt.Errorf("%s is the AI page's address", domain)
+		case domain == d.SignInName():
+			return fmt.Errorf("%s is where people outside sign in", domain)
 		}
 		if other, taken := d.AppOn(domain); taken {
 			return fmt.Errorf("%s already serves %s", domain, other.Name)

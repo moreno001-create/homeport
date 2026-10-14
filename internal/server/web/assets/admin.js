@@ -67,7 +67,7 @@ const views = {
     const [installed, catalog] = await Promise.all([api("GET", "/apps"), api("GET", "/catalog")]);
     const rows = installed.map(a => h("tr", {},
       h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])),
-      h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain), " ",
+      h("td", {}, h("a", { href: "https://" + (a.address || a.domain) + "/", target: "_blank", rel: "noopener" }, a.address || a.domain), " ",
         h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
       h("td", {}, accessText(a.access)),
       h("td", {}, h("span", { class: "pill " + a.status.split(" ")[0] }, a.status)),
@@ -100,7 +100,7 @@ const views = {
     const statePill = (state, label) => h("span", { class: "pill " + ({ running: "running", exited: "stopped", dead: "stopped", failed: "failed", stopped: "stopped" }[state] || "unknown") }, label || state);
     const appCards = data.apps.map(a => h("div", { class: "card stack svc" },
       h("div", { class: "head" },
-        h("div", {}, h("h2", {}, a.name), h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener", class: "small" }, a.domain)),
+        h("div", {}, h("h2", {}, a.name), h("a", { href: "https://" + (a.address || a.domain) + "/", target: "_blank", rel: "noopener", class: "small" }, a.address || a.domain)),
         h("div", { class: "row" }, appRunButtons({ id: a.id, name: a.name,
           status: a.containers.every(c => c.setup || c.state === "running") ? "running" : a.containers.some(c => !c.setup && c.state === "running") ? "partly running" : "stopped" }))),
       a.error ? h("p", { class: "error" }, a.error) : null,
@@ -751,10 +751,15 @@ function moveToHomeButton(domains) {
   const home = domains.find(d => d.dyndns && d.dyndns.home).name;
   return h("button", { class: "primary", onclick: async () => {
     const list = (await api("GET", "/apps")).filter(a => a.domain !== home && !a.domain.endsWith("." + home));
+    // The same first name under the home name, unless that one's taken (ai and signin are Homeport's own): the app's id.
+    const taken = new Set(["ai", "signin", ...(await api("GET", "/apps")).filter(a => a.domain.endsWith("." + home)).map(a => a.domain.slice(0, -home.length - 1))]);
+    const label = a => { const l = a.domain.split(".")[0]; return taken.has(l) ? a.id : l; };
     if (!list.length) { toast("Every app is under " + home + " already"); return; }
     if (!confirm("Move " + list.map(a => a.name).join(", ") + " to names under " + home + "? Each restarts briefly; old bookmarks stop working.")) return;
     for (const a of list) {
-      const j = await runJob("Moving " + a.name, () => api("POST", "/apps/" + a.id + "/address", { domain: a.domain.split(".")[0] + "." + home }));
+      const name = label(a) + "." + home;
+      taken.add(label(a));
+      const j = await runJob("Moving " + a.name + " to " + name, () => api("POST", "/apps/" + a.id + "/address", { domain: name }));
       if (!j || j.status !== "done") return;
     }
     toast("All apps are under " + home);

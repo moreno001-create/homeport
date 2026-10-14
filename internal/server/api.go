@@ -834,20 +834,21 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		HasSecret bool          `json:"hasSecrets"`
 		Source    *state.Source `json:"source,omitempty"`
 		Internet  bool          `json:"internet"` // on a public name (not a home-network one)
+		Address   string        `json:"address"`  // where to open it (with the internet port when it has one)
 	}
 	var list []state.App
-	online := map[string]bool{}
+	online, address := map[string]bool{}, map[string]string{}
 	s.Store.Read(func(d *state.Data) {
 		list = d.Apps()
 		for _, a := range list {
-			online[a.ID] = d.OnInternet(a)
+			online[a.ID], address[a.ID] = d.OnInternet(a), d.AppAddress(a)
 		}
 	})
 	out := make([]row, len(list))
 	var wg sync.WaitGroup
 	for i, a := range list {
 		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source,
-			Internet: online[a.ID]}
+			Internet: online[a.ID], Address: address[a.ID]}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t
@@ -1080,9 +1081,14 @@ func (s *Server) setInternet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, j.view())
 		return
 	}
+	var home string
+	s.Store.Read(func(d *state.Data) { home = d.HomeName() })
 	switch {
 	case current == "":
 		writeError(w, http.StatusNotFound, state.ErrNotFound)
+		return
+	case home != "" && in.On && base == "":
+		writeError(w, http.StatusBadRequest, fmt.Errorf("move it to the home name first (Domains → Move apps to the home name, or its Address button), then put it on the internet: it's at %s", current))
 		return
 	case base == "" && in.On:
 		writeError(w, http.StatusBadRequest, errors.New("there's no internet name yet: get a free one under Internet access (DuckDNS or deSEC) first"))

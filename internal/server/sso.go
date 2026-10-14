@@ -189,15 +189,17 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var mine []state.App
+	links := map[string]string{}
 	s.Store.Read(func(d *state.Data) {
 		for _, a := range d.Apps() {
 			if canOpen(u, a) {
 				mine = append(mine, a)
+				links[a.ID] = d.AppAddress(a)
 			}
 		}
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, AI: s.aiHost()})
+	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.aiHost()})
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {

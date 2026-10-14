@@ -54,6 +54,16 @@ func TestHomeNameInternetAndSignIn(t *testing.T) {
 		t.Error("going back to the app on its port should be allowed")
 	}
 
+	// Links to it carry the port: the Apps page and the portal.
+	if w := r.local(t, "GET", "/api/apps", ""); !strings.Contains(w.Body.String(), `"address":"mealie.home.dedyn.io:8443"`) {
+		t.Errorf("apps: %s", w.Body.String())
+	}
+	var links string
+	r.srv.Store.Read(func(d *state.Data) { a, _ := d.App(app.ID); links = d.AppAddress(*a) })
+	if links != "mealie.home.dedyn.io:8443" {
+		t.Errorf("address %q", links)
+	}
+
 	// Home-only apps still sign in on the main domain.
 	_ = r.srv.Store.Update(func(d *state.Data) error { a, _ := d.App(app.ID); a.Internet = false; return nil })
 	res = b.do("GET", "https://mealie.home.dedyn.io/auth/verify?app="+app.ID, nil, map[string]string{"X-Forwarded-Method": "GET", "X-Forwarded-Uri": "/"})
