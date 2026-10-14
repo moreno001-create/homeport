@@ -148,7 +148,7 @@ func (s *Server) readInternet(ctx context.Context) internetStatus {
 
 // internetSteps says what's still missing between the internet and this server, first thing first.
 func internetSteps(st internetStatus) ([]string, bool) {
-	var steps []string
+	steps := []string{} // never null: the page reads its length
 	forwarded := allMine(st.Forwards)
 	ports := "ports 80 and 443"
 	if st.HomeName != "" {

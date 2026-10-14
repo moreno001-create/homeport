@@ -313,7 +313,7 @@ const views = {
             : item(!!st.name && st.namePoints, "Internet name", st.name ? st.name + (st.namePoints ? " points here." : " points at " + ((st.nameIPs || []).join(", ") || "nothing") + ", not here yet.") : "None yet.", st.name && !st.namePoints),
           item(!!st.cert.trusted, "Certificate", st.name ? certText(st.cert) : "Comes with the internet name.", st.name && !st.cert.trusted)),
         h("div", { class: "row" }, routerBtn, altPort, st.name ? null : h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free internet name"))),
-      st.steps.length ? h("div", { class: "card stack" }, h("h2", {}, "What's left"), h("ol", { class: "steps" }, st.steps.map(t => h("li", {}, t)))) : h("p", {}, "Everything's in place: apps you put on the internet are reachable from anywhere, with real certificates."),
+      (st.steps || []).length ? h("div", { class: "card stack" }, h("h2", {}, "What's left"), h("ol", { class: "steps" }, st.steps.map(t => h("li", {}, t)))) : h("p", {}, "Everything's in place: apps you put on the internet are reachable from anywhere, with real certificates."),
       h("h2", {}, "Apps"),
       st.apps.length ? h("div", { class: "list" }, h("table", {},
         h("thead", {}, h("tr", {}, ["App", "Address", "Certificate", ""].map(t => h("th", {}, t)))),
