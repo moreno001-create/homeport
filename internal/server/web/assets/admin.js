@@ -276,18 +276,24 @@ const views = {
     const mark = (ok, wait) => h("span", { class: "tick " + (ok ? "ok" : wait ? "wait" : "bad"), "aria-hidden": "true" }, ok ? "✓" : wait ? "…" : "✗");
     const item = (ok, title, detail, wait) => h("li", {}, mark(ok, wait), h("div", {}, h("b", {}, title), detail ? h("div", { class: "muted small" }, detail) : null));
     const fw = st.forwards || [];
-    const forwarded = fw.length === 2 && fw.every(f => f.mine);
+    const forwarded = fw.length > 0 && fw.every(f => f.mine);
+    const ports = st.homeName ? "port " + st.port : "ports 80 and 443";
+    const portSuffix = st.port && st.port !== 443 ? ":" + st.port : "";
     const elsewhere = fw.filter(f => f.to && !f.mine);
     const certText = c => c.trusted ? "valid until " + new Date(c.notAfter).toLocaleDateString() + " (" + (c.issuer || "") + ")"
       : c.error ? c.error : c.issuer ? "only Caddy's own certificate so far" : "none yet";
+    const openPorts = async port => {
+      const which = port ? "port " + port + " (to this server's 443)" : ports;
+      if (!confirm("Ask the router (" + st.router.name + ") to send " + which + " to this server? Apps you put on the internet become reachable by anyone (each still behind its sign-in, unless you made it public).")) return;
+      try { await api("POST", "/internet/router", { open: true, port: port || 0 }); toast("The router forwards " + which + " here now"); } catch (err) { toast(err.message); }
+      route();
+    };
+    const altPort = st.router.found && !forwarded && elsewhere.length && st.homeName && st.port === 443
+      ? h("button", { class: "primary", onclick: () => openPorts(8443) }, "Use port 8443 instead (beside the other device)") : null;
     const routerBtn = st.router.found && !forwarded && !elsewhere.length
-      ? h("button", { class: "primary", onclick: async () => {
-          if (!confirm("Ask the router (" + st.router.name + ") to send ports 80 and 443 to this server? Apps you put on the internet become reachable by anyone (each still behind its sign-in, unless you made it public).")) return;
-          try { await api("POST", "/internet/router", { open: true }); toast("The router forwards 80 and 443 here now"); } catch (err) { toast(err.message); }
-          route();
-        } }, "Open ports 80 and 443 on the router")
+      ? h("button", { class: "primary", onclick: () => openPorts(0) }, "Open " + ports + " on the router")
       : st.routerPorts ? h("button", { onclick: async () => {
-          if (!confirm("Stop forwarding ports 80 and 443 to this server? Apps on the internet become unreachable from outside.")) return;
+          if (!confirm("Stop forwarding " + ports + " to this server? Apps on the internet become unreachable from outside.")) return;
           try { await api("POST", "/internet/router", { open: false }); toast("Closed"); } catch (err) { toast(err.message); }
           route();
         } }, "Close them again") : null;
@@ -299,20 +305,22 @@ const views = {
             ? (st.shared ? "Shared address (" + (st.router.outside || st.publicIP) + "): nothing from outside can come in through this connection." : "This home is at " + st.publicIP + " on the internet.")
             : "Can't reach the internet."),
           item(st.router.found, "Router", st.router.found ? st.router.name + ": takes automatic port forwarding (UPnP). This server is " + st.router.local + " to it." : st.router.error),
-          item(forwarded, "Ports 80 and 443", forwarded ? "Forwarded to this server" + (st.routerPorts ? " (Homeport keeps them open)." : ".")
+          item(forwarded, ports[0].toUpperCase() + ports.slice(1), forwarded ? "Forwarded to this server" + (portSuffix ? " (to its 443)" : "") + (st.routerPorts ? " (Homeport keeps it open)." : ".")
             : elsewhere.length ? "The router already sends them to another device: " + elsewhere.map(f => f.port + " → " + f.to + (f.what ? " (" + f.what + ")" : "")).join(", ") + ". Change that in the router's app (port forwarding), then check again."
             : "Not forwarded yet."),
-          item(!!st.name && st.namePoints, "Internet name", st.name ? st.name + (st.namePoints ? " points here." : " points at " + ((st.nameIPs || []).join(", ") || "nothing") + ", not here yet.") : "None yet.", st.name && !st.namePoints),
+          st.homeName
+            ? item(true, "Home name", st.homeName + ": apps keep their addresses; putting one on the internet points its name (and signin." + st.homeName + ", for signing in) at this home's public address." + (portSuffix ? " From anywhere, add " + portSuffix + " to their addresses." : ""))
+            : item(!!st.name && st.namePoints, "Internet name", st.name ? st.name + (st.namePoints ? " points here." : " points at " + ((st.nameIPs || []).join(", ") || "nothing") + ", not here yet.") : "None yet.", st.name && !st.namePoints),
           item(!!st.cert.trusted, "Certificate", st.name ? certText(st.cert) : "Comes with the internet name.", st.name && !st.cert.trusted)),
-        h("div", { class: "row" }, routerBtn, st.name ? null : h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free internet name"))),
+        h("div", { class: "row" }, routerBtn, altPort, st.name ? null : h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free internet name"))),
       st.steps.length ? h("div", { class: "card stack" }, h("h2", {}, "What's left"), h("ol", { class: "steps" }, st.steps.map(t => h("li", {}, t)))) : h("p", {}, "Everything's in place: apps you put on the internet are reachable from anywhere, with real certificates."),
       h("h2", {}, "Apps"),
       st.apps.length ? h("div", { class: "list" }, h("table", {},
         h("thead", {}, h("tr", {}, ["App", "Address", "Certificate", ""].map(t => h("th", {}, t)))),
         h("tbody", {}, st.apps.map(a => h("tr", {},
           h("td", {}, h("b", {}, a.name)),
-          h("td", {}, h("a", { href: "https://" + a.domain + "/", target: "_blank", rel: "noopener" }, a.domain), " ", h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
-          h("td", { class: "small" }, a.internet ? certText(a.cert) : "Caddy's own (home network)"),
+          h("td", {}, h("a", { href: "https://" + a.domain + (a.internet ? portSuffix : "") + "/", target: "_blank", rel: "noopener" }, a.domain + (a.internet ? portSuffix : "")), " ", h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
+          h("td", { class: "small" }, a.internet || st.homeName ? certText(a.cert) : "Caddy's own (home network)"),
           h("td", { class: "actions" }, h("button", { onclick: () => {
             if (!a.internet && !st.name) { toast("Get a free internet name first"); return; }
             runJob((a.internet ? "Taking " : "Putting ") + a.name + (a.internet ? " off" : " on") + " the internet", () => api("POST", "/apps/" + a.id + "/internet", { on: !a.internet }));
@@ -451,7 +459,9 @@ const views = {
     const live = {};
     api("GET", "/certificates").then(list => list.forEach(c => live[c.name] && live[c.name].replaceChildren(liveText(c)))).catch(() => {});
     return [
-      h("div", { class: "head" }, h("h1", {}, "Domains"), h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free domain")),
+      h("div", { class: "head" }, h("h1", {}, "Domains"), h("div", { class: "row" },
+        domains.some(d => d.dyndns && d.dyndns.home) ? moveToHomeButton(domains) : h("button", { class: "primary", onclick: homeNameDialog }, "Set up a home name"),
+        h("button", { onclick: freeDomainDialog }, "Get a free domain"))),
       h("form", { class: "card row", onsubmit: async e => { e.preventDefault(); try { await api("POST", "/domains", { name: input.value.trim() }); toast("Added " + input.value.trim()); route(); } catch (err) { toast(err.message); } } },
         h("label", {}, "Add a domain", input), h("button", { class: "primary", type: "submit" }, "Add")),
       h("div", { class: "list" }, h("table", {},
@@ -637,7 +647,7 @@ function accessDialog(a) {
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Save"))));
 }
 
-const certNames = { letsencrypt: "Let's Encrypt", internal: "Caddy's own", custom: "Uploaded" };
+const certNames = { letsencrypt: "Let's Encrypt", internal: "Caddy's own", custom: "Uploaded", dns: "Let's Encrypt, through DNS (it and every name under it)" };
 
 // What a browser gets from a domain right now.
 function liveText(c) {
@@ -650,6 +660,8 @@ function liveText(c) {
 
 function freeText(dd) {
   const who = dd.provider === "desec" ? "deSEC" : "DuckDNS";
+  if (dd.home) return "Home name from deSEC" + (dd.error ? ": " + dd.error : dd.ipv4 ? ", pointed at this server (" + dd.ipv4 + ")" : "") +
+    (dd.certError ? " · certificate: " + dd.certError : dd.certUntil && !dd.certUntil.startsWith("0001") ? " · certificate until " + when(dd.certUntil) : "");
   if (dd.error) return "Free from " + who + ": " + dd.error;
   return "Free from " + who + (dd.ipv4 || dd.ipv6 ? ", pointed at " + [dd.ipv4, dd.ipv6].filter(Boolean).join(" and ") : "");
 }
@@ -678,6 +690,46 @@ function certDialog(d) {
     h("label", {}, "Where it comes from", mode),
     upload,
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Save"))));
+}
+
+// homeNameDialog sets up a home name: a free deSEC name pointed at this server's home address, with real certificates
+// for it and every name under it, so every device at home finds the server and trusts it.
+function homeNameDialog() {
+  const name = h("input", { required: true, placeholder: "myhome", autocapitalize: "none", spellcheck: "false" });
+  const token = h("input", { type: "password", required: true, autocomplete: "off" });
+  const main = h("input", { type: "checkbox", checked: true });
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    const body = { name: name.value.trim(), token: token.value, main: main.checked };
+    dialog.close();
+    const j = await runJob("Setting up " + body.name.replace(/\.dedyn\.io$/, "") + ".dedyn.io", () => api("POST", "/domains/home", body));
+    if (j && j.status === "done") toast("Home name ready");
+  } },
+    h("h2", {}, "Set up a home name"),
+    h("p", {}, "A free name like ", h("b", {}, "myhome.dedyn.io"), " that points at this server's address on your home network. Every device at home finds it (phones, Android, other subnets, the server itself), and Homeport gets a real certificate for it and every app under it: no more warnings, and signing in works everywhere. Nothing becomes reachable from the internet; you can still put apps there one by one."),
+    h("ol", { class: "small" }, h("li", {}, "Open ", h("a", { href: "https://desec.io", target: "_blank", rel: "noopener" }, "desec.io"), ", sign up (email and password) and confirm your email."),
+      h("li", {}, "Under Token Management, add a token and copy it.")),
+    h("label", {}, "Name", h("span", { class: "suffixed" }, name, h("span", { class: "muted" }, ".dedyn.io"))),
+    h("label", {}, "deSEC token", token),
+    h("label", { class: "check" }, main, "Make it the main address (portal and admin panel)"),
+    h("p", { class: "muted small" }, "Getting the certificate takes a minute or two. Apps you already have keep their addresses: move them to the new name afterwards (Domains → Move apps to the home name)."),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Set it up"))));
+}
+
+// moveToHomeButton moves every app not yet under the home name to the same first name under it
+// (librespeed.homeport.local → librespeed.myhome.dedyn.io), one after another.
+function moveToHomeButton(domains) {
+  const home = domains.find(d => d.dyndns && d.dyndns.home).name;
+  return h("button", { class: "primary", onclick: async () => {
+    const list = (await api("GET", "/apps")).filter(a => a.domain !== home && !a.domain.endsWith("." + home));
+    if (!list.length) { toast("Every app is under " + home + " already"); return; }
+    if (!confirm("Move " + list.map(a => a.name).join(", ") + " to names under " + home + "? Each restarts briefly; old bookmarks stop working.")) return;
+    for (const a of list) {
+      const j = await runJob("Moving " + a.name, () => api("POST", "/apps/" + a.id + "/address", { domain: a.domain.split(".")[0] + "." + home }));
+      if (!j || j.status !== "done") return;
+    }
+    toast("All apps are under " + home);
+  } }, "Move apps to the home name");
 }
 
 function freeDomainDialog() {

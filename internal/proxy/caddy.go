@@ -55,7 +55,12 @@ func CaddyfileFor(s state.Settings, apps []state.App, localAddrs []string, certs
 	b.WriteString("}\n")
 
 	if s.MainDomain != "" {
-		fmt.Fprintf(&b, "\n%s {\n", s.MainDomain)
+		// The sign-in name (a home name's, for people outside) is the portal too.
+		site := s.MainDomain
+		if _, ok := certs["signin."+s.MainDomain]; ok {
+			site += ", signin." + s.MainDomain
+		}
+		fmt.Fprintf(&b, "\n%s {\n", site)
 		real := writeTLS(&b, s, s.MainDomain, certs[s.MainDomain])
 		writeHomeport(&b, s, real)
 		if len(localAddrs) > 0 {
@@ -105,7 +110,7 @@ func AIDomain(main string, apps []state.App) string {
 // It says whether browsers trust that certificate (not Caddy's own).
 func writeTLS(b *strings.Builder, s state.Settings, domain string, t SiteTLS) bool {
 	switch state.CertFor(s, domain, t.Mode) {
-	case state.CertInternal:
+	case state.CertInternal, state.CertDNS: // (a home name's certificate comes in as CertCustom once Homeport has it)
 		b.WriteString("\ttls internal\n")
 		return false
 	case state.CertCustom:

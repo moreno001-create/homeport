@@ -120,6 +120,8 @@ func usage() {
   homeport domain list | add DOMAIN | remove DOMAIN
   homeport domain main DOMAIN [--tls internal|letsencrypt]   move the portal and admin panel
   homeport domain free desec|duckdns NAME    a free NAME.dedyn.io or NAME.duckdns.org, kept pointed here
+  homeport domain home NAME [--keep-main]    a home name: NAME.dedyn.io pointed at this server's home address,
+                                             with a real certificate for it and every name under it (deSEC token)
   homeport domain cert DOMAIN auto|letsencrypt|internal      where its certificate comes from
   homeport domain cert DOMAIN custom --cert FULLCHAIN.pem --key KEY.pem
   homeport domain certs                      the certificate each site really has
@@ -176,12 +178,14 @@ func serve() error {
 	applyProxy := func(ctx context.Context) error {
 		var st state.Settings
 		var list []state.App
-		var names []string // what Caddy serves: announced on the home network when they're .local
-		var home []string  // home-network names the portal also answers on
+		var names []string  // what Caddy serves: announced on the home network when they're .local
+		var home []string   // home-network names the portal also answers on
+		var homeName string // the home name with a real certificate for it and every name under it
 		own := map[string]proxy.SiteTLS{}
 		store.Read(func(d *state.Data) {
 			st, list = *d.Settings(), d.Apps()
 			home = d.HomeNames()
+			homeName = d.HomeName()
 			names = append(names, st.MainDomain, d.AIDomain())
 			names = append(names, home...)
 			for _, a := range list {
@@ -197,6 +201,10 @@ func serve() error {
 		if st.MainDomain == "" {
 			return nil // not set up yet: leave Caddy alone
 		}
+		if homeName != "" && homeName == st.MainDomain {
+			names = append(names, "signin."+homeName) // where people outside sign in (state.SignInName)
+		}
+		homeCerts(own, names, homeName, plat.CertDir)
 		writeLoginBanner(st.MainDomain)
 		addrs := localAddrs()
 		if announce != nil {
@@ -219,7 +227,7 @@ func serve() error {
 	chat := &assist.Chat{A: helper, KeyFile: filepath.Join(stateDir, "anthropic-api-key"), UsageFile: filepath.Join(stateDir, "assistant-usage.json")}
 	srv := &server.Server{Store: store, Apps: manager, Version: version, ApplyProxy: applyProxy, Signer: signer, Assist: helper,
 		Chat: chat, LocalAddrs: localAddrs, CertDir: plat.CertDir, HTTPSAddr: "127.0.0.1:" + cmp.Or(os.Getenv("HOMEPORT_HTTPS_PORT"), "443"),
-		DynDNS: &dyndns.Updater{Store: store, Dir: filepath.Join(stateDir, "dyndns")}}
+		DynDNS: &dyndns.Updater{Store: store, Dir: filepath.Join(stateDir, "dyndns"), LocalIPv4: homeAddress}}
 	srv.System = &system.Manager{Runner: sys, OS: plat.Name, UID: os.Getuid(), Logs: plat.LogsCommand}
 	srv.Firewall = &firewall.Manager{Runner: sys, OS: plat.Name}
 	srv.Backup = &backup.Manager{Store: store, Apps: manager, StateDir: stateDir, Dir: filepath.Join(stateDir, "backup"), Run: backup.RunRestic,
@@ -240,6 +248,7 @@ func serve() error {
 	go srv.DailyChecks(ctx)
 	go srv.FinishInterrupted()
 	go srv.KeepRouterPorts(ctx)
+	go srv.KeepHomeCerts(ctx)
 	web := &http.Server{Addr: proxy.Upstream, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- web.ListenAndServe() }()
@@ -310,6 +319,39 @@ func writeLoginBanner(domain string) {
 
 // localAddrs are this machine's own IPv4 addresses on real network interfaces (not loopback, Docker bridges, VMs or
 // VPN tunnels), for reaching the portal and admin panel by IP.
+// homeCerts gives every name under the home name its wildcard certificate (Caddy's own until it's there, rather than
+// Caddy trying Let's Encrypt itself, which can't reach a home address).
+func homeCerts(own map[string]proxy.SiteTLS, names []string, homeName, certDir string) {
+	if homeName == "" {
+		return
+	}
+	cert, key := certs.Paths(certDir, homeName)
+	t := proxy.SiteTLS{Mode: state.CertInternal}
+	if _, err := os.Stat(cert); err == nil {
+		t = proxy.SiteTLS{Mode: state.CertCustom, CertFile: cert, KeyFile: key}
+	}
+	for _, n := range append(names, homeName) {
+		if n == homeName || strings.HasSuffix(n, "."+homeName) {
+			own[n] = t
+		}
+	}
+}
+
+// homeAddress is this server's address on the home network, for its home name: a private address (192.168…, 10…,
+// 172.16-31…) before others (Tailscale's 100.64…).
+func homeAddress() string {
+	addrs := localAddrs()
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.IsPrivate() {
+			return a
+		}
+	}
+	if len(addrs) > 0 {
+		return addrs[0]
+	}
+	return ""
+}
+
 func localAddrs() []string {
 	ifs, err := net.Interfaces()
 	if err != nil {
@@ -668,6 +710,18 @@ func cmdDomain(args []string) error {
 		}
 		fmt.Printf("%s points here now, and Homeport keeps it that way. Its apps can use subdomains like cloud.%s.\n", out["name"], out["name"])
 		return nil
+	case "home":
+		fs := flag.NewFlagSet("domain home", flag.ExitOnError)
+		keep := fs.Bool("keep-main", false, "keep the main domain as it is")
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: homeport domain home NAME [--keep-main]")
+		}
+		token, err := readSecret("Token from https://desec.io (Token management): ")
+		if err != nil {
+			return err
+		}
+		return follow("/domains/home", map[string]any{"name": pos[0], "token": token, "main": !*keep}, "POST")
 	case "cert":
 		fs := flag.NewFlagSet("domain cert", flag.ExitOnError)
 		certFile := fs.String("cert", "", "the certificate with its chain (PEM)")

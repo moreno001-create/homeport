@@ -129,6 +129,11 @@ func (s *Server) SetupText(ctx context.Context) string {
 	if len(home) > 0 {
 		w("- Home-network names (work only at home, with Caddy's own certificates): %s", strings.Join(home, ", "))
 	}
+	var homeName string
+	s.Store.Read(func(d *state.Data) { homeName = d.HomeName() })
+	if homeName != "" {
+		w("- Home name: %s (deSEC) points at this server's home address, it and every name under it, with a Let's Encrypt certificate for *.%s got through DNS (no ports); Homeport renews it. Apps put on the internet keep their name, which then points at the public address.", homeName, homeName)
+	}
 	if public != "" {
 		w("- Internet name: %s (apps put on the internet go under it, with Let's Encrypt certificates)", public)
 	} else {
@@ -150,10 +155,12 @@ func (s *Server) SetupText(ctx context.Context) string {
 	}
 	for _, a := range apps {
 		where := "home network only"
-		if !state.PrivateName(a.Domain) {
+		var online bool
+		s.Store.Read(func(d *state.Data) { online = d.OnInternet(a) })
+		if online {
 			where = "on the internet"
 		}
-		w("- %s (%s): https://%s/ (%s), folder %s", a.Name, a.ID, a.Domain, where, filepath.Join(s.Apps.Root, a.ID))
+		w("- %s (%s): https://%s/ (%s), folder %s", a.Name, a.ID, a.Domain, where, s.Apps.Dir(a.ID))
 	}
 	w("")
 	w("## Local AI")
@@ -368,9 +375,25 @@ func (s *Server) RunChecks(ctx context.Context) CheckRun {
 	}
 
 	// The internet, when something should be reachable from it.
-	internetApps := slices.ContainsFunc(apps, func(a state.App) bool { return !state.PrivateName(a.Domain) })
-	if public != "" || internetApps || !state.PrivateName(st.MainDomain) {
+	var internetApps bool
+	s.Store.Read(func(d *state.Data) {
+		internetApps = slices.ContainsFunc(apps, func(a state.App) bool { return d.OnInternet(a) })
+	})
+	var mainOnline bool
+	s.Store.Read(func(d *state.Data) { mainOnline = !state.PrivateName(st.MainDomain) && !d.UnderHome(st.MainDomain) })
+	if public != "" || internetApps || mainOnline {
 		do(func() { add(s.internetChecks(ctx, st, public)...) })
+	}
+
+	// The home name: its certificate, and that devices here find it.
+	var home state.Domain
+	s.Store.Read(func(d *state.Data) {
+		if x, ok := d.Domain(d.HomeName()); ok {
+			home = *x
+		}
+	})
+	if home.DynDNS != nil {
+		do(func() { add(s.homeNameChecks(ctx, home)...) })
 	}
 
 	// Drives things were moved to.
@@ -427,6 +450,43 @@ func (s *Server) RunChecks(ctx context.Context) CheckRun {
 	return run
 }
 
+// homeNameChecks: the home name's certificate is there and has time left, and the name leads here, as devices at
+// home look it up (routers that refuse DNS answers with home addresses break it).
+func (s *Server) homeNameChecks(ctx context.Context, home state.Domain) []Check {
+	var out []Check
+	dd := home.DynDNS
+	until := certUntil(s.CertDir, home.Name)
+	days := int(time.Until(until).Hours() / 24)
+	switch {
+	case until.IsZero():
+		out = append(out, Check{Title: "No certificate for the home name yet", State: "warn",
+			Detail: cmpOr(dd.CertError, "Homeport is getting one.") + " Until then browsers warn about " + home.Name + ".", Guide: "home-name"})
+	case days < 14:
+		out = append(out, Check{Title: "The home name's certificate runs out soon", State: "bad",
+			Detail: fmt.Sprintf("In %d days. %s", days, cmpOr(dd.CertError, "Homeport renews it a month ahead; it hasn't managed yet.")), Guide: "home-name"})
+	default:
+		out = append(out, Check{Title: "Home name certificate", State: "ok", Detail: fmt.Sprintf("*.%s, valid for %d more days.", home.Name, days)})
+	}
+	if dd.Error != "" {
+		out = append(out, Check{Title: "deSEC didn't take the last update for the home name", State: "bad", Detail: dd.Error, Guide: "home-name"})
+	}
+	addrs, err := net.DefaultResolver.LookupHost(ctx, "check."+home.Name)
+	switch {
+	case dd.IPv4 == "":
+	case err != nil || len(addrs) == 0:
+		out = append(out, Check{Title: "This network doesn't find the home name", State: "bad",
+			Detail: home.Name + " points at " + dd.IPv4 + ", but looking it up here gives nothing. The router (or a DNS filter) probably refuses DNS answers that point at home addresses (\"DNS rebinding protection\").",
+			Guide:  "home-name"})
+	case !slices.Contains(addrs, dd.IPv4):
+		out = append(out, Check{Title: "The home name leads somewhere else", State: "warn",
+			Detail: fmt.Sprintf("%s leads to %s here, not to this server (%s). If this server's address just changed, it catches up within minutes.", home.Name, strings.Join(addrs, ", "), dd.IPv4),
+			Guide:  "home-name"})
+	default:
+		out = append(out, Check{Title: "Home name", State: "ok", Detail: home.Name + " and every name under it lead here (" + dd.IPv4 + ")."})
+	}
+	return out
+}
+
 // mainAnswers opens the main address on this machine's HTTPS port, as a browser would.
 func (s *Server) mainAnswers(ctx context.Context, domain string) (int, error) {
 	addr := cmpOr(s.HTTPSAddr, "127.0.0.1:443")
@@ -453,10 +513,10 @@ func (s *Server) internetChecks(ctx context.Context, st state.Settings, public s
 	in := s.readInternet(ctx)
 	var out []Check
 	elsewhere := slices.ContainsFunc(in.Forwards, func(f router.Forward) bool { return f.To != "" && !f.Mine })
-	forwarded := len(in.Forwards) == 2 && in.Forwards[0].Mine && in.Forwards[1].Mine
+	forwarded := allMine(in.Forwards)
 	switch {
 	case st.RouterPorts && in.Router.Found && !forwarded && !elsewhere:
-		out = append(out, Check{Title: "The router stopped forwarding ports 80 and 443", State: "bad",
+		out = append(out, Check{Title: "The router stopped forwarding " + portsText(s.routerPorts()), State: "bad",
 			Detail: "Homeport opened them, but the router doesn't send them here now (it may have restarted).",
 			Fix:    "router", FixLabel: "Ask the router again", Guide: "internet-access"})
 	case len(in.Steps) > 0:
@@ -535,7 +595,7 @@ func (s *Server) fixProblem(ctx context.Context, action string) error {
 	return fmt.Errorf("Homeport has no repair called %q", action)
 }
 
-// reopenRouter asks the router again for ports 80 and 443, when Homeport was allowed to keep them open.
+// reopenRouter asks the router again for its forwardings (80 and 443, or the home name's port), when Homeport was allowed to keep them open.
 func (s *Server) reopenRouter(ctx context.Context) error {
 	var on bool
 	s.Store.Read(func(d *state.Data) { on = d.Settings().RouterPorts })
@@ -546,16 +606,7 @@ func (s *Server) reopenRouter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var errs []string
-	for _, p := range []int{80, 443} {
-		if err := rt.Open(ctx, p); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
-	}
-	return nil
+	return openRouterPorts(ctx, rt, s.routerPorts())
 }
 
 func (s *Server) lastChecks() *CheckRun {

@@ -88,16 +88,20 @@ const Lease = 3600
 
 // Open asks the router to send a TCP port to this machine. A port the router already sends somewhere else isn't
 // taken over.
-func (r *Router) Open(ctx context.Context, port int) error {
+func (r *Router) Open(ctx context.Context, port int) error { return r.OpenAs(ctx, port, port) }
+
+// OpenAs asks the router to send outside port to this machine's inside port (8443 from outside to 443 here, when
+// another machine has the router's 443).
+func (r *Router) OpenAs(ctx context.Context, outside, inside int) error {
 	if r.Local == "" {
 		return errors.New("couldn't tell this machine's address on the home network")
 	}
-	if f := r.Where(ctx, port); f.To != "" && !f.Mine {
-		return fmt.Errorf("the router already sends port %d to %s (%s): change or remove that in its settings first", port, f.To, f.What)
+	if f := r.Where(ctx, outside); f.To != "" && !f.Mine {
+		return fmt.Errorf("the router already sends port %d to %s (%s): change or remove that in its settings first", outside, f.To, f.What)
 	}
-	err := r.gw.AddPortMappingCtx(ctx, "", uint16(port), "TCP", uint16(port), r.Local, true, fmt.Sprintf("Homeport (%d)", port), Lease)
+	err := r.gw.AddPortMappingCtx(ctx, "", uint16(outside), "TCP", uint16(inside), r.Local, true, fmt.Sprintf("Homeport (%d)", outside), Lease)
 	if err != nil {
-		return fmt.Errorf("the router refused to forward port %d: %v", port, err)
+		return fmt.Errorf("the router refused to forward port %d: %v", outside, err)
 	}
 	return nil
 }

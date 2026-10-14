@@ -160,6 +160,15 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // host is the domain the browser asked for (Caddy passes it through).
+// hostWithPort is the name the browser used, with its port when it gave one (an app reached on 8443 from outside).
+func hostWithPort(r *http.Request) string {
+	h := r.Header.Get("X-Forwarded-Host")
+	if h == "" {
+		h = r.Host
+	}
+	return strings.ToLower(h)
+}
+
 func host(r *http.Request) string {
 	h := r.Header.Get("X-Forwarded-Host")
 	if h == "" {
@@ -191,7 +200,7 @@ func (s *Server) isMainHost(h string) bool {
 		return true
 	}
 	home := false
-	s.Store.Read(func(d *state.Data) { home = slices.Contains(d.HomeNames(), h) })
+	s.Store.Read(func(d *state.Data) { home = slices.Contains(d.HomeNames(), h) || (h != "" && h == d.SignInName()) })
 	if home {
 		return true
 	}
@@ -269,7 +278,7 @@ func (s *Server) safeReturn(raw string) (string, bool) {
 	h := strings.ToLower(u.Hostname())
 	ok := false
 	s.Store.Read(func(d *state.Data) {
-		if h == d.Settings().MainDomain || h == d.AIDomain() || slices.Contains(d.HomeNames(), h) {
+		if h == d.Settings().MainDomain || h == d.AIDomain() || slices.Contains(d.HomeNames(), h) || (h != "" && h == d.SignInName()) {
 			ok = true
 			return
 		}

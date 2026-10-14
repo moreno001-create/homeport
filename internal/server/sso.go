@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,9 +39,19 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Sign in first", http.StatusUnauthorized)
 			return
 		}
-		back := "https://" + app.Domain + r.Header.Get("X-Forwarded-Uri")
-		main := s.settings().MainDomain
-		http.Redirect(w, r, "https://"+main+"/sso/continue?return="+url.QueryEscape(back), http.StatusFound)
+		back := "https://" + hostWithPort(r) + r.Header.Get("X-Forwarded-Uri")
+		// Sign-in is on the main domain; for an app on the internet under the home name (whose main domain only
+		// works at home) it's on the sign-in name, which the internet reaches too (on the same port as the app).
+		signIn := s.settings().MainDomain
+		s.Store.Read(func(d *state.Data) {
+			if n := d.SignInName(); n != "" && app.Internet && d.UnderHome(app.Domain) {
+				signIn = n
+				if p := d.Settings().InternetPort; p != 0 && p != 443 {
+					signIn += ":" + strconv.Itoa(p)
+				}
+			}
+		})
+		http.Redirect(w, r, "https://"+signIn+"/sso/continue?return="+url.QueryEscape(back), http.StatusFound)
 		return
 	}
 	if !canOpen(u, app) {

@@ -36,6 +36,9 @@ type Settings struct {
 	Terminal bool `json:"terminal,omitempty"`
 	// RouterPorts: Homeport keeps ports 80 and 443 forwarded to it on the home router (UPnP).
 	RouterPorts bool `json:"routerPorts,omitempty"`
+	// InternetPort is the port the internet reaches apps on when the router's 443 goes to another machine (8443): the
+	// router sends it to this server's 443. 0 is the usual 443.
+	InternetPort int `json:"internetPort,omitempty"`
 	// NewAppsDrive is where new apps' folders go: a folder on another drive ("" for Homeport's own folder).
 	NewAppsDrive string `json:"newAppsDrive,omitempty"`
 	// NoDailyCheck stops the daily check of the server (it runs unless this is set).
@@ -100,6 +103,9 @@ const (
 	CertLetsEncrypt CertMode = "letsencrypt" // Caddy gets it from Let's Encrypt
 	CertInternal    CertMode = "internal"    // Caddy's own certificate authority
 	CertCustom      CertMode = "custom"      // one the admin uploaded
+	// CertDNS: Homeport gets one from Let's Encrypt for the name and every name under it (a wildcard), proving it owns
+	// the name through its DNS (a home name: no ports needed, so it works for names that point at a home address).
+	CertDNS CertMode = "dns"
 )
 
 // DynDNS is a free domain kept pointed at this server's public address. Its token isn't here: it's kept in its own
@@ -110,6 +116,15 @@ type DynDNS struct {
 	IPv6     string    `json:"ipv6,omitempty"`
 	Updated  time.Time `json:"updated,omitempty"` // last successful update
 	Error    string    `json:"error,omitempty"`   // the last update's error, if it failed
+	// Home: it points at this server's address on the home network, not at the home's public address, so every device
+	// at home reaches it with ordinary DNS, nothing outside can, and it gets a real certificate (CertDNS). Apps under
+	// it can still be put on the internet one by one (App.Internet).
+	Home bool `json:"home,omitempty"`
+	// CertUntil is when its certificate runs out (CertDNS), and CertError why getting one last failed.
+	CertUntil time.Time `json:"certUntil,omitempty"`
+	CertError string    `json:"certError,omitempty"`
+	// Internet is what its internet records were last set to ("ip label…"), for home names.
+	Internet string `json:"internet,omitempty"`
 }
 
 // Access says who may open an app: everyone on the internet, or signed-in users in one of the groups.
@@ -137,6 +152,9 @@ type App struct {
 	// OIDC is set for apps that sign people in with Homeport over OpenID Connect (client id = app id; the client
 	// secret is Secrets["oidc_client_secret"]).
 	OIDC *OIDCClient `json:"oidc,omitempty"`
+	// Internet puts an app whose address is under the home name (DynDNS.Home) on the internet too: its name alone
+	// points at the home's public address. (Apps under other names are on the internet when their name is public.)
+	Internet bool `json:"internet,omitempty"`
 	// Unfinished is a job on the app that was cut off (Homeport stopped during it): "install", "update", "address",
 	// "move" (to another drive), "remove" or "remove-purge". Homeport finishes it when it starts again.
 	Unfinished string `json:"unfinished,omitempty"`
@@ -515,23 +533,60 @@ func (v *Data) HomeNames() []string {
 	return out
 }
 
-// PublicBase is the name apps go under on the internet: the main domain when it's a public name, else the first free
-// name (DuckDNS, deSEC). "" when there's none yet.
-func (v *Data) PublicBase() string {
-	if m := v.d.Settings.MainDomain; m != "" && !PrivateName(m) {
-		return m
-	}
+// HomeName is the home name with real certificates (DynDNS.Home), or "".
+func (v *Data) HomeName() string {
 	for _, d := range v.d.Domains {
-		if d.DynDNS != nil {
+		if d.DynDNS != nil && d.DynDNS.Home {
 			return d.Name
 		}
 	}
 	return ""
 }
 
-// HomeBase is the name apps go under on the home network: the main domain when it's a .local name, else the first
-// home name (homeport.local). "" when there's none.
+// SignInName is where people outside sign in when the main domain is the home name (which only works at home):
+// signin.<home name>, pointed at the public address while apps under it are on the internet. "" otherwise.
+func (v *Data) SignInName() string {
+	if h := v.HomeName(); h != "" && h == v.d.Settings.MainDomain {
+		return "signin." + h
+	}
+	return ""
+}
+
+// UnderHome says whether a name is the home name or under it.
+func (v *Data) UnderHome(domain string) bool {
+	h := v.HomeName()
+	return h != "" && (domain == h || strings.HasSuffix(domain, "."+h))
+}
+
+// OnInternet says whether an app can be reached from the internet: under the home name only when it was put on the
+// internet, otherwise when its name is a public one.
+func (v *Data) OnInternet(a App) bool {
+	if v.UnderHome(a.Domain) {
+		return a.Internet
+	}
+	return !PrivateName(a.Domain)
+}
+
+// PublicBase is the name apps go under on the internet: the main domain when it's a public name, else the first free
+// name (DuckDNS, deSEC). "" when there's none yet. Under the home name, apps go on the internet where they are.
+func (v *Data) PublicBase() string {
+	if m := v.d.Settings.MainDomain; m != "" && !PrivateName(m) && !v.UnderHome(m) {
+		return m
+	}
+	for _, d := range v.d.Domains {
+		if d.DynDNS != nil && !d.DynDNS.Home {
+			return d.Name
+		}
+	}
+	return ""
+}
+
+// HomeBase is the name apps go under on the home network: the home name, or the main domain when it's a .local
+// name, else the first home-network name (homeport.local). "" when there's none.
 func (v *Data) HomeBase() string {
+	if h := v.HomeName(); h != "" {
+		return h
+	}
 	if m := v.d.Settings.MainDomain; strings.HasSuffix(m, ".local") {
 		return m
 	}

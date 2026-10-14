@@ -461,8 +461,49 @@ shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
 # How people reach this server. homeport.local works on this network with no setup (Homeport announces it, and apps'
 # names under it, with Avahi). A free name from DuckDNS or deSEC works from anywhere, with Let's Encrypt certificates
 # for it and every app under it; Homeport keeps it pointed at this home's public address. Or a domain of your own.
-# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_DDNS=duckdns|desec with HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
+# A home name (yourname.dedyn.io, free from deSEC) points at this server's home address: every device at home finds it
+# with ordinary DNS, and Homeport gets a real certificate for it and every name under it through deSEC's DNS (no ports
+# opened, nothing reachable from outside), so nothing warns and signing in works everywhere.
+# Unattended: HOMEPORT_DOMAIN, or HOMEPORT_HOME_NAME with HOMEPORT_HOME_TOKEN, or HOMEPORT_DDNS=duckdns|desec with
+# HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
 ddns="" # the free name's provider, once registered
+home_name="" # the home name, once set up
+home_setup() { # home_setup NAME TOKEN: registers the home name and gets its certificate; on success it's the main domain
+  if printf '%s\n' "$2" | homeport domain home "$1" --keep-main; then
+    HOMEPORT_DOMAIN="$(printf '%s' "${1%.dedyn.io}" | tr '[:upper:]' '[:lower:]').dedyn.io" HOMEPORT_TLS=letsencrypt
+    home_name=$HOMEPORT_DOMAIN
+    return 0
+  fi
+  return 1
+}
+guide_home_name() { # asks for a home name, with how to get the token, until it works or they go back
+  local name token
+  printf '\n  A home name like yourname.dedyn.io, free from deSEC (a non-profit):\n' >/dev/tty
+  printf '  1. Open https://desec.io, choose "Sign up" (email and password) and confirm your email.\n' >/dev/tty
+  printf '  2. Open "Token Management", add a token and copy it.\n' >/dev/tty
+  printf '  Homeport makes the name in your account and points it at this server (%s) for you.\n\n' "${first_ip:-its home address}" >/dev/tty
+  while :; do
+    name=""; token=""
+    printf 'Name (yourname, for yourname.dedyn.io), or Enter to go back: ' >/dev/tty; read -r name </dev/tty
+    [ -n "$name" ] || return 1
+    printf 'Token: ' >/dev/tty; read -r -s token </dev/tty; echo >/dev/tty
+    if home_setup "$name" "$token" >/dev/tty 2>&1; then return 0; fi
+    printf 'That didn'"'"'t work (see above). Try again.\n' >/dev/tty
+  done
+}
+# local_name: homeport.local, unless another device on this network already has it (another Homeport server): then this
+# machine's own name (memorydelta.local).
+local_name() {
+  local mine theirs
+  theirs="$(timeout 4 avahi-resolve -4 -n homeport.local 2>/dev/null | awk '{print $2}')"
+  if [ -n "$theirs" ] && ! printf ' %s ' "$ips" | grep -q " $theirs "; then
+    mine="$(hostname -s | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-\n' '-')"
+    note "homeport.local is already taken on this network (by $theirs): using ${mine:-homeport-2}.local" >/dev/null
+    echo "${mine:-homeport-2}.local"
+    return
+  fi
+  echo homeport.local
+}
 free_name() { # free_name duckdns|desec NAME TOKEN: registers the name with Homeport; on success it's the main domain
   local out
   if out="$(printf '%s\n' "$3" | homeport domain free "$1" "$2" 2>&1)"; then
@@ -490,24 +531,32 @@ guide_free_name() { # asks for a free name, with how to get one, until it works 
     printf 'That didn'"'"'t work (see above). Try again.\n' >/dev/tty
   done
 }
+if [ -n "${HOMEPORT_HOME_NAME:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
+  home_setup "$HOMEPORT_HOME_NAME" "${HOMEPORT_HOME_TOKEN:-}" || die "couldn't set up the home name (see above)"
+fi
 if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
   free_name "$HOMEPORT_DDNS" "${HOMEPORT_DDNS_NAME:-}" "${HOMEPORT_DDNS_TOKEN:-}" || die "couldn't set up the free name (see above)"
 fi
 while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
   printf '\nHow should people reach this server?\n' >/dev/tty
-  printf '  1) homeport.local: on this network only, nothing to set up (browsers warn about its certificate once)\n' >/dev/tty
-  printf '  2) A free name from DuckDNS (yourname.duckdns.org): from anywhere, with real HTTPS certificates\n' >/dev/tty
-  printf '  3) A free name from deSEC (yourname.dedyn.io): the same, from a non-profit\n' >/dev/tty
-  printf '  4) A domain of your own\n' >/dev/tty
-  pick=""; printf 'Choose 1-4 [1]: ' >/dev/tty; read -r pick </dev/tty
+  printf '  1) A home name, free from deSEC (yourname.dedyn.io) - recommended. Every device at home finds it, with\n' >/dev/tty
+  printf '     real certificates for it and every app: no warnings. Nothing is reachable from outside until you choose\n' >/dev/tty
+  printf '     so, app by app. Needs a free deSEC account (2 minutes).\n' >/dev/tty
+  printf '  2) homeport.local: nothing to set up, but browsers warn about every certificate, and some devices\n' >/dev/tty
+  printf '     (Android, other subnets) can'"'"'t find it\n' >/dev/tty
+  printf '  3) A free name from DuckDNS (yourname.duckdns.org) for the internet: needs ports 80 and 443 on the router\n' >/dev/tty
+  printf '  4) A free name from deSEC (yourname.dedyn.io) for the internet: the same, from a non-profit\n' >/dev/tty
+  printf '  5) A domain of your own\n' >/dev/tty
+  pick=""; printf 'Choose 1-5 [1]: ' >/dev/tty; read -r pick </dev/tty
   case "${pick:-1}" in
-    1) HOMEPORT_DOMAIN=homeport.local ;;
-    2) guide_free_name duckdns || true ;;
-    3) guide_free_name desec || true ;;
-    4) ask HOMEPORT_DOMAIN "Your domain (its DNS must point at this server's public address)" ;;
+    1) guide_home_name || true ;;
+    2) HOMEPORT_DOMAIN="$(local_name)" ;;
+    3) guide_free_name duckdns || true ;;
+    4) guide_free_name desec || true ;;
+    5) ask HOMEPORT_DOMAIN "Your domain (its DNS must point at this server's public address)" ;;
   esac
 done
-echo "Main domain: ${HOMEPORT_DOMAIN:-}${ddns:+ (free name from $ddns)}"
+echo "Main domain: ${HOMEPORT_DOMAIN:-}${ddns:+ (free name from $ddns)}${home_name:+ (home name)}"
 # Names Let's Encrypt can't certify (private addresses, test and local names) use Caddy's own certificates.
 tls_default=letsencrypt
 case "${HOMEPORT_DOMAIN:-}" in *.sslip.io|*.nip.io|*.test|*.local|*.lan|*.home.arpa|*.internal) tls_default=internal ;; esac
@@ -515,7 +564,7 @@ ask HOMEPORT_ADMIN "First admin's user name"
 if [ "$tls_default" = letsencrypt ]; then
   ask HOMEPORT_EMAIL "Email for Let's Encrypt notices about the certificates (optional)"
 fi
-if [ -z "$ddns" ] && [ "$tls_default" = letsencrypt ]; then
+if [ -z "$ddns" ] && [ -z "$home_name" ] && [ "$tls_default" = letsencrypt ]; then
   ask HOMEPORT_TLS "Certificates: letsencrypt (reachable from the internet) or internal (test machine)" "$tls_default"
 fi
 while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
@@ -585,6 +634,14 @@ MSG
 MSG
     ;;
   esac
+elif [ -n "$home_name" ]; then
+  show <<MSG
+
+  $HOMEPORT_DOMAIN is your home name: it points at this server ($shown_ip), so every device at home (phones and
+  other subnets too) finds it, with a real certificate for it and every app under it, like photos.$HOMEPORT_DOMAIN.
+  Nothing is reachable from the internet. To put an app on the internet later: Internet access, in the admin panel.
+  If a device can't find it, its router may block DNS answers with home addresses: Overview → Check now says so.
+MSG
 elif [ -n "$ddns" ]; then
   show <<MSG
 

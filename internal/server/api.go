@@ -104,6 +104,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	s.modelRoutes(mux, guard)
 	s.selfCareRoutes(mux, guard)
 	s.storageRoutes(mux, guard)
+	s.homeNameRoutes(mux, guard)
 }
 
 // MARK: AI helpers
@@ -835,12 +836,18 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		Internet  bool          `json:"internet"` // on a public name (not a home-network one)
 	}
 	var list []state.App
-	s.Store.Read(func(d *state.Data) { list = d.Apps() })
+	online := map[string]bool{}
+	s.Store.Read(func(d *state.Data) {
+		list = d.Apps()
+		for _, a := range list {
+			online[a.ID] = d.OnInternet(a)
+		}
+	})
 	out := make([]row, len(list))
 	var wg sync.WaitGroup
 	for i, a := range list {
 		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source,
-			Internet: !state.PrivateName(a.Domain)}
+			Internet: online[a.ID]}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t
@@ -1024,15 +1031,55 @@ func (s *Server) setInternet(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var current, base string
+	var underHome bool
 	s.Store.Read(func(d *state.Data) {
 		if a, ok := d.App(id); ok {
 			current = a.Domain
+			underHome = d.UnderHome(a.Domain)
 		}
 		base = d.HomeBase()
 		if in.On {
 			base = d.PublicBase()
 		}
 	})
+	if underHome && current != "" {
+		// Under the home name the app keeps its address: its name alone points at the public address, or back home.
+		j := s.jobs.start("internet "+id, func(ctx context.Context, j *job) error {
+			if err := s.Store.Update(func(d *state.Data) error {
+				a, ok := d.App(id)
+				if !ok {
+					return state.ErrNotFound
+				}
+				a.Internet = in.On
+				return nil
+			}); err != nil {
+				return err
+			}
+			if in.On {
+				fmt.Fprintf(j, "Pointing %s at this home's public address (other devices may take a few minutes to see it)…\n", current)
+			} else {
+				fmt.Fprintf(j, "Pointing %s back at this server's home address…\n", current)
+			}
+			if s.DynDNS != nil {
+				if err := s.DynDNS.Sync(ctx, true); err != nil {
+					return err
+				}
+				var syncErr string
+				s.Store.Read(func(d *state.Data) {
+					if x, ok := d.Domain(d.HomeName()); ok && x.DynDNS != nil {
+						syncErr = x.DynDNS.Error
+					}
+				})
+				if syncErr != "" {
+					return errors.New(syncErr)
+				}
+			}
+			fmt.Fprintln(j, "Done.")
+			return nil
+		})
+		writeJSON(w, http.StatusAccepted, j.view())
+		return
+	}
 	switch {
 	case current == "":
 		writeError(w, http.StatusNotFound, state.ErrNotFound)
