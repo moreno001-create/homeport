@@ -31,16 +31,18 @@ func serveAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 type pageData struct {
-	Title  string
-	Main   string
-	User   *state.User
-	Apps   []state.App
-	Links  map[string]string // app id → its address (with the internet port when it has one)
-	App    *state.App
-	Return string
-	Error  string
-	Name   string
-	AI     string // the AI page's name, on the portal
+	Title string
+	Main  string
+	User  *state.User
+	Apps  []state.App
+	Links map[string]string // app id → its address (with the internet port when it has one)
+	// MainAddr is the main domain with the port it's reached on (for links back to it).
+	MainAddr string
+	App      *state.App
+	Return   string
+	Error    string
+	Name     string
+	AI       string // the AI page's name, on the portal
 }
 
 var pages = template.Must(template.New("").Funcs(template.FuncMap{
@@ -97,7 +99,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <div class="card stack">
     <h1>Not allowed</h1>
     <p>{{if .App}}Your account ({{.User.Name}}) doesn't have access to {{.App.Name}}.{{else}}Only admins can open this page.{{end}} An admin can give you access.</p>
-    <p><a class="button" href="https://{{.Main}}/">Back to your apps</a></p>
+    <p><a class="button" href="https://{{if .MainAddr}}{{.MainAddr}}{{else}}{{.Main}}{{end}}/">Back to your apps</a></p>
   </div>
 </main>
 {{template "foot" .}}{{end}}

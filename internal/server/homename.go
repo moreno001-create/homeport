@@ -32,6 +32,7 @@ import (
 
 func (s *Server) homeNameRoutes(mux *http.ServeMux, guard func(http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("POST /api/domains/home", guard(s.addHomeName))
+	mux.HandleFunc("POST /api/internet/everything", guard(s.everythingOnline))
 }
 
 // renewBefore is how long before a certificate runs out a new one is got.
@@ -71,6 +72,78 @@ func (s *Server) addHomeName(w http.ResponseWriter, r *http.Request) {
 	token := in.Token
 	j := s.jobs.start("home name "+name, func(ctx context.Context, j *job) error {
 		return s.SetUpHomeName(ctx, provider, name, token, in.Main, j)
+	})
+	writeJSON(w, http.StatusAccepted, j.view())
+}
+
+// everythingOnline puts everything under the home name on the internet (or back home only), as a job: the name and
+// every name under it point at the home's public address, so the portal, admin panel, AI page and every app are reached
+// from anywhere (with the internet port in their addresses when it isn't 443).
+func (s *Server) everythingOnline(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var home, oidc string
+	var port int
+	s.Store.Read(func(d *state.Data) {
+		home, port = d.HomeName(), d.Settings().InternetPort
+		for _, a := range d.Apps() {
+			if a.OIDC != nil && d.UnderHome(a.Domain) {
+				oidc = a.Name
+			}
+		}
+	})
+	switch {
+	case home == "":
+		writeError(w, http.StatusBadRequest, errors.New("set up a home name first (Domains)"))
+		return
+	case oidc != "" && port != 0 && port != 443:
+		// Its sign-in address would change (the port joins it), and the app was set up with the old one.
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%s signs in with Homeport, and its sign-in address would change: remove it first, or free port 443 for this server", oidc))
+		return
+	}
+	j := s.jobs.start("internet everything", func(ctx context.Context, j *job) error {
+		if err := s.Store.Update(func(d *state.Data) error { d.Settings().HomeOnInternet = in.On; return nil }); err != nil {
+			return err
+		}
+		if in.On {
+			fmt.Fprintf(j, "Pointing %s and every name under it at this home's public address…\n", home)
+		} else {
+			fmt.Fprintf(j, "Pointing %s and every name under it back at this server's home address…\n", home)
+		}
+		if s.DynDNS != nil {
+			if err := s.DynDNS.Sync(ctx, true); err != nil {
+				return err
+			}
+		}
+		var syncErr string
+		s.Store.Read(func(d *state.Data) {
+			if x, ok := d.Domain(home); ok && x.DynDNS != nil {
+				syncErr = x.DynDNS.Error
+			}
+		})
+		if syncErr != "" {
+			return errors.New(syncErr)
+		}
+		if s.ApplyProxy != nil {
+			if err := s.ApplyProxy(ctx); err != nil {
+				return err
+			}
+		}
+		addr := s.address(home)
+		if in.On {
+			fmt.Fprintf(j, "Done: everything is on the internet. Open https://%s/ from anywhere (devices may take a few minutes to see the change).\n", addr)
+			if addr != home {
+				fmt.Fprintf(j, "Every address ends in :%d now, at home too: bookmarks without it reach the device that has the router's 443.\n", port)
+			}
+		} else {
+			fmt.Fprintf(j, "Done: everything is home-only again, at https://%s/.\n", home)
+		}
+		return nil
 	})
 	writeJSON(w, http.StatusAccepted, j.view())
 }

@@ -20,6 +20,16 @@ import (
 // admins get the full assistant, as in the admin panel. Signing in works as for an app: the portal hands the sign-in
 // over to this domain.
 
+// address is a name with the port it's reached on (state.Data.Address).
+func (s *Server) address(domain string) string {
+	if domain == "" {
+		return ""
+	}
+	a := domain
+	s.Store.Read(func(d *state.Data) { a = d.Address(domain) })
+	return a
+}
+
 // aiHost is the AI page's name, or "" when there isn't one.
 func (s *Server) aiHost() string {
 	var h string
@@ -78,7 +88,7 @@ func (s *Server) aiAdmin(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) aiPage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.sessionUser(r); !ok {
 		back := "https://" + host(r) + "/"
-		http.Redirect(w, r, "https://"+s.settings().MainDomain+"/sso/continue?return="+url.QueryEscape(back), http.StatusFound)
+		http.Redirect(w, r, "https://"+s.address(s.settings().MainDomain)+"/sso/continue?return="+url.QueryEscape(back), http.StatusFound)
 		return
 	}
 	b, err := webFiles.ReadFile("web/ai.html")
@@ -94,7 +104,7 @@ func (s *Server) aiPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) aiMe(w http.ResponseWriter, r *http.Request) {
 	u := actor(r)
 	writeJSON(w, http.StatusOK, map[string]any{"name": u.Name, "displayName": u.DisplayName, "admin": u.Admin,
-		"mainDomain": s.settings().MainDomain})
+		"mainDomain": s.settings().MainDomain, "mainAddress": s.address(s.settings().MainDomain)})
 }
 
 // localChoices is the local server's chat models, and the one the settings pick.

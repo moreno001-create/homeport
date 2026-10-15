@@ -248,6 +248,12 @@ func (u *Updater) Sync(ctx context.Context, force bool) error {
 				continue
 			}
 			internet = u.internetNames(x.Name, pub4)
+			// Everything on the internet: the name and *.name point at the public address, no records per app.
+			var all bool
+			u.Store.Read(func(d *state.Data) { all = d.Settings().HomeOnInternet })
+			if all {
+				ip4, internet = pub4, ""
+			}
 		}
 		if !force && dd.Error == "" && dd.IPv4 == ip4 && dd.IPv6 == ip6 && dd.Internet == internet && time.Since(dd.Updated) < 24*time.Hour {
 			continue
@@ -369,6 +375,9 @@ func (u *Updater) desecCreate(ctx context.Context, domain, token string) error {
 func (u *Updater) internetNames(domain, ip string) string {
 	var labels []string
 	u.Store.Read(func(d *state.Data) {
+		if d.Settings().HomeOnInternet {
+			return // the whole name points outside: no records per app
+		}
 		for _, a := range d.Apps() {
 			if a.Internet && strings.HasSuffix(a.Domain, "."+domain) {
 				labels = append(labels, strings.TrimSuffix(a.Domain, "."+domain))

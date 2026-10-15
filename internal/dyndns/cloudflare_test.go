@@ -165,4 +165,21 @@ func TestHomeNameOnCloudflare(t *testing.T) {
 	if ns := u.Nameservers(ctx, "home.example.com"); strings.Join(ns, " ") != "ada.ns.cloudflare.com:53 bob.ns.cloudflare.com:53" {
 		t.Errorf("nameservers: %v", ns)
 	}
+
+	// Everything on the internet: the name and *.name point at the public address; no records per app.
+	u.Store.Update(func(v *state.Data) error {
+		v.Settings().HomeOnInternet = true
+		a, _ := v.App("photos")
+		a.Internet = true
+		return nil
+	})
+	_ = u.Sync(ctx, false)
+	if got := f.all(); !strings.Contains(got, "*.home.example.com A=203.0.113.7 home.example.com A=203.0.113.7") || strings.Contains(got, "photos") {
+		t.Errorf("everything on: %q", got)
+	}
+	u.Store.Update(func(v *state.Data) error { v.Settings().HomeOnInternet = false; return nil })
+	_ = u.Sync(ctx, false)
+	if got := f.all(); !strings.Contains(got, "home.example.com A=192.168.7.3") || !strings.Contains(got, "photos.home.example.com A=203.0.113.7") {
+		t.Errorf("back home (photos stays on the internet): %q", got)
+	}
 }

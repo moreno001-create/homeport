@@ -190,12 +190,16 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		Apps     int            `json:"apps"`
 		Me       string         `json:"me"`
 		Working  []string       `json:"working"` // jobs running now
+		// Address and AIAddress are where the portal and the AI page are reached (with the internet port).
+		Address   string `json:"address"`
+		AIAddress string `json:"aiAddress"`
 	}
 	s.Store.Read(func(d *state.Data) {
 		out.Settings = *d.Settings()
 		out.Users, out.Domains, out.Apps = len(d.Users()), len(d.Domains()), len(d.Apps())
 	})
 	out.Version, out.Me, out.Working = s.Version, actor(r).Name, s.jobs.busy()
+	out.Address, out.AIAddress = s.address(out.Settings.MainDomain), s.address(s.aiHost())
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -46,7 +46,7 @@ const views = {
   async overview() {
     const o = await api("GET", "/overview");
     return [
-      h("div", { class: "head" }, h("h1", {}, "Overview"), h("a", { class: "button", href: "https://" + o.settings.mainDomain + "/" }, "Open the portal")),
+      h("div", { class: "head" }, h("h1", {}, "Overview"), h("a", { class: "button", href: "https://" + (o.address || o.settings.mainDomain) + "/" }, "Open the portal")),
       h("div", { class: "stats" },
         stat(o.apps, "apps installed", "#apps"), stat(o.users, "users", "#users"), stat(o.domains, "domains", "#domains")),
       h("div", { class: "card stack" },
@@ -288,6 +288,16 @@ const views = {
       try { await api("POST", "/internet/router", { open: true, port: port || 0 }); toast("The router forwards " + which + " here now"); } catch (err) { toast(err.message); }
       route();
     };
+    const everything = st.homeName ? h("div", { class: "card stack" },
+      h("h2", {}, "Everything on the internet"),
+      st.everything
+        ? h("p", {}, h("span", { class: "pill internet" }, "on"), " The portal, admin panel, AI page and every app under " + st.homeName + " are reachable from anywhere, at https://" + st.homeName + portSuffix + "/ and the same with each app's name" + (portSuffix ? ". Every address ends in " + portSuffix + ", at home too." : "."))
+        : h("p", {}, "Put the portal, admin panel, AI page and every app under " + st.homeName + " on the internet at once" + (portSuffix ? ", at addresses ending in " + portSuffix + " (at home too)" : "") + ". Everyone still has to sign in, but the sign-in page is open to the whole internet: use strong passwords."),
+      h("div", { class: "row" }, h("button", { class: st.everything ? "" : "primary", onclick: async () => {
+        if (!confirm(st.everything ? "Make everything under " + st.homeName + " home-only again? Apps you put on the internet one by one stay there." : "Put everything under " + st.homeName + " on the internet?")) return;
+        const j = await runJob(st.everything ? "Back to home only" : "Everything on the internet", () => api("POST", "/internet/everything", { on: !st.everything }));
+        if (j && j.status === "done") toast("Done");
+      } }, st.everything ? "Back to home only" : "Put everything on the internet"))) : null;
     const altPort = st.router.found && !forwarded && elsewhere.length && st.homeName && st.port === 443
       ? h("button", { class: "primary", onclick: () => openPorts(8443) }, "Use port 8443 instead (beside the other device)") : null;
     const routerBtn = st.router.found && !forwarded && !elsewhere.length
@@ -313,6 +323,7 @@ const views = {
             : item(!!st.name && st.namePoints, "Internet name", st.name ? st.name + (st.namePoints ? " points here." : " points at " + ((st.nameIPs || []).join(", ") || "nothing") + ", not here yet.") : "None yet.", st.name && !st.namePoints),
           item(!!st.cert.trusted, "Certificate", st.name ? certText(st.cert) : "Comes with the internet name.", st.name && !st.cert.trusted)),
         h("div", { class: "row" }, routerBtn, altPort, st.name ? null : h("button", { class: "primary", onclick: freeDomainDialog }, "Get a free internet name"))),
+      everything,
       (st.steps || []).length ? h("div", { class: "card stack" }, h("h2", {}, "What's left"), h("ol", { class: "steps" }, st.steps.map(t => h("li", {}, t)))) : h("p", {}, "Everything's in place: apps you put on the internet are reachable from anywhere, with real certificates."),
       h("h2", {}, "Apps"),
       st.apps.length ? h("div", { class: "list" }, h("table", {},
@@ -321,7 +332,7 @@ const views = {
           h("td", {}, h("b", {}, a.name)),
           h("td", {}, h("a", { href: "https://" + a.domain + (a.internet ? portSuffix : "") + "/", target: "_blank", rel: "noopener" }, a.domain + (a.internet ? portSuffix : "")), " ", h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
           h("td", { class: "small" }, a.internet || st.homeName ? certText(a.cert) : "Caddy's own (home network)"),
-          h("td", { class: "actions" }, h("button", { onclick: () => {
+          h("td", { class: "actions" }, st.everything ? h("span", { class: "muted small" }, "with everything") : h("button", { onclick: () => {
             if (!a.internet && !st.name) { toast("Get a free internet name first"); return; }
             runJob((a.internet ? "Taking " : "Putting ") + a.name + (a.internet ? " off" : " on") + " the internet", () => api("POST", "/apps/" + a.id + "/internet", { on: !a.internet }));
           } }, a.internet ? "Take off the internet" : "Put on the internet")))))))
@@ -333,7 +344,7 @@ const views = {
   async models() {
     const st = await api("GET", "/ai-models");
     const head = h("div", { class: "head" }, h("h1", {}, "AI models"),
-      h("a", { class: "button", href: "https://ai." + me.settings.mainDomain + "/", target: "_blank", rel: "noopener" }, "Open the AI page ↗"));
+      h("a", { class: "button", href: "https://" + (me.aiAddress || "ai." + me.settings.mainDomain) + "/", target: "_blank", rel: "noopener" }, "Open the AI page ↗"));
     if (st.error) return [head, h("div", { class: "card stack" }, h("p", {}, st.error),
       h("p", { class: "muted small" }, "The local model server is set under ", h("a", { href: "#settings" }, "Settings → Assistant chat"), "."))];
     return [head, h("div", { class: "stack", id: "models-top" }, ...modelsTop(st)), findModels(st)];
@@ -1601,7 +1612,7 @@ async function route() {
     document.getElementById("domain").textContent = me.settings.mainDomain;
     document.getElementById("version").textContent = "Homeport " + me.version;
     const ai = document.getElementById("ai-link");
-    ai.href = "https://ai." + me.settings.mainDomain + "/"; ai.hidden = false;
+    ai.href = "https://" + (me.aiAddress || "ai." + me.settings.mainDomain) + "/"; ai.hidden = false;
     terminalLink();
   } catch (err) { toast(err.message); }
   window.addEventListener("hashchange", route);

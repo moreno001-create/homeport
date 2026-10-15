@@ -31,7 +31,7 @@ type authCode struct {
 	authTime, expires                    time.Time
 }
 
-func (s *Server) issuer() string { return "https://" + s.settings().MainDomain }
+func (s *Server) issuer() string { return "https://" + s.address(s.settings().MainDomain) }
 
 func (s *Server) oidcRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-configuration", s.discovery)

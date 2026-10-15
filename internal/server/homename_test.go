@@ -70,4 +70,35 @@ func TestHomeNameInternetAndSignIn(t *testing.T) {
 	if loc := res.Header().Get("Location"); !strings.HasPrefix(loc, "https://home.dedyn.io/sso/continue") {
 		t.Errorf("home-only app's sign-in went to %q", loc)
 	}
+
+	// Everything on the internet: refused while an app signs in with Homeport (its sign-in address would change)…
+	if w := r.local(t, "POST", "/api/internet/everything", `{"on":true}`); !strings.Contains(w.Body.String(), "signs in with Homeport") {
+		t.Errorf("should refuse with an OIDC app: %s", w.Body.String())
+	}
+	_ = r.srv.Store.Update(func(d *state.Data) error { a, _ := d.App(app.ID); a.OIDC = nil; return nil })
+	// …otherwise every app and the main domain are reached on the port, and sign-in goes there.
+	j = r.waitJob(t, r.local(t, "POST", "/api/internet/everything", `{"on":true}`))
+	if j.Status != "done" {
+		t.Fatalf("everything: %+v", j)
+	}
+	w = r.local(t, "GET", "/api/apps", "")
+	if !strings.Contains(w.Body.String(), `"address":"mealie.home.dedyn.io:8443"`) || !strings.Contains(w.Body.String(), `"internet":true`) {
+		t.Errorf("apps with everything on: %s", w.Body.String())
+	}
+	res = b.do("GET", "https://mealie.home.dedyn.io:8443/auth/verify?app="+app.ID, nil,
+		map[string]string{"X-Forwarded-Method": "GET", "X-Forwarded-Uri": "/", "X-Forwarded-Host": "mealie.home.dedyn.io:8443"})
+	if loc := res.Header().Get("Location"); !strings.HasPrefix(loc, "https://home.dedyn.io:8443/sso/continue") {
+		t.Errorf("sign-in with everything on went to %q", loc)
+	}
+	if w := r.local(t, "GET", "/api/overview", ""); !strings.Contains(w.Body.String(), `"address":"home.dedyn.io:8443"`) || !strings.Contains(w.Body.String(), `"aiAddress":"ai.home.dedyn.io:8443"`) {
+		t.Errorf("overview: %s", w.Body.String())
+	}
+	if iss := r.srv.issuer(); iss != "https://home.dedyn.io:8443" {
+		t.Errorf("issuer %q", iss)
+	}
+	// And back.
+	r.waitJob(t, r.local(t, "POST", "/api/internet/everything", `{"on":false}`))
+	if w := r.local(t, "GET", "/api/overview", ""); !strings.Contains(w.Body.String(), `"address":"home.dedyn.io"`) {
+		t.Errorf("overview after: %s", w.Body.String())
+	}
 }

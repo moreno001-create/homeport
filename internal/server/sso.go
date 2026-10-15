@@ -42,9 +42,9 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 		back := "https://" + hostWithPort(r) + r.Header.Get("X-Forwarded-Uri")
 		// Sign-in is on the main domain; for an app on the internet under the home name (whose main domain only
 		// works at home) it's on the sign-in name, which the internet reaches too (on the same port as the app).
-		signIn := s.settings().MainDomain
+		signIn := s.address(s.settings().MainDomain)
 		s.Store.Read(func(d *state.Data) {
-			if n := d.SignInName(); n != "" && app.Internet && d.UnderHome(app.Domain) {
+			if n := d.SignInName(); n != "" && app.Internet && d.UnderHome(app.Domain) && !d.Settings().HomeOnInternet {
 				signIn = n
 				if p := d.Settings().InternetPort; p != 0 && p != 443 {
 					signIn += ":" + strconv.Itoa(p)
@@ -57,7 +57,7 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	if !canOpen(u, app) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusForbidden)
-		renderPage(w, "denied", pageData{Title: "Not allowed", User: &u, Main: s.settings().MainDomain, App: &app})
+		renderPage(w, "denied", pageData{Title: "Not allowed", User: &u, Main: s.settings().MainDomain, MainAddr: s.address(s.settings().MainDomain), App: &app})
 		return
 	}
 	h := w.Header()
@@ -167,7 +167,7 @@ func (s *Server) appSignOut(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	clearCookie(w)
-	http.Redirect(w, r, "https://"+s.settings().MainDomain+"/login", http.StatusFound)
+	http.Redirect(w, r, "https://"+s.address(s.settings().MainDomain)+"/login", http.StatusFound)
 }
 
 func (s *Server) onMain(w http.ResponseWriter, r *http.Request) bool {
@@ -199,7 +199,7 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.aiHost()})
+	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.address(s.aiHost())})
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +274,7 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request) {
 	if !u.Admin {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusForbidden)
-		renderPage(w, "denied", pageData{Title: "Not allowed", User: &u, Main: s.settings().MainDomain})
+		renderPage(w, "denied", pageData{Title: "Not allowed", User: &u, Main: s.settings().MainDomain, MainAddr: s.address(s.settings().MainDomain)})
 		return
 	}
 	serveAdmin(w, r)

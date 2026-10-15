@@ -37,6 +37,9 @@ type Settings struct {
 	Terminal bool `json:"terminal,omitempty"`
 	// RouterPorts: Homeport keeps ports 80 and 443 forwarded to it on the home router (UPnP).
 	RouterPorts bool `json:"routerPorts,omitempty"`
+	// HomeOnInternet puts everything under the home name on the internet: the portal, the admin panel, the AI page
+	// and every app (the name and *.name point at the home's public address).
+	HomeOnInternet bool `json:"homeOnInternet,omitempty"`
 	// InternetPort is the port the internet reaches apps on when the router's 443 goes to another machine (8443): the
 	// router sends it to this server's 443. 0 is the usual 443.
 	InternetPort int `json:"internetPort,omitempty"`
@@ -560,13 +563,27 @@ func (v *Data) SignInName() string {
 
 // AppAddress is the address to open an app at: its name, with the internet port when it's on the internet under the
 // home name and that isn't 443 (photos.home.example.com:8443).
-func (v *Data) AppAddress(a App) string {
-	if a.Internet && v.UnderHome(a.Domain) {
-		if p := v.d.Settings.InternetPort; p != 0 && p != 443 {
-			return a.Domain + ":" + strconv.Itoa(p)
-		}
+func (v *Data) AppAddress(a App) string { return v.Address(a.Domain) }
+
+// Address is a name with the port to reach it on: names under the home name that point at the public address (all of
+// them when everything is on the internet, else apps put there and the sign-in name) go through the router's
+// internet port (8443, say); "" when that's 443.
+func (v *Data) Address(domain string) string {
+	if !v.UnderHome(domain) {
+		return domain
 	}
-	return a.Domain
+	p := v.d.Settings.InternetPort
+	if p == 0 || p == 443 {
+		return domain
+	}
+	outside := v.d.Settings.HomeOnInternet || domain == v.SignInName()
+	if a, ok := v.AppOn(domain); ok && a.Internet {
+		outside = true
+	}
+	if !outside {
+		return domain
+	}
+	return domain + ":" + strconv.Itoa(p)
 }
 
 // UnderHome says whether a name is the home name or under it.
@@ -579,7 +596,7 @@ func (v *Data) UnderHome(domain string) bool {
 // internet, otherwise when its name is a public one.
 func (v *Data) OnInternet(a App) bool {
 	if v.UnderHome(a.Domain) {
-		return a.Internet
+		return a.Internet || v.d.Settings.HomeOnInternet
 	}
 	return !PrivateName(a.Domain)
 }

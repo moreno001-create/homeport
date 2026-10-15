@@ -39,6 +39,7 @@ type internetStatus struct {
 	Name        string           `json:"name"`               // the internet name apps go under ("" when there's none)
 	HomeName    string           `json:"homeName,omitempty"` // the home name (apps under it go on the internet where they are)
 	Port        int              `json:"port"`               // the port the internet reaches apps on (443, or 8443 beside another server)
+	Everything  bool             `json:"everything"`         // everything under the home name is on the internet
 	NameIPs     []string         `json:"nameIPs"`
 	NamePoints  bool             `json:"namePoints"`
 	Cert        certs.Status     `json:"cert"`
@@ -76,7 +77,7 @@ func (s *Server) readInternet(ctx context.Context) internetStatus {
 	online := map[string]bool{}
 	s.Store.Read(func(d *state.Data) {
 		st.Name, st.RouterPorts, list = d.PublicBase(), d.Settings().RouterPorts, d.Apps()
-		st.HomeName, st.Port = d.HomeName(), cmp.Or(d.Settings().InternetPort, 443)
+		st.HomeName, st.Port, st.Everything = d.HomeName(), cmp.Or(d.Settings().InternetPort, 443), d.Settings().HomeOnInternet
 		for _, a := range list {
 			online[a.ID] = d.OnInternet(a)
 		}

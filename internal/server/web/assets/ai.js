@@ -213,7 +213,7 @@ els.stop.addEventListener("click", async () => {
 els.model.addEventListener("change", () => {
   if (els.model.value === "find") {
     els.model.value = remembered();
-    window.open("https://" + state.me.mainDomain + "/admin#models", "_blank", "noopener");
+    window.open("https://" + (state.me.mainAddress || state.me.mainDomain) + "/admin#models", "_blank", "noopener");
     return;
   }
   remember(els.model.value);
@@ -254,10 +254,10 @@ async function busy() {
   try {
     state.me = await api("GET", "/me");
     $("domain").textContent = state.me.mainDomain;
-    $("home").href = "https://" + state.me.mainDomain + "/";
+    $("home").href = "https://" + (state.me.mainAddress || state.me.mainDomain) + "/";
     $("me").textContent = state.me.displayName || state.me.name;
     document.title = "AI · " + state.me.mainDomain;
-    if (state.me.admin) { const a = $("admin"); a.href = "https://" + state.me.mainDomain + "/admin"; a.hidden = false; }
+    if (state.me.admin) { const a = $("admin"); a.href = "https://" + (state.me.mainAddress || state.me.mainDomain) + "/admin"; a.hidden = false; }
     await loadModel();
   } catch (err) { toast(err.message); }
   draw();
