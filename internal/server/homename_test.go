@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -96,6 +97,15 @@ func TestHomeNameInternetAndSignIn(t *testing.T) {
 	if iss := r.srv.issuer(); iss != "https://home.dedyn.io:8443" {
 		t.Errorf("issuer %q", iss)
 	}
+	// The AI page sends people to sign in, and back to it on its port.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "ai.home.dedyn.io:8443"
+	rec := httptest.NewRecorder()
+	r.srv.aiPage(rec, req)
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, url.QueryEscape("https://ai.home.dedyn.io:8443/")) || !strings.HasPrefix(loc, "https://home.dedyn.io:8443/") {
+		t.Errorf("AI page sign-in: %q", loc)
+	}
+
 	// And back.
 	r.waitJob(t, r.local(t, "POST", "/api/internet/everything", `{"on":false}`))
 	if w := r.local(t, "GET", "/api/overview", ""); !strings.Contains(w.Body.String(), `"address":"home.dedyn.io"`) {

@@ -87,7 +87,7 @@ func (s *Server) aiAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) aiPage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.sessionUser(r); !ok {
-		back := "https://" + host(r) + "/"
+		back := "https://" + hostWithPort(r) + "/" // with its port (8443 from the internet), or the way back would miss it
 		http.Redirect(w, r, "https://"+s.address(s.settings().MainDomain)+"/sso/continue?return="+url.QueryEscape(back), http.StatusFound)
 		return
 	}
