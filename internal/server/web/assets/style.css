@@ -103,8 +103,9 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
 tr:last-child td { border-bottom: 0; }
-td.actions { text-align: right; white-space: nowrap; }
-td.actions button { margin-left: 6px; }
+/* Buttons wrap onto more lines rather than running off the side (Remove came last, out of sight). */
+td.actions { text-align: right; white-space: normal; min-width: 180px; }
+td.actions button { margin: 3px 0 3px 6px; }
 .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--muted); }
 .pill.running, .pill.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 .pill.stopped, .pill.failed { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
