@@ -13,6 +13,8 @@
 # It also installs Ollama with a model that fits this server's memory, for the assistant chat:
 #   HOMEPORT_LOCAL_AI=no (skip it), HOMEPORT_LOCAL_MODEL=qwen3.5:9b (another Ollama model),
 #   HOMEPORT_LOCAL_URL=http://192.168.1.20:1234 (use a model server on another computer instead)
+# File sharing on the home network (Samba, for the File sharing page): HOMEPORT_FILE_SHARING=yes (asked at the terminal;
+#   unattended installs leave it out unless set).
 # Running it again updates Homeport and leaves the setup alone.
 set -Eeuo pipefail
 shopt -s extglob lastpipe
@@ -592,6 +594,9 @@ while [ -z "${HOMEPORT_PASSWORD:-}" ] && $tty_ok; do
   p2=""; printf 'Again: ' >/dev/tty; read -r -s p2 </dev/tty; echo >/dev/tty
   if [ "$HOMEPORT_PASSWORD" != "$p2" ]; then echo "They didn't match; try again." >/dev/tty; HOMEPORT_PASSWORD=""; fi
 done
+if ! installed samba; then
+  ask HOMEPORT_FILE_SHARING "Share folders on the home network too (file sharing for Macs, Windows and phones)? yes or no" "yes"
+fi
 if $tty_ok && $live; then printf '\e[?25l\n' >&3; draw force; fi
 
 if [ -z "${HOMEPORT_DOMAIN:-}" ] || [ -z "${HOMEPORT_ADMIN:-}" ] || [ -z "${HOMEPORT_PASSWORD:-}" ]; then
@@ -612,7 +617,19 @@ fi
 RUN_IN="$tmp/password" run homeport init --domain "$HOMEPORT_DOMAIN" --admin "$HOMEPORT_ADMIN" \
   --email "${HOMEPORT_EMAIL:-}" --tls "${HOMEPORT_TLS:-$tls_default}"
 rm -f "$tmp/password"
-if ! local_ai 54 70; then local_ai_failed; fi
+sharing=""
+if installed samba; then
+  sharing="ready (Samba was already installed)"
+elif [[ ${HOMEPORT_FILE_SHARING:-no} =~ ^[Yy] ]]; then
+  say 54 56 "Installing file sharing (Samba)"
+  if DEBIAN_FRONTEND=noninteractive run apt-get install -y -q samba; then
+    sharing="ready"
+  else
+    step_ok=false
+    note "File sharing didn't install (the log says why). Everything else works: install it later on the File sharing page."
+  fi
+fi
+if ! local_ai 56 70; then local_ai_failed; fi
 say 100 100 "Done"
 hide
 show <<MSG
@@ -626,6 +643,7 @@ $(printf '\033[1m')Homeport is ready$(printf '\033[0m')
   Password:            the one you just chose (change it with: sudo homeport user passwd $HOMEPORT_ADMIN)
   This server:         ${ips:-unknown address}
   Assistant's model:   ${local_model:-none yet (Settings → Assistant chat)}
+  File sharing:        ${sharing:-not installed (the File sharing page installs it)}${sharing:+: share folders on the File sharing page}
 MSG
 if [ "${HOMEPORT_TLS:-$tls_default}" = internal ]; then
   show <<MSG
