@@ -1,0 +1,3 @@
+App logos from the dashboard-icons project (https://github.com/homarr-labs/dashboard-icons),
+licensed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+The logos are trademarks of their owners. Some were resized to 128 px PNGs.

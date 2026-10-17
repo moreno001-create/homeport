@@ -815,10 +815,11 @@ func (s *Server) listCatalog(w http.ResponseWriter, r *http.Request) {
 		Category    string `json:"category"`
 		Website     string `json:"website"`
 		SignIn      string `json:"signIn"`
+		Icon        string `json:"icon,omitempty"`
 	}
 	out := make([]entry, 0, len(all))
 	for _, a := range all {
-		out = append(out, entry{a.ID, a.Name, a.Description, a.Category, a.Website, string(a.SignIn)})
+		out = append(out, entry{a.ID, a.Name, a.Description, a.Category, a.Website, string(a.SignIn), iconFor(a.ID)})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -841,6 +842,7 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		Source    *state.Source `json:"source,omitempty"`
 		Internet  bool          `json:"internet"` // on a public name (not a home-network one)
 		Address   string        `json:"address"`  // where to open it (with the internet port when it has one)
+		Icon      string        `json:"icon,omitempty"`
 	}
 	var list []state.App
 	online, address := map[string]bool{}, map[string]string{}
@@ -854,7 +856,7 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 	for i, a := range list {
 		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source,
-			Internet: online[a.ID], Address: address[a.ID]}
+			Internet: online[a.ID], Address: address[a.ID], Icon: iconFor(a.Catalog)}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t

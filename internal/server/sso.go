@@ -199,7 +199,8 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.address(s.aiHost())})
+	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.address(s.aiHost()),
+		Greeting: greeting(time.Now())})
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -285,3 +286,16 @@ var dummyHash = sync.OnceValue(func() string {
 	h, _ := auth.HashPassword(auth.NewToken())
 	return h
 })
+
+// greeting suits the time of day on the server.
+func greeting(t time.Time) string {
+	switch h := t.Hour(); {
+	case h < 5:
+		return "Good evening"
+	case h < 12:
+		return "Good morning"
+	case h < 18:
+		return "Good afternoon"
+	}
+	return "Good evening"
+}

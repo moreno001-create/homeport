@@ -84,6 +84,43 @@ button:disabled { opacity: .55; cursor: default; }
   background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); margin-bottom: 6px;
 }
 .tname { font-weight: 600; }
+.glyph.logo { object-fit: contain; padding: 6px; background: #f4f6f8; }
+.glyph.c0 { color: #1f6feb; background: color-mix(in srgb, #1f6feb 15%, var(--panel)); }
+.glyph.c1 { color: #1d7d46; background: color-mix(in srgb, #1d7d46 15%, var(--panel)); }
+.glyph.c2 { color: #8250df; background: color-mix(in srgb, #8250df 15%, var(--panel)); }
+.glyph.c3 { color: #bf3989; background: color-mix(in srgb, #bf3989 15%, var(--panel)); }
+.glyph.c4 { color: #0e7c86; background: color-mix(in srgb, #0e7c86 15%, var(--panel)); }
+.glyph.c5 { color: var(--accent); }
+.ai-glyph { color: #fff; background: linear-gradient(135deg, #8250df, #d9541a); }
+.tile { transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+.tile:hover { transform: translateY(-2px); box-shadow: 0 6px 18px color-mix(in srgb, var(--ink) 12%, transparent); }
+
+.app-name { display: flex; align-items: center; gap: 12px; }
+.app-name .glyph { width: 34px; height: 34px; margin: 0; font-size: 15px; border-radius: 9px; flex: none; }
+
+/* Portal: greeting and a web search on top */
+.portal h2 { margin: 8px 0 0; font-size: 17px; }
+.hero {
+  display: grid; gap: 14px; justify-items: center; text-align: center; padding: 34px 18px 30px; border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--panel)), color-mix(in srgb, var(--link) 14%, var(--panel)));
+  border: 1px solid var(--line);
+}
+.greet { margin: 0; font-size: 24px; font-weight: 650; }
+.search {
+  width: min(620px, 100%); display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 16px; margin: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.search:focus-within { border-color: var(--link); }
+.search input { border: 0; padding: 8px 4px; background: transparent; font-size: 16px; min-width: 0; flex: 1; }
+.search input:focus { outline: none; }
+.search button { border-radius: 999px; padding: 8px 18px; }
+.search-icon { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+@media (max-width: 520px) {
+  .search button { display: none; } .greet { font-size: 20px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { padding: 14px; }
+}
 .tdomain { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 
 /* Admin panel */

@@ -43,6 +43,7 @@ type pageData struct {
 	Error    string
 	Name     string
 	AI       string // the AI page's name, on the portal
+	Greeting string // "Good morning", on the portal
 }
 
 var pages = template.Must(template.New("").Funcs(template.FuncMap{
@@ -51,6 +52,15 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 			return "?"
 		}
 		return strings.ToUpper(s[:1])
+	},
+	"icon": iconFor,
+	// hue picks one of six colours for an app's initial, the same each time.
+	"hue": func(s string) int {
+		n := 0
+		for _, c := range s {
+			n += int(c)
+		}
+		return n % 6
 	},
 }).Parse(`
 {{define "head"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,17 +86,25 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 <header class="bar">
   <div class="brand"><span class="mark" aria-hidden="true"></span><span>{{.Main}}</span></div>
   <div class="who">
-    <span>{{.User.DisplayName}}</span>
+    <span>{{or .User.DisplayName .User.Name}}</span>
     {{if .User.Admin}}<a class="button" href="/admin">Admin</a>{{end}}
     <form method="post" action="/logout"><button type="submit">Sign out</button></form>
   </div>
 </header>
-<main class="wide">
-  <h1>Your apps</h1>
+<main class="wide portal">
+  <section class="hero">
+    <p class="greet">{{.Greeting}}, {{or .User.DisplayName .User.Name}}</p>
+    <form class="search" action="https://www.google.com/search" method="get" role="search">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+      <input name="q" type="search" placeholder="Search Google" aria-label="Search Google" autocomplete="off" autofocus>
+      <button class="primary" type="submit">Search</button>
+    </form>
+  </section>
+  <h2>Your apps</h2>
   {{if or .Apps .AI}}
   <ul class="tiles">
     {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
-    {{range .Apps}}<li><a class="tile" href="https://{{index $.Links .ID}}/"><span class="glyph" aria-hidden="true">{{initial .Name}}</span><span class="tname">{{.Name}}</span><span class="tdomain">{{index $.Links .ID}}</span></a></li>{{end}}
+    {{range .Apps}}<li><a class="tile" href="https://{{index $.Links .ID}}/">{{with icon .Catalog}}<img class="glyph logo" src="{{.}}" alt="">{{else}}<span class="glyph c{{hue .Name}}" aria-hidden="true">{{initial .Name}}</span>{{end}}<span class="tname">{{.Name}}</span><span class="tdomain">{{index $.Links .ID}}</span></a></li>{{end}}
   </ul>
   {{else}}
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>

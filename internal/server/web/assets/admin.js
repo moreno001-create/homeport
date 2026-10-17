@@ -31,6 +31,13 @@ function when(iso) {
   return iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
 }
 
+// appIcon: an app's logo, or its initial in one of six colours.
+function appIcon(a) {
+  if (a.icon) return h("img", { class: "glyph logo", src: a.icon, alt: "" });
+  const hue = [...a.name].reduce((n, c) => n + c.codePointAt(0), 0) % 6;
+  return h("span", { class: "glyph c" + hue, "aria-hidden": "true" }, a.name[0].toUpperCase());
+}
+
 function accessText(a) {
   return a.public ? "Anyone" : (a.groups || []).map(g => (g === "all" ? "All users" : g === "admins" ? "Admins" : g)).join(", ");
 }
@@ -67,7 +74,7 @@ const views = {
   async apps() {
     const [installed, catalog] = await Promise.all([api("GET", "/apps"), api("GET", "/catalog")]);
     const rows = installed.map(a => h("tr", {},
-      h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])),
+      h("td", {}, h("div", { class: "app-name" }, appIcon(a), h("div", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])))),
       h("td", {}, h("a", { href: "https://" + (a.address || a.domain) + "/", target: "_blank", rel: "noopener" }, a.address || a.domain), " ",
         h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
       h("td", {}, accessText(a.access)),
@@ -86,7 +93,7 @@ const views = {
         : h("p", { class: "muted" }, "Nothing installed yet. Pick an app below."),
       h("h2", {}, "Catalog"),
       h("div", { class: "catalog" }, catalog.map(c => h("div", { class: "entry" },
-        h("div", { class: "top" }, h("span", { class: "glyph", "aria-hidden": "true" }, c.name[0]), h("div", {}, h("b", {}, c.name), h("div", { class: "muted small" }, c.category))),
+        h("div", { class: "top" }, appIcon(c), h("div", {}, h("b", {}, c.name), h("div", { class: "muted small" }, c.category))),
         h("p", {}, c.description),
         h("p", { class: "small" }, signInText(c.signIn)),
         h("div", {}, h("button", { class: "primary", onclick: () => installDialog(c) }, "Install"))))),
