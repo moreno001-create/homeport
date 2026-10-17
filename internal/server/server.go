@@ -68,6 +68,7 @@ type Server struct {
 	load     sysload.Meter // how busy the machine is, for the AI page's meter
 	pulls    pulls         // models Ollama is downloading
 	checks   checksState   // the last round of checks
+	upkeep   upkeep        // the Maintenance page's last checks
 	mu       sync.Mutex
 	handoffs map[string]handoff     // one-time codes that carry a sign-in to an app's domain
 	bad      map[string][]time.Time // failed sign-ins by address

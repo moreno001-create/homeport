@@ -446,6 +446,94 @@ const views = {
     }
   },
 
+  // Maintenance: Homeport's own updates, the system's (Ubuntu's packages) and the apps', and old versions' disk space.
+  async maintenance() {
+    const m = await api("GET", "/maintenance");
+    const sys = m.system;
+    const done = j => { if (j) route(); };
+    const at = d => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    let sysCard;
+    if (m.systemError) {
+      sysCard = h("div", { class: "card stack" }, h("h2", {}, "System updates"), h("p", { class: "error" }, m.systemError),
+        h("div", {}, h("button", { onclick: () => runJob("Checking for system updates", () => api("POST", "/maintenance/system/check")).then(done) }, "Check now")));
+    } else if (!sys || !sys.supported) {
+      sysCard = h("div", { class: "card stack" }, h("h2", {}, "System updates"), h("p", { class: "muted" }, (sys && sys.why) || "Not available on this server."));
+    } else {
+      const n = sys.packages.length;
+      sysCard = h("div", { class: "card stack" },
+        h("div", { class: "head" }, h("h2", {}, "System updates"),
+          h("button", { onclick: () => runJob("Checking for system updates", () => api("POST", "/maintenance/system/check")).then(done) }, "Check now")),
+        h("p", {}, n
+          ? [h("span", { class: "pill " + (sys.security ? "failed" : "partly") }, n + " update" + (n > 1 ? "s" : "")), " ",
+             sys.security ? h("b", {}, sys.security + " for security") : null, " ",
+             h("span", { class: "muted small" }, "as of " + at(sys.checked))]
+          : [h("span", { class: "pill done" }, "Up to date"), " ", h("span", { class: "muted small" }, "as of " + at(sys.checked) + " (Check now asks the package servers)")]),
+        h("p", { class: "muted small" }, sys.autoSecurity
+          ? "Security updates install by themselves every day (unattended upgrades)."
+          : "Security updates don't install by themselves on this server: install them here now and then."),
+        n ? h("details", {}, h("summary", { class: "small" }, "Which packages"),
+          h("div", { class: "list" }, h("table", {}, h("thead", {}, h("tr", {}, ["Package", "Now", "New", ""].map(t => h("th", {}, t)))),
+            h("tbody", {}, sys.packages.map(p => h("tr", {}, h("td", {}, p.name), h("td", { class: "small" }, p.from), h("td", { class: "small" }, p.to),
+              h("td", {}, p.security ? h("span", { class: "pill failed" }, "security") : null))))))) : null,
+        sys.restarts && sys.restarts.length ? h("p", { class: "small" }, "These updates restart " + sys.restarts.join(", ") +
+          (sys.restarts.includes("docker") || sys.restarts.includes("containerd") ? ": the apps stop for a minute while Docker restarts." : ".")) : null,
+        sys.rebootNeeded ? h("p", {}, h("span", { class: "pill partly" }, "restart needed"), " ",
+          "The server needs a restart to finish earlier updates" + (sys.rebootFor && sys.rebootFor.length ? " (" + sys.rebootFor.slice(0, 5).join(", ") + ")" : "") + ".") : null,
+        h("div", { class: "row" },
+          n ? h("button", { class: "primary", onclick: () => {
+            if (!confirm("Install " + n + " system update" + (n > 1 ? "s" : "") + "? It takes a few minutes" + (sys.restarts && sys.restarts.length ? "; " + sys.restarts.join(", ") + " restart" : "") + ".")) return;
+            runJob("Installing system updates", () => api("POST", "/maintenance/system/upgrade")).then(done);
+          } }, "Install updates") : null,
+          h("button", { class: sys.rebootNeeded ? "primary" : "", onclick: restart }, "Restart the server")));
+    }
+
+    const list = m.apps || [];
+    const waiting = list.filter(a => a.available);
+    const appsCard = h("div", { class: "card stack" },
+      h("div", { class: "head" }, h("h2", {}, "App updates"),
+        h("button", { onclick: () => runJob("Checking apps for newer versions", () => api("POST", "/maintenance/apps/check")).then(done) }, "Check now")),
+      !m.appsChecked
+        ? h("p", { class: "muted" }, "Not checked yet. Check now asks each app's registry whether its version is still the newest (nothing is downloaded).")
+        : h("p", {}, waiting.length
+          ? [h("span", { class: "pill internet" }, waiting.length + " app" + (waiting.length > 1 ? "s" : "") + " with a newer version"), " "]
+          : [h("span", { class: "pill done" }, "All up to date"), " "],
+          h("span", { class: "muted small" }, "checked " + at(m.appsChecked))),
+      list.length ? h("div", { class: "list" }, h("table", {}, h("thead", {}, h("tr", {}, ["App", "Version", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, list.map(a => h("tr", {},
+          h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.images.map(i => i.image).join(", "))),
+          h("td", {}, a.error ? h("span", { class: "muted small" }, a.error)
+            : a.available ? h("span", { class: "pill internet" }, "newer version")
+            : a.images.some(i => i.error) ? h("span", { class: "muted small" }, a.images.filter(i => i.error).map(i => i.error).join("; "))
+            : h("span", { class: "pill done" }, "newest")),
+          h("td", { class: "actions" }, a.available ? h("button", { onclick: () => runJob("Updating " + a.name, () => api("POST", "/maintenance/apps/update", { ids: [a.id] })).then(done) }, "Update") : null)))))) : null,
+      h("div", { class: "row" },
+        waiting.length > 1 ? h("button", { class: "primary", onclick: () => {
+          if (!confirm("Update " + waiting.map(a => a.name).join(", ") + "? Each restarts for a moment, one after another.")) return;
+          runJob("Updating apps", () => api("POST", "/maintenance/apps/update", { ids: waiting.map(a => a.id) })).then(done);
+        } }, "Update all") : null,
+        h("button", { onclick: () => {
+          if (!confirm("Remove app versions nothing uses any more? Running apps aren't touched.")) return;
+          runJob("Freeing disk space", () => api("POST", "/maintenance/prune"));
+        } }, "Free disk space")),
+      h("p", { class: "muted small" }, "Free disk space removes the old versions updates leave behind."));
+
+    return [h("div", { class: "head" }, h("h1", {}, "Maintenance")), updateCard(), sysCard, appsCard];
+
+    async function restart() {
+      if (!confirm("Restart the server now? Every app and this page are away for a few minutes.")) return;
+      try { await api("POST", "/maintenance/reboot"); } catch (err) { toast(err.message); return; }
+      const status = h("p", {}, "Restarting… this page reloads once the server is back.");
+      openDialog(h("div", { class: "stack" }, h("h2", {}, "Restarting the server"), status));
+      const end = Date.now() + 15 * 60 * 1000;
+      let wentAway = false;
+      const poll = async () => {
+        try { await api("GET", "/overview"); if (wentAway) { location.reload(); return; } } catch { wentAway = true; }
+        if (Date.now() < end) setTimeout(poll, 3000); else status.textContent = "It's taking long: check the server.";
+      };
+      setTimeout(poll, 5000);
+    }
+  },
+
   async users() {
     const users = await api("GET", "/users");
     return [
