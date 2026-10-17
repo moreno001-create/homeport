@@ -109,7 +109,9 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
         <a href="https://mail.aol.com/"><span class="mail-glyph" aria-hidden="true">Aol.</span><span>AOL</span></a>
       </nav>
       <div class="weather" id="weather" aria-live="polite" hidden></div>
+      <section class="links" id="links" aria-label="Your links"></section>
     </div>
+    <section class="news" id="news" aria-label="News" hidden></section>
   </section>
   <h2>Your apps</h2>
   {{if or .Apps .AI}}

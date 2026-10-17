@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	s.api(mux, s.browserAdmin)
 	s.weatherRoutes(mux)
 	s.reachRoutes(mux)
+	s.startRoutes(mux)
 	ai := s.aiHandler()
 	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The AI page has its own name; Caddy's sign-in checks (/auth/) come from any site.

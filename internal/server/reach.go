@@ -32,7 +32,7 @@ type reach struct {
 	// Local are addresses that work on the home network even when names don't (the server's own IP, .local names).
 	Local []string `json:"local"`
 	// Files is how to open shared folders (smb://…), when there are some.
-	Files []string `json:"files,omitempty"`
+	Files []string    `json:"files,omitempty"`
 	Admin *reachAdmin `json:"admin,omitempty"`
 }
 

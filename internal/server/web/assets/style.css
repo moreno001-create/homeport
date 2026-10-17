@@ -453,19 +453,53 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 @media (max-width: 600px) { .reach-row, .reach-apps .reach-row { grid-template-columns: 1fr; } }
 
 /* Portal: webmail links, left of the weather */
-.hero-row { width: min(900px, 100%); display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.hero-row { width: min(1120px, 100%); display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr) minmax(0, 270px); grid-template-areas: "mail weather links"; gap: 14px; align-items: stretch; }
+.hero-row .mail { grid-area: mail; } .hero-row .weather { grid-area: weather; } .hero-row .links { grid-area: links; }
 .hero-row .weather { width: 100%; }
 .hero-row .weather.off { justify-self: center; }
-.hero-row:has(.weather[hidden]), .hero-row:has(.weather.off) { grid-template-columns: 1fr; width: min(620px, 100%); }
-.mail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start;
+.hero-row:has(.weather[hidden]) .mail, .hero-row:has(.weather.off) .mail { grid-column: 1 / 2; }
+.mail { display: grid; grid-template-columns: 1fr; gap: 2px; align-content: start;
   background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
 .mail a { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; color: var(--ink); text-decoration: none; font-size: 14px; min-width: 0; }
 .mail a:hover { background: var(--soft); }
 .mail a span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail img, .mail-glyph { width: 26px; height: 26px; flex: none; object-fit: contain; border-radius: 6px; background: #fff; padding: 2px; }
 .mail-glyph { display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; background: #31459b; padding: 0; }
+.mail a { padding: 5px 8px; }
+@media (max-width: 980px) {
+  .hero-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "weather weather" "mail links"; }
+  .mail { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+}
 @media (max-width: 720px) {
-  .hero-row { grid-template-columns: 1fr; }
+  .hero-row { grid-template-columns: 1fr; grid-template-areas: "mail" "weather" "links"; }
   .mail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mail a { flex-direction: column; gap: 4px; font-size: 12px; text-align: center; }
 }
+
+/* Portal: your links, right of the weather */
+.links { display: grid; gap: 8px; align-content: start; text-align: left;
+  background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
+.links-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.links-head .w-change { margin: 0; }
+.links-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.link-item { display: flex; align-items: center; min-width: 0; }
+.link-item a { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 10px; color: var(--ink); text-decoration: none; font-size: 14px; min-width: 0; }
+.link-item a:hover { background: var(--soft); }
+.link-item a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-item img, .link-glyph { width: 22px; height: 22px; border-radius: 5px; flex: none; object-fit: contain; }
+.link-glyph { display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+.link-add { display: grid; gap: 6px; }
+.link-add input { padding: 7px 9px; font-size: 14px; }
+
+/* Portal: news, under the weather */
+.news { width: min(1120px, 100%); text-align: left; background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; display: grid; gap: 8px; }
+.news-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.news-tabs { display: flex; gap: 4px; }
+.news-tabs button { padding: 4px 12px; border-radius: 999px; font-size: 13px; }
+.news-tabs button.current { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.news-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 20px; }
+.news-list li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); min-width: 0; }
+.news-list a { color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.35; }
+.news-list a:hover { text-decoration: underline; }
+.news-list .small { white-space: nowrap; flex: none; }
+@media (max-width: 720px) { .news-list { grid-template-columns: 1fr; } }

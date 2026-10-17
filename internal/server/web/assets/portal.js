@@ -117,3 +117,69 @@ api("GET", "/reach").then(x => {
   const spot = document.getElementById("reach");
   if (spot) spot.replaceChildren(reachCard(x, false));
 }).catch(() => { /* signed out, or an older server */ });
+
+// MARK: Your links (right of the weather)
+
+const linksBox = document.getElementById("links");
+let links = [], editing = false;
+
+function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } }
+
+function linkIcon(l) {
+  const glyph = h("span", { class: "link-glyph", "aria-hidden": "true" }, (l.name || "?")[0].toUpperCase());
+  const img = h("img", { src: "/api/me/icon?host=" + encodeURIComponent(host(l.url)), alt: "", loading: "lazy" });
+  img.addEventListener("error", () => img.replaceWith(glyph));
+  return img;
+}
+
+function drawLinks() {
+  const add = h("form", { class: "link-add", onsubmit: async e => {
+    e.preventDefault();
+    const next = [...links, { name: name.value.trim(), url: url.value.trim() }];
+    try { links = await api("PUT", "/links", next); editing = true; drawLinks(); linksBox.querySelector(".link-add input[name=url]").focus(); }
+    catch (err) { url.setCustomValidity(err.message); url.reportValidity(); }
+  } });
+  const url = h("input", { name: "url", placeholder: "Address (netflix.com)", "aria-label": "Address", autocapitalize: "none", spellcheck: "false", inputmode: "url", required: true });
+  const name = h("input", { name: "name", placeholder: "Name (optional)", "aria-label": "Name" });
+  url.addEventListener("input", () => url.setCustomValidity(""));
+  add.append(url, name, h("button", { class: "primary", type: "submit" }, "Add"));
+  linksBox.replaceChildren(...[
+    h("div", { class: "links-head" }, h("b", {}, "Your links"),
+      links.length ? h("button", { type: "button", class: "w-change", onclick: () => { editing = !editing; drawLinks(); } }, editing ? "Done" : "Edit") : null),
+    links.length ? h("div", { class: "links-list" }, links.map((l, i) => h("span", { class: "link-item" },
+      h("a", { href: l.url, title: l.url }, linkIcon(l), h("span", {}, l.name)),
+      editing ? h("button", { type: "button", class: "attach-x", "aria-label": "Remove " + l.name, onclick: async () => {
+        try { links = await api("PUT", "/links", links.filter((_, j) => j !== i)); drawLinks(); } catch (err) { alert(err.message); }
+      } }, "×") : null))) : h("p", { class: "muted small" }, "Keep the sites you use here: your bank, Netflix, a shop…"),
+    editing || !links.length ? add : null].filter(Boolean));
+}
+
+if (linksBox) api("GET", "/links").then(x => { links = x; drawLinks(); }).catch(() => linksBox.remove());
+
+// MARK: News (under the weather)
+
+const newsBox = document.getElementById("news");
+
+function ago(t) {
+  const m = Math.round((Date.now() - new Date(t)) / 60000);
+  if (!t || isNaN(m) || m < 0) return "";
+  if (m < 60) return m + " min ago";
+  if (m < 48 * 60) return Math.round(m / 60) + " h ago";
+  return Math.round(m / 1440) + " days ago";
+}
+
+async function loadNews(source) {
+  let x;
+  try { x = await api("GET", "/news" + (source ? "?source=" + source : "")); } catch { newsBox.hidden = true; return; }
+  newsBox.hidden = false;
+  newsBox.replaceChildren(
+    h("div", { class: "news-head" }, h("b", {}, "News"),
+      h("div", { class: "news-tabs", role: "tablist" }, x.sources.map(src => h("button", { type: "button", role: "tab",
+        "aria-selected": src.id === x.source ? "true" : "false", class: src.id === x.source ? "current" : "",
+        onclick: () => loadNews(src.id) }, src.name)))),
+    x.error ? h("p", { class: "muted small" }, x.error) : h("ol", { class: "news-list" }, x.items.map(it => h("li", {},
+      h("a", { href: it.link, target: "_blank", rel: "noopener noreferrer" }, it.title),
+      h("span", { class: "muted small" }, ago(it.time))))));
+}
+
+if (newsBox) loadNews("");

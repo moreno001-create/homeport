@@ -78,6 +78,15 @@ type User struct {
 	Created     time.Time `json:"created"`
 	// Weather is where the portal's weather is for, and in which units.
 	Weather *WeatherPlace `json:"weather,omitempty"`
+	// Links are their own quick links on the portal, and News the news source they last chose ("ap", "bbc"…).
+	Links []QuickLink `json:"links,omitempty"`
+	News  string      `json:"news,omitempty"`
+}
+
+// QuickLink is a site someone keeps on their portal.
+type QuickLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // WeatherPlace is a user's place for the portal's weather: one they typed (a ZIP code or a town), or where their
