@@ -189,7 +189,7 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var mine []state.App
-	links := map[string]string{}
+	links, descs := map[string]string{}, map[string]string{}
 	s.Store.Read(func(d *state.Data) {
 		for _, a := range d.Apps() {
 			if canOpen(u, a) {
@@ -199,7 +199,10 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, AI: s.address(s.aiHost()),
+	for _, a := range mine {
+		descs[a.ID] = s.Apps.Description(a)
+	}
+	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, Descs: descs, AI: s.address(s.aiHost()),
 		Greeting: greeting(time.Now())})
 }
 

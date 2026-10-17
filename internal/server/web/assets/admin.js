@@ -75,7 +75,7 @@ const views = {
   async apps() {
     const [installed, catalog] = await Promise.all([api("GET", "/apps"), api("GET", "/catalog")]);
     const rows = installed.map(a => h("tr", {},
-      h("td", {}, h("div", { class: "app-name" }, appIcon(a), h("div", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])))),
+      h("td", {}, h("div", { class: "app-name" }, appIcon(a), h("div", {}, h("b", {}, a.name), a.description ? h("div", { class: "small app-desc" }, a.description) : null, h("div", { class: "muted small" }, a.id, a.source && [" · from ", h("a", { href: a.source.url, target: "_blank", rel: "noopener" }, a.source.url.replace("https://github.com/", ""))])))),
       h("td", {}, h("a", { href: "https://" + (a.address || a.domain) + "/", target: "_blank", rel: "noopener" }, a.address || a.domain), " ",
         h("span", { class: "pill " + (a.internet ? "internet" : "home") }, a.internet ? "internet" : "home")),
       h("td", {}, accessText(a.access)),

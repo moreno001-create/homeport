@@ -268,6 +268,14 @@ func (m *Manager) entryOf(app state.App) (catalog.App, bool, error) {
 	return e, ok, nil
 }
 
+// Description is what an app is for, from its manifest ("" when it has none).
+func (m *Manager) Description(app state.App) string {
+	if e, ok, _ := m.entryOf(app); ok {
+		return e.Description
+	}
+	return ""
+}
+
 // oidcClient is the OIDC registration an app gets from its manifest, on its domain.
 func oidcClient(entry catalog.App, domain string) *state.OIDCClient {
 	if entry.OIDC == nil {

@@ -36,6 +36,7 @@ type pageData struct {
 	User  *state.User
 	Apps  []state.App
 	Links map[string]string // app id → its address (with the internet port when it has one)
+	Descs map[string]string // app id → what it's for
 	// MainAddr is the main domain with the port it's reached on (for links back to it).
 	MainAddr string
 	App      *state.App
@@ -117,8 +118,8 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <h2>Your apps</h2>
   {{if or .Apps .AI}}
   <ul class="tiles">
-    {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
-    {{range .Apps}}<li><a class="tile" href="https://{{index $.Links .ID}}/">{{with icon .Catalog}}<img class="glyph logo" src="{{.}}" alt="">{{else}}<span class="glyph c{{hue .Name}}" aria-hidden="true">{{initial .Name}}</span>{{end}}<span class="tname">{{.Name}}</span><span class="tdomain">{{index $.Links .ID}}</span></a></li>{{end}}
+    {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdesc">Chat with this server's own AI: questions, writing, pictures and files.</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
+    {{range .Apps}}<li><a class="tile" href="https://{{index $.Links .ID}}/">{{with icon .Catalog}}<img class="glyph logo" src="{{.}}" alt="">{{else}}<span class="glyph c{{hue .Name}}" aria-hidden="true">{{initial .Name}}</span>{{end}}<span class="tname">{{.Name}}</span>{{with index $.Descs .ID}}<span class="tdesc" title="{{.}}">{{.}}</span>{{end}}<span class="tdomain">{{index $.Links .ID}}</span></a></li>{{end}}
   </ul>
   {{else}}
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>
