@@ -64,6 +64,7 @@ const views = {
           : "Let's Encrypt" + (o.settings.acmeEmail ? ", notices to " + o.settings.acmeEmail : "") + "."),
         h("div", {}, h("button", { onclick: setupDialog }, "How this server is set up"))),
       checksCard(),
+      reachSpot(),
       updateCard(),
       systemCard(),
     ];
@@ -1121,6 +1122,14 @@ function newer(a, b) {
   for (let i = 0; i < 3; i++) if ((x.n[i] || 0) !== (y.n[i] || 0)) return (x.n[i] || 0) > (y.n[i] || 0);
   if (!x.pre !== !y.pre) return !x.pre; // a release is newer than its test builds
   return x.pre.localeCompare(y.pre, undefined, { numeric: true }) > 0;
+}
+
+// reachSpot fills in "How to reach this server" (the same card as on the portal, open here).
+function reachSpot() {
+  const spot = h("div", {});
+  fetch("/api/me/reach", { credentials: "same-origin" }).then(r => r.ok ? r.json() : Promise.reject())
+    .then(x => spot.replaceChildren(reachCard(x, true))).catch(() => spot.remove());
+  return spot;
 }
 
 // updateCard: the version, newer releases on GitHub, and updating with one click.

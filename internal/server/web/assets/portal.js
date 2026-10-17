@@ -111,3 +111,9 @@ function placeForm(first) {
 }
 
 if (box) load(true);
+
+// How to reach this server, at the bottom of the portal.
+api("GET", "/reach").then(x => {
+  const spot = document.getElementById("reach");
+  if (spot) spot.replaceChildren(reachCard(x, false));
+}).catch(() => { /* signed out, or an older server */ });

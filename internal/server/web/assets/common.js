@@ -198,3 +198,39 @@ function attacher(zone, input) {
     clear() { for (const f of files) if (f.preview) URL.revokeObjectURL(f.preview); files.length = 0; draw(); },
   };
 }
+
+// MARK: How to reach this server
+
+// reachCard shows the addresses to use (GET /api/me/reach): the portal, the AI page and apps, with the internet port,
+// home-network fallbacks, file sharing and, for admins, SSH and the router's part.
+function reachCard(x, open) {
+  const row = (label, value, extra) => h("div", { class: "reach-row" },
+    h("span", { class: "reach-label" }, label),
+    h("span", { class: "reach-value" }, value, extra || null));
+  const link = l => [h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.url.replace(/^https:\/\//, "").replace(/\/$/, "")),
+    " ", h("span", { class: "pill " + (l.internet ? "internet" : "home") }, l.internet ? "home + internet" : "home only"),
+    copyButton(l.url, "Copy")];
+  const code = t => [h("code", {}, t), copyButton(t, "Copy")];
+  const a = x.admin;
+  return h("details", { class: "card reach", open: !!open },
+    h("summary", {}, h("b", {}, "How to reach this server"),
+      x.port ? h("span", { class: "muted small" }, " · from the internet, addresses end in :" + x.port) : null),
+    h("div", { class: "stack" },
+      x.port ? h("p", { class: "small muted" }, "The router's port 443 goes to another machine, so this server is reached through port " + x.port +
+        ": keep the :" + x.port + " in addresses (the links here have it).") : null,
+      row("Portal", link(x.portal)),
+      x.ai ? row("AI page", link(x.ai)) : null,
+      x.apps.length ? h("details", { class: "reach-apps" }, h("summary", { class: "small" }, x.apps.length + " app" + (x.apps.length > 1 ? "s" : "")),
+        x.apps.map(l => row(l.name, link(l)))) : null,
+      x.local.length ? row("At home, by address", x.local.map(u => h("span", { class: "reach-item" }, code(u))),
+        h("div", { class: "muted small" }, "When a name won't open at home. The browser warns about the certificate there: that's expected.")) : null,
+      x.files && x.files.length ? row("Shared folders", x.files.map(u => h("span", { class: "reach-item" }, code(u))),
+        h("div", { class: "muted small" }, "Mac: Finder → Go → Connect to Server. Windows: File Explorer's address bar.")) : null,
+      a ? [
+        h("h3", { class: "reach-admin" }, "For admins"),
+        row("Admin panel", [h("a", { href: a.adminURL }, a.adminURL.replace(/^https:\/\//, "")), copyButton(a.adminURL, "Copy")]),
+        row("SSH (terminal)", code(a.ssh), h("div", { class: "muted small" }, "Port " + a.sshPort + (a.sshPort === 22 ? " (the usual one)" : "") + ". Run it on your computer, then the server's commands at its prompt.")),
+        a.publicIP ? row("Home's internet address", code(a.publicIP)) : null,
+        a.router ? row("Router", h("span", {}, a.router), h("div", { class: "muted small" }, "The port forwarding that brings the internet here.")) : null,
+      ] : null));
+}

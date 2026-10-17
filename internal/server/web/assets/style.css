@@ -438,3 +438,16 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .code { position: relative; }
 .code-copy { position: absolute; top: 6px; right: 6px; background: var(--panel); opacity: .85; }
 .code:hover .code-copy { opacity: 1; }
+
+/* How to reach this server */
+.reach > summary { cursor: pointer; list-style-position: inside; }
+.reach[open] > summary { margin-bottom: 14px; }
+.reach-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 4px 14px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.reach-label { color: var(--muted); font-size: 14px; }
+.reach-value { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; overflow-wrap: anywhere; }
+.reach-value > div { flex-basis: 100%; }
+.reach-item { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
+.reach-apps > summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+.reach-apps .reach-row { grid-template-columns: 150px minmax(0, 1fr); }
+.reach-admin { margin: 10px 0 0; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+@media (max-width: 600px) { .reach-row, .reach-apps .reach-row { grid-template-columns: 1fr; } }

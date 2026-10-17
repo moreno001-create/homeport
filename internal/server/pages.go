@@ -110,6 +110,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   {{else}}
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>
   {{end}}
+  <div id="reach"></div>
 </main>
 <script src="/assets/common.js" defer></script>
 <script src="/assets/portal.js" defer></script>
