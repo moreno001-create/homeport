@@ -17,7 +17,11 @@ function h(tag, attrs, ...kids) {
 function rich(text) {
   const out = [];
   String(text || "").split(/```/).forEach((part, i) => {
-    if (i % 2) { out.push(h("pre", { class: "log" }, part.replace(/^[a-z0-9+-]*\n/i, "").replace(/\n$/, ""))); return; }
+    if (i % 2) {
+      const code = part.replace(/^[a-z0-9+-]*\n/i, "").replace(/\n$/, "");
+      out.push(h("div", { class: "code" }, h("pre", { class: "log" }, code), copyButton(code, "Copy", "code-copy")));
+      return;
+    }
     for (const para of part.split(/\n{2,}/)) {
       if (!para.trim()) continue;
       const lines = para.trim().split("\n");
@@ -53,6 +57,27 @@ function argsText(args) {
   return t.length > 120 ? t.slice(0, 117) + "…" : t;
 }
 
+// copyButton copies text to the clipboard, and says so for a moment.
+function copyButton(text, label, cls) {
+  const b = h("button", { type: "button", class: "copy " + (cls || ""), title: "Copy to the clipboard" }, "⧉ " + label);
+  b.addEventListener("click", async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; }
+    catch {
+      // Without clipboard access (an older browser, say): copy through a hidden text box.
+      const t = h("textarea", { "aria-hidden": "true" });
+      t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.append(t); t.select();
+      try { ok = document.execCommand("copy"); } catch { /* not allowed */ }
+      t.remove();
+    }
+    b.textContent = ok ? "✓ Copied" : "Couldn't copy";
+    b.classList.toggle("done", ok);
+    setTimeout(() => { b.textContent = "⧉ " + label; b.classList.remove("done"); }, 1600);
+  });
+  return b;
+}
+
 // chatPicture gives the address of picture n of turn i in the open conversation (each page sets it).
 let chatPicture = null;
 
@@ -70,7 +95,7 @@ function turnView(t, i) {
     default: return h("div", { class: "msg bot" },
       t.text ? rich(t.text) : null,
       (t.calls || []).map(c => h("div", { class: "call small" }, "Uses ", h("b", {}, c.name), c.args && Object.keys(c.args).length ? h("span", { class: "muted" }, " (" + argsText(c.args) + ")") : null)),
-      h("div", { class: "by" }, t.by || ""));
+      h("div", { class: "msg-foot" }, t.text ? copyButton(t.text, "Copy") : null, h("div", { class: "by" }, t.by || "")));
   }
 }
 

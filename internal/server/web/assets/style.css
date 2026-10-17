@@ -428,3 +428,13 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .w-hide { margin-left: auto; color: var(--muted); }
 @media (max-width: 520px) { .w-where { margin-left: 0; text-align: left; justify-items: start; width: 100%; } .w-icon { font-size: 36px; } .w-temp { font-size: 28px; } }
 .weather.off { background: none; border: 0; padding: 0; width: auto; }
+
+/* Copy buttons on answers and code */
+.msg-foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.msg-foot .by { margin-left: auto; }
+.copy { padding: 3px 10px; font-size: 12px; border-radius: 999px; color: var(--muted); background: transparent; }
+.copy:hover { color: var(--ink); }
+.copy.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
+.code { position: relative; }
+.code-copy { position: absolute; top: 6px; right: 6px; background: var(--panel); opacity: .85; }
+.code:hover .code-copy { opacity: 1; }
