@@ -391,3 +391,19 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
   td.actions { text-align: left; min-width: 0; }
   td.actions button { margin: 4px 6px 0 0; }
 }
+
+/* Pictures and files in chat boxes */
+.attach-btn { width: 40px; height: 40px; padding: 0; border-radius: 50%; flex: 0 0 auto; font-size: 18px; border-color: transparent; background: transparent; }
+.attach-btn:hover { background: var(--soft); }
+.composer .row > .attach-btn { flex: 0 0 auto; border-color: var(--line); }
+.ai-box .attach-btn { margin-left: -10px; }
+.attach-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+.attach-item { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); max-width: 240px; }
+.attach-item img, .attach-doc { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; display: grid; place-items: center; background: var(--soft); font-size: 20px; }
+.attach-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.attach-x { border: 0; background: transparent; padding: 2px 8px; font-size: 18px; line-height: 1; color: var(--muted); }
+.dropping .ai-box, textarea.dropping, body.dropping .ai-box { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.msg-pics { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.msg-pics img { max-width: 220px; max-height: 220px; border-radius: 10px; display: block; object-fit: cover; }
+.msg-files { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.file-chip { font-size: 13px; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 8%, transparent); }

@@ -207,7 +207,7 @@ func (s *Server) SetupText(ctx context.Context) string {
 		w("- Put Homeport in place and started it and Caddy as launchd agents for this user; state in %s", plat.StateDir)
 		w("- Optionally: a local AI model (Ollama or LM Studio)")
 	} else {
-		w("- Installed docker.io, docker-compose-v2, avahi-daemon, avahi-utils, libnss-mdns (.local names), restic (backups) and zstd, and Caddy (from Caddy's apt repository, or Ubuntu's own)")
+		w("- Installed docker.io, docker-compose-v2, avahi-daemon, avahi-utils, libnss-mdns (.local names), restic (backups), zstd, rsync and poppler-utils (reading PDFs sent to the AI), and Caddy (from Caddy's apt repository, or Ubuntu's own)")
 		w("- Put Homeport at /usr/local/bin/homeport, wrote /etc/systemd/system/homeport.service, and enabled docker, caddy and homeport")
 		w("- If ufw was on, opened ports 80 and 443")
 		w("- Installed Ollama with a model that fits this machine, with /etc/systemd/system/ollama.service.d/homeport.conf (16K context, model kept loaded 30 minutes)")

@@ -189,15 +189,22 @@ function grow() {
   els.input.style.height = Math.min(els.input.scrollHeight, 240) + "px";
 }
 
+// Pictures and files: dropped anywhere on the page, pasted into the box, or picked with 📎.
+const att = attacher(document.body, els.input);
+els.input.before(att.button);
+els.form.prepend(att.strip);
+els.form.append(att.picker);
+chatPicture = (i, n) => "/api/ai/chat/" + state.conv.id + "/images/" + i + "/" + n;
+
 els.form.addEventListener("submit", async e => {
   e.preventDefault();
   const text = els.input.value.trim();
-  if (!text) return;
+  if (!text && !att.count()) return;
   els.send.disabled = true;
   try {
-    const conv = await api("POST", "/chat", { conversation: state.conv ? state.conv.id : "", text, model: els.model.value });
+    const conv = await api("POST", "/chat", { conversation: state.conv ? state.conv.id : "", text, model: els.model.value, files: att.list() });
     const isNew = !state.conv || state.conv.id !== conv.id;
-    state.conv = conv; els.input.value = ""; grow();
+    state.conv = conv; els.input.value = ""; grow(); att.clear();
     draw();
     if (isNew) drawConvs();
     poll();

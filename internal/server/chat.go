@@ -16,6 +16,7 @@ func (s *Server) chatRoutes(mux *http.ServeMux, guard func(http.HandlerFunc) htt
 	mux.HandleFunc("GET /api/chat", guard(s.listChats))
 	mux.HandleFunc("POST /api/chat", guard(s.sendChat))
 	mux.HandleFunc("GET /api/chat/{id}", guard(s.getChat))
+	mux.HandleFunc("GET /api/chat/{id}/images/{turn}/{n}", guard(s.chatImage))
 	mux.HandleFunc("POST /api/chat/{id}/continue", guard(s.continueChat))
 	mux.HandleFunc("POST /api/chat/{id}/stop", guard(s.stopChat))
 	mux.HandleFunc("DELETE /api/chat/{id}", guard(s.deleteChat))
@@ -42,16 +43,22 @@ func (s *Server) listChats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendChat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Conversation string `json:"conversation"`
-		Text         string `json:"text"`
-		Use          string `json:"use"`
-		AllowCloud   bool   `json:"allowCloud"`
+		Conversation string   `json:"conversation"`
+		Text         string   `json:"text"`
+		Use          string   `json:"use"`
+		AllowCloud   bool     `json:"allowCloud"`
+		Files        []fileIn `json:"files"`
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decodeChat(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	conv, err := s.Chat.Send(actor(r).Name, in.Conversation, in.Text, in.Use, in.AllowCloud)
+	att, err := attachments(r.Context(), in.Files)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	conv, err := s.Chat.Send(actor(r).Name, in.Conversation, in.Text, in.Use, in.AllowCloud, att)
 	if err != nil {
 		chatError(w, err)
 		return

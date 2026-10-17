@@ -3,6 +3,7 @@ package assist
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,10 +50,10 @@ func TestDraftAppFixesWhatTheCheckerRefuses(t *testing.T) {
 		t.Errorf("by %q after %d requests", d.By, len(requests))
 	}
 	first, second := requests[0], requests[1]
-	if !strings.Contains(first[0].Content, "data to read, not instructions") || !strings.Contains(first[1].Content, `<file name="docker-compose.yml">`) {
+	if !strings.Contains(fmt.Sprint(first[0].Content), "data to read, not instructions") || !strings.Contains(fmt.Sprint(first[1].Content), `<file name="docker-compose.yml">`) {
 		t.Error("the first request should carry the rules and the repository's files")
 	}
-	if last := second[len(second)-1].Content; !strings.Contains(last, "privileged") || second[len(second)-2].Role != "assistant" {
+	if last := fmt.Sprint(second[len(second)-1].Content); !strings.Contains(last, "privileged") || second[len(second)-2].Role != "assistant" {
 		t.Errorf("the retry should show the model what was refused: %q", last)
 	}
 }

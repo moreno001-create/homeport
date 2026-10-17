@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -58,8 +59,35 @@ type Turn struct {
 	Calls   []ToolCall   `json:"calls,omitempty"`
 	Results []ToolResult `json:"results,omitempty"`
 	Time    time.Time    `json:"time"`
+	// Images are pictures sent with a message (fetched one by one: Chat.Image), and Files the names of files whose
+	// text went along (Extra, sent to the model, not shown).
+	Images []Image  `json:"images,omitempty"`
+	Files  []string `json:"files,omitempty"`
+	Extra  string   `json:"-"`
 	// claude is Claude's own message, thinking included, sent back unchanged on later requests.
 	claude *anthropic.BetaMessageParam
+}
+
+// Image is a picture in a message.
+type Image struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // image/jpeg, image/png, image/gif or image/webp
+	Data []byte `json:"-"`
+}
+
+// Attachments are what's sent along with a message: pictures, and the text of files.
+type Attachments struct {
+	Images []Image
+	Files  []string // names
+	Text   string   // the files' text, for the model
+}
+
+// full is what the model reads of a user's message: the text and the files' text.
+func (t Turn) full() string {
+	if t.Extra == "" {
+		return t.Text
+	}
+	return strings.TrimSpace(t.Text + "\n\n" + t.Extra)
 }
 
 type ToolCall struct {
@@ -147,24 +175,33 @@ func (c *Chat) settings() state.ChatSettings {
 
 // Send adds the admin's message to a conversation (a new one when id is empty) and starts answering it. use is ""
 // (follow the settings), "local" or "claude"; allowCloud answers "ask before sending to Claude" for this message.
-func (c *Chat) Send(owner, id, text, use string, allowCloud bool) (Conversation, error) {
-	return c.send(owner, id, text, use, allowCloud, false, "")
+func (c *Chat) Send(owner, id, text, use string, allowCloud bool, att ...Attachments) (Conversation, error) {
+	return c.send(owner, id, text, use, allowCloud, false, "", att)
 }
 
 // SendLocal is Send answered by one of the local server's models (model; "" for the one in the settings).
-func (c *Chat) SendLocal(owner, id, text, model string) (Conversation, error) {
-	return c.send(owner, id, text, "local", false, false, model)
+func (c *Chat) SendLocal(owner, id, text, model string, att ...Attachments) (Conversation, error) {
+	return c.send(owner, id, text, "local", false, false, model, att)
 }
 
 // SendPlain is SendLocal for a plain conversation (see Conversation.Plain), for people who aren't admins.
-func (c *Chat) SendPlain(owner, id, text, model string) (Conversation, error) {
-	return c.send(owner, id, text, "local", false, true, model)
+func (c *Chat) SendPlain(owner, id, text, model string, att ...Attachments) (Conversation, error) {
+	return c.send(owner, id, text, "local", false, true, model, att)
 }
 
-func (c *Chat) send(owner, id, text, use string, allowCloud, plain bool, model string) (Conversation, error) {
+func (c *Chat) send(owner, id, text, use string, allowCloud, plain bool, model string, atts []Attachments) (Conversation, error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	var att Attachments
+	for _, a := range atts {
+		att.Images = append(att.Images, a.Images...)
+		att.Files = append(att.Files, a.Files...)
+		att.Text = strings.TrimSpace(att.Text + "\n\n" + a.Text)
+	}
+	if text == "" && len(att.Images) == 0 && att.Text == "" {
 		return Conversation{}, errors.New("write a message first")
+	}
+	if text == "" {
+		text = "(see the attached " + map[bool]string{true: "picture", false: "file"}[len(att.Images) > 0] + ")"
 	}
 	c.mu.Lock()
 	if c.convs == nil {
@@ -183,7 +220,7 @@ func (c *Chat) send(owner, id, text, use string, allowCloud, plain bool, model s
 		c.mu.Unlock()
 		return Conversation{}, errBusy
 	}
-	conv.Turns = append(conv.Turns, Turn{Role: "user", Text: text, Time: time.Now()})
+	conv.Turns = append(conv.Turns, Turn{Role: "user", Text: text, Images: att.Images, Files: att.Files, Extra: att.Text, Time: time.Now()})
 	conv.Model = model
 	c.startLocked(conv, use, allowCloud)
 	out := conv.copyLocked()
@@ -221,6 +258,20 @@ func (c *Chat) Get(owner, id string) (Conversation, error) {
 		return Conversation{}, ErrNoConversation
 	}
 	return conv.copyLocked(), nil
+}
+
+// Image is picture n of a conversation's turn.
+func (c *Chat) Image(owner, id string, turn, n int) (Image, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	conv := c.convs[id]
+	if conv == nil || conv.Owner != owner {
+		return Image{}, ErrNoConversation
+	}
+	if turn < 0 || turn >= len(conv.Turns) || n < 0 || n >= len(conv.Turns[turn].Images) {
+		return Image{}, errors.New("no such picture")
+	}
+	return conv.Turns[turn].Images[n], nil
 }
 
 func (c *Chat) List(owner string) []Summary {
@@ -398,10 +449,10 @@ func (c *Chat) choose(conv *Conversation, use string, st state.ChatSettings) (ro
 	}
 	c.mu.Lock()
 	tookOver := conv.claudeTookOver
-	last := ""
+	last, pictures, model := "", false, cmp.Or(conv.Model, st.LocalModel)
 	for i := len(conv.Turns) - 1; i >= 0; i-- {
 		if conv.Turns[i].Role == "user" {
-			last = conv.Turns[i].Text
+			last, pictures = conv.Turns[i].Text, len(conv.Turns[i].Images) > 0
 			break
 		}
 	}
@@ -409,10 +460,23 @@ func (c *Chat) choose(conv *Conversation, use string, st state.ChatSettings) (ro
 	switch {
 	case tookOver:
 		return route{provider: "claude", why: "Claude is already handling this conversation"}, nil
+	case pictures && !c.localSees(st.LocalURL, model):
+		return route{provider: "claude", why: "the local model can't see pictures"}, nil
 	case Hard(last):
 		return route{provider: "claude", why: "this looks like troubleshooting or a bigger job"}, nil
 	}
 	return route{provider: "local", canHandOver: true}, nil
+}
+
+// localSees says whether the local model reads pictures (true when its server doesn't say: it's tried).
+func (c *Chat) localSees(localURL, model string) bool {
+	if model == "" {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	v := LocalModelInfo(ctx, localURL, model, false).Vision
+	return v == nil || *v
 }
 
 // answer runs one reply, with tool calls, to the end.
@@ -610,7 +674,12 @@ func claudeHistory(turns []Turn) []anthropic.BetaMessageParam {
 	for _, t := range turns {
 		switch t.Role {
 		case "user":
-			addUser(anthropic.NewBetaTextBlock(t.Text))
+			blocks := []anthropic.BetaContentBlockParamUnion{}
+			for _, im := range t.Images {
+				blocks = append(blocks, anthropic.NewBetaImageBlock(anthropic.BetaBase64ImageSourceParam{
+					Data: base64.StdEncoding.EncodeToString(im.Data), MediaType: anthropic.BetaBase64ImageSourceMediaType(im.Type)}))
+			}
+			addUser(append(blocks, anthropic.NewBetaTextBlock(t.full()))...)
 		case "tools":
 			var blocks []anthropic.BetaContentBlockParamUnion
 			for _, r := range t.Results {

@@ -17,6 +17,8 @@ type ModelInfo struct {
 	Where       string `json:"where"`       // "this server", or the computer it runs on
 	Server      string `json:"server"`      // Ollama, LM Studio, or "" when it's something else
 	Loaded      *bool  `json:"loaded,omitempty"`
+	// Vision: it reads pictures (nil when its server doesn't say).
+	Vision *bool `json:"vision,omitempty"`
 }
 
 // LocalModelInfo asks the local model's server about model (Ollama's and LM Studio's own APIs; any other server just
@@ -80,6 +82,10 @@ func LocalModelInfo(ctx context.Context, rawURL, model string, forAdmin bool) Mo
 				caps = append(caps, "vision")
 			}
 		}
+	}
+	if info.Server != "" {
+		v := slices.Contains(caps, "vision")
+		info.Vision = &v
 	}
 	if params == "" {
 		if m := paramsRe.FindStringSubmatch(strings.ToLower(model)); m != nil {

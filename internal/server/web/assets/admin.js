@@ -1784,7 +1784,9 @@ function chatView(list, cfg) {
   const thread = h("div", { class: "thread" });
   const live = h("div", { class: "live", "aria-live": "polite" });
   const approvals = h("div", { class: "stack" });
-  const input = h("textarea", { rows: "3", placeholder: "Ask about this server, or ask for a change…", "aria-label": "Message" });
+  const input = h("textarea", { rows: "3", placeholder: "Ask about this server, or ask for a change… (drop a screenshot or file here too)", "aria-label": "Message" });
+  const att = attacher(input, input);
+  chatPicture = (i, n) => "/api/chat/" + chat.id + "/images/" + i + "/" + n;
   try { const ask = sessionStorage.getItem(ASK); if (ask) { input.value = ask; sessionStorage.removeItem(ASK); setTimeout(() => input.focus(), 0); } } catch { /* private window */ }
   const use = h("select", { "aria-label": "Which model answers" },
     h("option", { value: "" }, "Model: as in settings"),
@@ -1866,16 +1868,17 @@ function chatView(list, cfg) {
   const form = h("form", { class: "composer", onsubmit: async e => {
     e.preventDefault();
     const text = input.value.trim();
-    if (!text) return;
+    if (!text && !att.count()) return;
     send.disabled = true;
     try {
-      const conv = await api("POST", "/chat", { conversation: chat.id || "", text, use: use.value });
+      const conv = await api("POST", "/chat", { conversation: chat.id || "", text, use: use.value, files: att.list() });
       const isNew = chat.id !== conv.id;
-      chat.id = conv.id; input.value = "";
+      chat.id = conv.id; input.value = ""; att.clear();
       if (isNew) drawList(await api("GET", "/chat"));
       draw(conv); poll();
     } catch (err) { toast(err.message); send.disabled = false; }
-  } }, input, h("div", { class: "row" }, use, stop, send));
+  } }, att.strip, input, h("div", { class: "row" }, att.button, use, stop, send), att.picker);
+  att.button.classList.add("plain");
   input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
 
   drawList(list);

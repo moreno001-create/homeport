@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,7 @@ const handOverTool = "ask_claude"
 
 type oaMessage struct {
 	Role       string       `json:"role"`
-	Content    string       `json:"content"`
+	Content    any          `json:"content"` // text, or parts (text and pictures)
 	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string       `json:"tool_call_id,omitempty"`
 }
@@ -168,7 +169,16 @@ func localHistory(system string, turns []Turn) []oaMessage {
 	for _, t := range turns {
 		switch t.Role {
 		case "user":
-			out = append(out, oaMessage{Role: "user", Content: t.Text})
+			if len(t.Images) == 0 {
+				out = append(out, oaMessage{Role: "user", Content: t.full()})
+				continue
+			}
+			parts := []map[string]any{{"type": "text", "text": t.full()}}
+			for _, im := range t.Images {
+				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{
+					"url": "data:" + im.Type + ";base64," + base64.StdEncoding.EncodeToString(im.Data)}})
+			}
+			out = append(out, oaMessage{Role: "user", Content: parts})
 		case "assistant":
 			m := oaMessage{Role: "assistant", Content: t.Text}
 			for _, call := range t.Calls {
@@ -208,6 +218,14 @@ func (c *Chat) runLocal(ctx context.Context, conv *Conversation, st state.ChatSe
 			return "", errors.New("the local server has no chat model loaded")
 		}
 		model = models[0]
+	}
+	for _, t := range c.history(conv) {
+		if len(t.Images) > 0 && !c.localSees(st.LocalURL, model) {
+			return "", fmt.Errorf("%s can't see pictures: pick a model that can (on the AI models page, models marked \"vision\", like qwen3.5 or gemma4), or start a new chat without the picture", PrettyModel(model))
+		}
+		if len(t.Images) > 0 {
+			break
+		}
 	}
 	who := chatClient(conv.Owner, "local "+model)
 	var tools []oaTool

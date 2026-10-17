@@ -50,6 +50,7 @@ func (s *Server) aiHandler() http.Handler {
 	mux.HandleFunc("GET /api/ai/chat", s.aiUser(s.listChats))
 	mux.HandleFunc("POST /api/ai/chat", s.aiUser(s.aiSend))
 	mux.HandleFunc("GET /api/ai/chat/{id}", s.aiUser(s.getChat))
+	mux.HandleFunc("GET /api/ai/chat/{id}/images/{turn}/{n}", s.aiUser(s.chatImage))
 	mux.HandleFunc("POST /api/ai/chat/{id}/stop", s.aiUser(s.stopChat))
 	mux.HandleFunc("DELETE /api/ai/chat/{id}", s.aiUser(s.deleteChat))
 	// Admins: Claude when asked first, and approving changes, right on the page.
@@ -186,11 +187,17 @@ func (s *Server) aiBusy(w http.ResponseWriter, r *http.Request) {
 // server's models, "" (as in the settings) or, for admins, "claude".
 func (s *Server) aiSend(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Conversation string `json:"conversation"`
-		Text         string `json:"text"`
-		Model        string `json:"model"`
+		Conversation string   `json:"conversation"`
+		Text         string   `json:"text"`
+		Model        string   `json:"model"`
+		Files        []fileIn `json:"files"`
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decodeChat(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	att, err := attachments(r.Context(), in.Files)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -205,18 +212,17 @@ func (s *Server) aiSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var conv assist.Conversation
-	var err error
 	switch {
 	case !u.Admin && in.Model == "claude":
 		err = errors.New("only admins can use Claude")
 	case !u.Admin:
-		conv, err = s.Chat.SendPlain(u.Name, in.Conversation, in.Text, in.Model)
+		conv, err = s.Chat.SendPlain(u.Name, in.Conversation, in.Text, in.Model, att)
 	case in.Model == "claude":
-		conv, err = s.Chat.Send(u.Name, in.Conversation, in.Text, "claude", true)
+		conv, err = s.Chat.Send(u.Name, in.Conversation, in.Text, "claude", true, att)
 	case in.Model != "":
-		conv, err = s.Chat.SendLocal(u.Name, in.Conversation, in.Text, in.Model)
+		conv, err = s.Chat.SendLocal(u.Name, in.Conversation, in.Text, in.Model, att)
 	default:
-		conv, err = s.Chat.Send(u.Name, in.Conversation, in.Text, "", false)
+		conv, err = s.Chat.Send(u.Name, in.Conversation, in.Text, "", false, att)
 	}
 	if err != nil {
 		chatError(w, err)
