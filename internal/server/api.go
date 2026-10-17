@@ -105,6 +105,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	s.selfCareRoutes(mux, guard)
 	s.storageRoutes(mux, guard)
 	s.homeNameRoutes(mux, guard)
+	s.updateRoutes(mux, guard)
 }
 
 // MARK: AI helpers

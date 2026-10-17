@@ -57,6 +57,7 @@ const views = {
           : "Let's Encrypt" + (o.settings.acmeEmail ? ", notices to " + o.settings.acmeEmail : "") + "."),
         h("div", {}, h("button", { onclick: setupDialog }, "How this server is set up"))),
       checksCard(),
+      updateCard(),
       systemCard(),
     ];
     function stat(n, label, href) { return h("a", { class: "stat", href, style: null }, h("b", {}, n), h("span", { class: "muted" }, label)); }
@@ -945,6 +946,67 @@ async function followMove(id, box) {
     j.error ? h("p", { class: "error" }, j.error) : null,
     h("details", {}, h("summary", { class: "muted small" }, "Details"), h("pre", { class: "log" }, j.log))));
   if (j.status === "running" && location.hash === "#storage") setTimeout(() => followMove(id, box), 1500);
+}
+
+// MARK: Updating Homeport
+
+// newer says whether version a is newer than b (v0.7.11 > v0.7.11-rc8 > v0.7.10).
+function newer(a, b) {
+  const parse = v => { const [main, pre] = String(v || "").replace(/^v/, "").split("-"); return { n: main.split(".").map(Number), pre: pre || "" }; };
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < 3; i++) if ((x.n[i] || 0) !== (y.n[i] || 0)) return (x.n[i] || 0) > (y.n[i] || 0);
+  if (!x.pre !== !y.pre) return !x.pre; // a release is newer than its test builds
+  return x.pre.localeCompare(y.pre, undefined, { numeric: true }) > 0;
+}
+
+// updateCard: the version, newer releases on GitHub, and updating with one click.
+function updateCard() {
+  const body = h("div", { class: "stack" }, h("p", { class: "muted" }, "Checking for updates…"));
+  const card = h("div", { class: "card stack" }, h("h2", {}, "Homeport"), body);
+  const tests = h("input", { type: "checkbox" });
+  let info;
+  const draw = () => {
+    const pick = [info.latest, tests.checked ? info.test : null].filter(Boolean).filter(r => newer(r.tag, info.current))
+      .sort((a, b) => newer(a.tag, b.tag) ? -1 : 1)[0];
+    body.replaceChildren(...[
+      h("p", {}, "This server runs ", h("b", {}, info.current), "."),
+      info.error ? h("p", { class: "muted small" }, "Couldn't check for updates: " + info.error) : null,
+      pick ? [h("p", {}, h("span", { class: "pill internet" }, pick.prerelease ? "test build" : "update"), " ", h("b", {}, pick.tag), " is out (" + when(pick.published) + ")."),
+        pick.notes ? h("details", {}, h("summary", { class: "small" }, "What's new"), h("div", { class: "stack small guide" }, ...doc(pick.notes))) : null,
+        info.canUpdate
+          ? h("div", { class: "row" }, h("button", { class: "primary", onclick: () => update(pick.tag) }, "Update to " + pick.tag))
+          : [h("p", { class: "muted small" }, (info.why ? info.why + ". " : "") + "Update with this command on the server:"), h("pre", { class: "log" }, info.command)]]
+        : info.error ? null : h("p", { class: "muted small" }, "It's up to date."),
+      info.test && newer(info.test.tag, info.current) ? h("label", { class: "check small" }, tests, "Offer test builds too (" + info.test.tag + ")") : null,
+    ].flat().filter(x => x != null && x !== false));
+  };
+  tests.addEventListener("change", () => draw());
+  api("GET", "/update").then(x => { info = x; draw(); }).catch(err => body.replaceChildren(h("p", { class: "error" }, err.message)));
+
+  async function update(tag) {
+    if (!confirm("Update Homeport to " + tag + "? It restarts for a moment; apps keep running.")) return;
+    const log = h("pre", { class: "log" }, "Starting the installer…");
+    const status = h("p", {}, "Updating to " + tag + "…");
+    openDialog(h("div", { class: "stack" }, h("h2", {}, "Updating Homeport"), status, log));
+    try { await api("POST", "/update", { version: tag }); } catch (err) { status.textContent = err.message; status.className = "error"; return; }
+    const from = info.current, end = Date.now() + 20 * 60 * 1000;
+    const poll = async () => {
+      try {
+        const x = await api("GET", "/update/log");
+        log.textContent = x.log || "…";
+        log.scrollTop = log.scrollHeight;
+        if (x.version !== from) {
+          status.textContent = "Done: Homeport " + x.version + " is running. Reloading…";
+          setTimeout(() => location.reload(), 2500);
+          return;
+        }
+      } catch { status.textContent = "Homeport is restarting…"; }
+      if (Date.now() < end) setTimeout(poll, 2000);
+      else status.textContent = "It's taking long: look at /var/log/homeport-install.log on the server.";
+    };
+    setTimeout(poll, 2000);
+  }
+  return card;
 }
 
 // MARK: Check and fix
