@@ -200,6 +200,22 @@ func (m *Manager) Open(ctx context.Context, port, proto, from, label string) err
 	return m.ufw(ctx, args...)
 }
 
+// OpenPrivate allows a port from a private address range (192.168.0.0/16, 10.0.0.0/8 or 172.16.0.0/12): the whole
+// home network, when it has more than one part (file sharing from another subnet, say).
+func (m *Manager) OpenPrivate(ctx context.Context, port, proto, from, label string) error {
+	if err := m.usable(); err != nil {
+		return err
+	}
+	if !slices.Contains([]string{"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"}, from) || !portRe.MatchString(port) {
+		return errors.New("only a port, from a private address range")
+	}
+	args := []string{"allow", "from", from, "to", "any", "port", port}
+	if proto != "" {
+		args = append(args, "proto", proto)
+	}
+	return m.ufw(ctx, append(args, "comment", "Homeport: "+label)...)
+}
+
 // Close removes an allow rule, unless it's one of the protected ones.
 func (m *Manager) Close(ctx context.Context, port, proto, from string) error {
 	if err := m.usable(); err != nil {

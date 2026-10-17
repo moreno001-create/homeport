@@ -21,6 +21,7 @@ import (
 	"homeport/internal/backup"
 	"homeport/internal/dyndns"
 	"homeport/internal/firewall"
+	"homeport/internal/shares"
 	"homeport/internal/state"
 	"homeport/internal/sysload"
 	"homeport/internal/system"
@@ -61,6 +62,8 @@ type Server struct {
 	System *system.Manager
 	// Firewall is the Firewall page's ufw (nil: not offered).
 	Firewall *firewall.Manager
+	// Shares is the Shares page's Samba (nil: not offered).
+	Shares *shares.Manager
 	// Backup backs the server up (nil: not offered).
 	Backup *backup.Manager
 

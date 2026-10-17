@@ -40,6 +40,7 @@ import (
 	"homeport/internal/proxy"
 	"homeport/internal/runner"
 	"homeport/internal/server"
+	"homeport/internal/shares"
 	"homeport/internal/state"
 	"homeport/internal/system"
 	"homeport/internal/terminal"
@@ -233,6 +234,7 @@ func serve() error {
 		DynDNS: &dyndns.Updater{Store: store, Dir: filepath.Join(stateDir, "dyndns"), LocalIPv4: homeAddress}}
 	srv.System = &system.Manager{Runner: sys, OS: plat.Name, UID: os.Getuid(), Logs: plat.LogsCommand}
 	srv.Firewall = &firewall.Manager{Runner: sys, OS: plat.Name}
+	srv.Shares = shares.New(sys, plat.Name)
 	srv.Backup = &backup.Manager{Store: store, Apps: manager, StateDir: stateDir, Dir: filepath.Join(stateDir, "backup"), Run: backup.RunRestic,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, SSHDir: backupSSHDir(stateDir)}
 	helper.Extra = srv.AssistantTools

@@ -209,6 +209,7 @@ type data struct {
 	Apps     []App          `json:"apps"`
 	Sessions []Session      `json:"sessions"`
 	Refresh  []RefreshToken `json:"refresh,omitempty"`
+	Sharing  Sharing        `json:"sharing,omitempty"`
 }
 
 // Store is the server's state, safe for use from many goroutines.
@@ -274,6 +275,30 @@ func (s *Store) Read(fn func(d *Data)) {
 type Data struct{ d *data }
 
 func (v *Data) Settings() *Settings { return &v.d.Settings }
+
+// Sharing is the file shares (Samba) Homeport looks after.
+func (v *Data) Sharing() *Sharing { return &v.d.Sharing }
+
+// Sharing: folders shared on the home network (SMB, for Finder, Windows Explorer and phones' file apps).
+type Sharing struct {
+	Shares []Share `json:"shares,omitempty"`
+	// Accounts lists the system accounts Homeport made for sign-ins to shares (removed with them).
+	Accounts []string `json:"accounts,omitempty"`
+}
+
+// Share is one shared folder.
+type Share struct {
+	Name string `json:"name"` // what it's called on the network
+	Path string `json:"path"`
+	// Owner is the system account files in it belong to (whoever writes them over the network).
+	Owner string `json:"owner"`
+	Off   bool   `json:"off,omitempty"` // not shared for now
+	// Guests: anyone on the home network can open it without signing in (read only).
+	Guests bool `json:"guests,omitempty"`
+	// Access: account → "read" or "write".
+	Access  map[string]string `json:"access,omitempty"`
+	Comment string            `json:"comment,omitempty"`
+}
 
 // Backup is the backup settings and destinations.
 func (v *Data) Backup() *Backup { return &v.d.Backup }

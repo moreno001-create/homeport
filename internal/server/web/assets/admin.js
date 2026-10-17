@@ -541,6 +541,75 @@ const views = {
     }
   },
 
+  // File sharing: folders shared on the home network (SMB), the accounts that sign in, and who may read or write.
+  async shares() {
+    const x = await api("GET", "/shares");
+    const st = x.status;
+    const head = h("div", { class: "head" }, h("h1", {}, "File sharing"));
+    if (!st.supported) return [head, h("div", { class: "card" }, h("p", { class: "muted" }, st.why))];
+    if (!st.installed) return [head, h("div", { class: "card stack" },
+      h("p", {}, "Share folders on the home network, for Finder on a Mac, File Explorer on Windows and phones' Files apps (SMB)."),
+      h("div", {}, h("button", { class: "primary", onclick: () => runJob("Installing file sharing", () => api("POST", "/shares/install")) }, "Install file sharing")))];
+
+    const accounts = st.accounts;
+    const svc = h("div", { class: "card stack" },
+      h("div", { class: "head" }, h("h2", {}, "File sharing is ", st.running ? "on" : "off"),
+        h("button", { class: st.running ? "" : "primary", onclick: async () => {
+          if (st.running && !confirm("Turn file sharing off? Everyone connected loses their shares until it's back on.")) return;
+          try { await api("POST", "/shares/service", { on: !st.running }); route(); } catch (err) { toast(err.message); }
+        } }, st.running ? "Turn off" : "Turn on")),
+      x.addresses.length ? h("div", { class: "small stack" },
+        h("p", {}, h("b", {}, "Mac: "), "Finder → Go → Connect to Server → ", h("code", {}, "smb://" + x.addresses[0])),
+        h("p", {}, h("b", {}, "Windows: "), "File Explorer's address bar → ", h("code", {}, "\\\\" + (x.addresses[1] || x.addresses[0]))),
+        h("p", {}, h("b", {}, "iPhone: "), "Files → ⋯ → Connect to Server → ", h("code", {}, "smb://" + (x.addresses[1] || x.addresses[0])))) : null);
+
+    const who = sh => {
+      const parts = Object.entries(sh.access || {}).sort().map(([n, a]) => n + (a === "write" ? " (read and write)" : " (read)"));
+      if (sh.guests) parts.unshift("anyone on the home network (read)");
+      return parts.length ? parts.join(", ") : "nobody yet";
+    };
+    const sharesCard = h("div", { class: "card stack" },
+      h("div", { class: "head" }, h("h2", {}, "Shared folders"), h("button", { class: "primary", onclick: () => shareDialog(null, x, accounts) }, "Share a folder")),
+      x.shares.length ? h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Share", "Who", "", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, x.shares.map(sh => h("tr", {},
+          h("td", {}, h("b", {}, sh.name), h("div", { class: "muted small" }, sh.path)),
+          h("td", { class: "small" }, who(sh)),
+          h("td", {}, h("span", { class: "pill " + (sh.off ? "stopped" : "running") }, sh.off ? "off" : "shared")),
+          h("td", { class: "actions" },
+            h("button", { onclick: () => shareDialog(sh, x, accounts) }, "Who can use it"),
+            h("button", { onclick: async () => {
+              try { await api("PUT", "/shares/" + encodeURIComponent(sh.name), { ...sh, off: !sh.off }); route(); } catch (err) { toast(err.message); }
+            } }, sh.off ? "Turn on" : "Turn off"),
+            h("button", { class: "danger", onclick: () => confirmDialog("Stop sharing " + sh.name + "?",
+              "The folder stops being shared. Its files stay where they are (" + sh.path + ").", "Stop sharing",
+              () => api("DELETE", "/shares/" + encodeURIComponent(sh.name))) }, "Remove"))))))) 
+        : h("p", { class: "muted" }, "Nothing shared yet."),
+      st.others.length ? h("details", {}, h("summary", { class: "small" }, st.others.length + " shared outside Homeport"),
+        h("p", { class: "muted small" }, "Set up by hand in /etc/samba/smb.conf: they keep working, and change there."),
+        h("ul", { class: "small" }, st.others.map(o => h("li", {}, h("b", {}, o.name), " ", h("span", { class: "muted" }, o.path || ""))))) : null);
+
+    const accountsCard = h("div", { class: "card stack" },
+      h("div", { class: "head" }, h("h2", {}, "Accounts"), h("button", { onclick: () => shareAccountDialog() }, "Add an account")),
+      h("p", { class: "muted small" }, "Sign-ins for shared folders, with their own passwords (separate from Homeport's)."),
+      accounts.length ? h("div", { class: "list" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Name", "", ""].map(t => h("th", {}, t)))),
+        h("tbody", {}, accounts.map(a => h("tr", {},
+          h("td", {}, h("b", {}, a.name), h("div", { class: "muted small" }, a.ours ? "for file sharing only" : "also signs in to this server")),
+          h("td", {}, h("span", { class: "pill " + (a.disabled ? "stopped" : "running") }, a.disabled ? "off" : "on")),
+          h("td", { class: "actions" },
+            h("button", { onclick: () => shareAccountDialog(a.name) }, "Password"),
+            h("button", { onclick: async () => {
+              try { await api("POST", "/shares/accounts/" + encodeURIComponent(a.name) + "/enable", { on: a.disabled }); route(); } catch (err) { toast(err.message); }
+            } }, a.disabled ? "Turn on" : "Turn off"),
+            h("button", { class: "danger", onclick: () => confirmDialog("Remove " + a.name + "?",
+              a.ours ? "It can't open shared folders any more. Files it wrote stay." : "It can't open shared folders any more. Its login to this server stays.",
+              "Remove", () => api("DELETE", "/shares/accounts/" + encodeURIComponent(a.name))) }, "Remove"))))))) 
+        : h("p", { class: "muted" }, "No accounts yet: add one, then give it a shared folder."));
+
+    return [head, svc, sharesCard, accountsCard];
+  },
+
   async users() {
     const users = await api("GET", "/users");
     return [
@@ -1475,6 +1544,72 @@ function confirmDialog(title, text, action, run) {
   } },
     h("h2", {}, title), h("p", {}, text),
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "danger", type: "submit" }, action))));
+}
+
+// shareDialog shares a new folder (sh null) or changes who can use one.
+function shareDialog(sh, x, accounts) {
+  const name = h("input", { required: true, value: sh ? sh.name : "", disabled: !!sh, placeholder: "Family", autocapitalize: "none", spellcheck: "false", pattern: "[A-Za-z0-9][A-Za-z0-9_-]*" });
+  const place = h("select", {}, x.places.map(p => h("option", { value: p.base }, p.label + " · " + sizeText(p.free) + " free")), h("option", { value: "" }, "A folder that's already there…"));
+  const path = h("input", { placeholder: "/mnt/backup/Movies", autocapitalize: "none", spellcheck: "false" });
+  const where = h("p", { class: "muted small" });
+  const pathRow = h("label", {}, "Folder", path);
+  const show = () => {
+    pathRow.hidden = !!place.value;
+    where.textContent = place.value ? "A new folder: " + place.value + "/" + (name.value.trim() || "…") : "It keeps its files and their owner; Homeport doesn't change them.";
+  };
+  name.addEventListener("input", show); place.addEventListener("change", show);
+  const guests = h("input", { type: "checkbox", checked: sh ? !!sh.guests : false });
+  const comment = h("input", { value: sh ? sh.comment || "" : "", placeholder: "Photos for everyone at home" });
+  const picks = accounts.map(a => {
+    const sel = h("select", {}, h("option", { value: "" }, "No access"), h("option", { value: "read" }, "Read"), h("option", { value: "write" }, "Read and write"));
+    sel.value = (sh && sh.access && sh.access[a.name]) || "";
+    return { name: a.name, sel };
+  });
+  const submit = h("button", { class: "primary", type: "submit" }, sh ? "Save" : "Share it");
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    const access = {};
+    for (const p of picks) if (p.sel.value) access[p.name] = p.sel.value;
+    const body = { name: name.value.trim(), guests: guests.checked, access, comment: comment.value.trim(), off: sh ? !!sh.off : false };
+    submit.disabled = true;
+    try {
+      if (sh) await api("PUT", "/shares/" + encodeURIComponent(sh.name), body);
+      else await api("POST", "/shares", { ...body, path: place.value ? place.value + "/" + body.name : path.value.trim() });
+      dialog.close(); route();
+    } catch (err) { toast(err.message); submit.disabled = false; }
+  } },
+    h("h2", {}, sh ? "Who can use " + sh.name : "Share a folder"),
+    sh ? h("p", { class: "muted small" }, sh.path) : [h("label", {}, "Name on the network", name), h("label", {}, "Where", place), pathRow, where],
+    h("label", {}, "Description (optional)", comment),
+    h("label", { class: "check" }, guests, "Anyone on the home network can open it without signing in (read only)"),
+    h("h3", {}, "Accounts"),
+    picks.length ? h("div", { class: "stack" }, picks.map(p => h("label", { class: "row" }, h("span", { class: "grow" }, p.name), p.sel)))
+      : h("p", { class: "muted small" }, "No accounts yet: add one under Accounts, then come back here."),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), submit)));
+  if (!sh) show();
+}
+
+// shareAccountDialog adds an account for shared folders, or sets a new password for one (name given).
+function shareAccountDialog(existing) {
+  const name = h("input", { required: true, value: existing || "", disabled: !!existing, autocapitalize: "none", spellcheck: "false", pattern: "[a-z_][a-z0-9_-]*", placeholder: "alex" });
+  const pw = h("input", { type: "password", required: true, minlength: 8, autocomplete: "new-password" });
+  const pw2 = h("input", { type: "password", required: true, minlength: 8, autocomplete: "new-password" });
+  const submit = h("button", { class: "primary", type: "submit" }, existing ? "Set password" : "Add");
+  openDialog(h("form", { method: "dialog", onsubmit: async e => {
+    e.preventDefault();
+    if (pw.value !== pw2.value) { toast("The passwords don't match"); return; }
+    submit.disabled = true;
+    try {
+      if (existing) await api("POST", "/shares/accounts/" + encodeURIComponent(existing) + "/password", { password: pw.value });
+      else await api("POST", "/shares/accounts", { name: name.value.trim(), password: pw.value });
+      dialog.close(); toast(existing ? "Password changed" : "Added: now give it a shared folder"); route();
+    } catch (err) { toast(err.message); submit.disabled = false; }
+  } },
+    h("h2", {}, existing ? "New password for " + existing : "Add an account"),
+    h("label", {}, "Name", name),
+    existing ? null : h("p", { class: "muted small" }, "Lower-case letters and digits. If it's already someone's login to this server, it uses that (with this password for shares)."),
+    h("label", {}, "Password (at least 8 characters)", pw), h("label", {}, "Password again", pw2),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), submit)));
 }
 
 // Starts a background job and shows its log until it finishes.
