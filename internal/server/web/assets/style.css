@@ -453,7 +453,7 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 @media (max-width: 600px) { .reach-row, .reach-apps .reach-row { grid-template-columns: 1fr; } }
 
 /* Portal: webmail links, left of the weather */
-.hero-row { width: min(1120px, 100%); display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr) minmax(0, 270px); grid-template-areas: "mail weather links"; gap: 14px; align-items: stretch; }
+.hero-row { width: 100%; display: grid; grid-template-columns: minmax(150px, 200px) minmax(0, 1.5fr) minmax(240px, 1fr); grid-template-areas: "mail weather links"; gap: 14px; align-items: stretch; }
 .hero-row .mail { grid-area: mail; } .hero-row .weather { grid-area: weather; } .hero-row .links { grid-area: links; }
 .hero-row .weather { width: 100%; }
 .hero-row .weather.off { justify-self: center; }
@@ -481,7 +481,7 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
   background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
 .links-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
 .links-head .w-change { margin: 0; }
-.links-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.links-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px; }
 .link-item { display: flex; align-items: center; min-width: 0; }
 .link-item a { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 10px; color: var(--ink); text-decoration: none; font-size: 14px; min-width: 0; }
 .link-item a:hover { background: var(--soft); }
@@ -492,14 +492,20 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .link-add input { padding: 7px 9px; font-size: 14px; }
 
 /* Portal: news, under the weather */
-.news { width: min(1120px, 100%); text-align: left; background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; display: grid; gap: 8px; }
+.news { width: 100%; text-align: left; background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; display: grid; gap: 8px; }
 .news-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .news-tabs { display: flex; gap: 4px; }
 .news-tabs button { padding: 4px 12px; border-radius: 999px; font-size: 13px; }
 .news-tabs button.current { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.news-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 20px; }
+.news-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 2px 24px; }
 .news-list li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); min-width: 0; }
 .news-list a { color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.35; }
 .news-list a:hover { text-decoration: underline; }
 .news-list .small { white-space: nowrap; flex: none; }
 @media (max-width: 720px) { .news-list { grid-template-columns: 1fr; } }
+
+/* The portal uses the screen's width (up to a very wide screen), with room at the sides. */
+.wide.portal { max-width: 1800px; padding-left: clamp(16px, 3vw, 56px); padding-right: clamp(16px, 3vw, 56px); }
+.portal .hero { padding-left: clamp(16px, 2.5vw, 40px); padding-right: clamp(16px, 2.5vw, 40px); }
+.portal .search { width: min(760px, 100%); }
+.portal .tiles { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
