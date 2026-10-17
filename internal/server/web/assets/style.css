@@ -343,3 +343,14 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .switch-opt input:disabled + span { opacity: .45; cursor: default; }
 .switchboard tr.moving td { background: color-mix(in srgb, var(--link) 8%, transparent); }
 .move-summary .row > * { flex: 0 0 auto; }
+
+/* Phones: each table row becomes a card (no sideways scrolling, buttons all in view). */
+@media (max-width: 700px) {
+  .list { overflow-x: visible; }
+  .list table, .list tbody, .list tr, .list td { display: block; width: 100%; }
+  .list thead { display: none; }
+  .list tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .list td { border: 0; padding: 3px 0; }
+  td.actions { text-align: left; min-width: 0; }
+  td.actions button { margin: 4px 6px 0 0; }
+}
