@@ -15,6 +15,9 @@ var icons = func() map[string]string {
 	m := map[string]string{}
 	entries, _ := fs.ReadDir(webFiles, "web/assets/icons")
 	for _, e := range entries {
+		if e.IsDir() || !strings.Contains(".svg.png", path.Ext(e.Name())) {
+			continue
+		}
 		m[strings.TrimSuffix(e.Name(), path.Ext(e.Name()))] = "/assets/icons/" + e.Name()
 	}
 	return m

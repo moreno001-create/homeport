@@ -99,7 +99,17 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
       <input name="q" type="search" placeholder="Search Google" aria-label="Search Google" autocomplete="off" autofocus>
       <button class="primary" type="submit">Search</button>
     </form>
-    <div class="weather" id="weather" aria-live="polite" hidden></div>
+    <div class="hero-row">
+      <nav class="mail" aria-label="Webmail">
+        <a href="https://mail.google.com/"><img src="/assets/icons/web/gmail.svg" alt=""><span>Gmail</span></a>
+        <a href="https://outlook.live.com/mail/"><img src="/assets/icons/web/microsoft-outlook.svg" alt=""><span>Outlook</span></a>
+        <a href="https://mail.yahoo.com/"><img src="/assets/icons/web/yahoo-mail.png" alt=""><span>Yahoo</span></a>
+        <a href="https://www.icloud.com/mail"><img src="/assets/icons/web/icloud.svg" alt=""><span>iCloud</span></a>
+        <a href="https://mail.proton.me/"><img src="/assets/icons/web/proton-mail.svg" alt=""><span>Proton</span></a>
+        <a href="https://mail.aol.com/"><span class="mail-glyph" aria-hidden="true">Aol.</span><span>AOL</span></a>
+      </nav>
+      <div class="weather" id="weather" aria-live="polite" hidden></div>
+    </div>
   </section>
   <h2>Your apps</h2>
   {{if or .Apps .AI}}
