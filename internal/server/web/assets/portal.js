@@ -79,8 +79,44 @@ function draw(x) {
       h("span", { class: "muted small" }, dayName(d.date, i + 1)),
       h("span", { class: "w-dicon", "aria-hidden": "true" }, d.icon),
       h("span", { class: "small" }, h("b", {}, deg(d.high)), " ", h("span", { class: "muted" }, deg(d.low))),
-      d.rain >= 30 ? h("span", { class: "w-rain small" }, "💧" + d.rain + "%") : null))));
+      d.rain >= 30 ? h("span", { class: "w-rain small" }, "💧" + d.rain + "%") : null))),
+    morePlaces(x));
   box.dataset.units = f.units;
+}
+
+// clockAt is the time now in a time zone (America/New_York), the way this browser writes times.
+function clockAt(tz) {
+  try { return new Date().toLocaleTimeString([], { timeZone: tz, hour: "numeric", minute: "2-digit" }); } catch { return ""; }
+}
+
+// morePlaces are up to two more places under the forecast: now, today's high and low, and their local time.
+function morePlaces(x) {
+  const list = x.more || [];
+  const rows = list.map(o => {
+    const f = o.forecast, today = f.days[0];
+    return h("li", {},
+      h("span", { class: "w-micon", "aria-hidden": "true" }, f.now.icon),
+      h("span", { class: "w-mname" }, f.place.name),
+      h("span", { class: "w-mtime muted small", "data-tz": f.timezone || "" }, f.timezone ? clockAt(f.timezone) : ""),
+      h("span", { class: "w-mtemp" }, h("b", {}, deg(f.now.temp)), today ? h("span", { class: "muted small" }, " " + deg(today.high) + " / " + deg(today.low)) : null),
+      h("button", { type: "button", class: "attach-x", "aria-label": "Remove " + f.place.name, onclick: async () => {
+        try { await api("PUT", "/weather", { remove: o.index }); load(false); } catch (err) { alert(err.message); }
+      } }, "×"));
+  });
+  const room = 1 + list.length < (x.max || 3);
+  const addBtn = h("button", { type: "button", class: "w-change", onclick: () => {
+    const input = h("input", { placeholder: "ZIP code or town", "aria-label": "Another place" });
+    input.addEventListener("input", () => input.setCustomValidity(""));
+    const form = h("form", { class: "w-form", onsubmit: async e => {
+      e.preventDefault();
+      if (!input.value.trim()) return;
+      try { await api("PUT", "/weather", { add: input.value.trim() }); load(false); }
+      catch (err) { input.setCustomValidity(err.message); input.reportValidity(); }
+    } }, input, h("button", { class: "primary", type: "submit" }, "Add"), h("button", { type: "button", onclick: () => form.replaceWith(addBtn) }, "Cancel"));
+    addBtn.replaceWith(form); input.focus();
+  } }, "+ Add a place");
+  if (!rows.length && !room) return null;
+  return h("div", { class: "w-more" }, rows.length ? h("ul", {}, rows) : null, room ? addBtn : null);
 }
 
 function changeButton() {
@@ -183,3 +219,64 @@ async function loadNews(source) {
 }
 
 if (newsBox) loadNews("");
+
+// MARK: World clock (under the weather)
+
+const clocksBox = document.getElementById("clocks");
+let zones = [], maxClocks = 6, editingClocks = false;
+
+function cityOf(tz) { return tz.split("/").pop().replace(/_/g, " "); }
+
+// offset says how far a zone is from here ("+3 h", "−8 h 30", "same time").
+function offset(tz) {
+  const now = new Date();
+  const there = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  const here = new Date(now.toLocaleString("en-US"));
+  const mins = Math.round((there - here) / 60000);
+  if (!mins) return "same time";
+  const sign = mins > 0 ? "+" : "−", a = Math.abs(mins);
+  return sign + Math.floor(a / 60) + " h" + (a % 60 ? " " + (a % 60) : "");
+}
+function dayThere(tz) {
+  const fmt = d => d.toLocaleDateString("en-CA", { timeZone: tz });
+  const here = new Date().toLocaleDateString("en-CA");
+  const there = fmt(new Date());
+  return there > here ? "Tomorrow" : there < here ? "Yesterday" : "Today";
+}
+
+function drawClocks() {
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const card = (tz, label, removable, i) => h("div", { class: "clock" + (label ? " here" : "") },
+    h("span", { class: "clock-city" }, label || cityOf(tz)),
+    h("span", { class: "clock-time", "data-tz": tz }, clockAt(tz)),
+    h("span", { class: "muted small" }, label ? new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : dayThere(tz) + " · " + offset(tz)),
+    removable ? h("button", { type: "button", class: "attach-x", "aria-label": "Remove " + cityOf(tz), onclick: () => save(zones.filter((_, j) => j !== i)) }, "×") : null);
+  const save = async next => {
+    try { const x = await api("PUT", "/clocks", { zones: next }); zones = x.zones; drawClocks(); } catch (err) { alert(err.message); }
+  };
+  let all = [];
+  try { all = Intl.supportedValuesOf("timeZone"); } catch { /* older browser: type it */ }
+  const list = h("datalist", { id: "zone-list" }, all.map(z => h("option", { value: z }, cityOf(z))));
+  const input = h("input", { list: "zone-list", placeholder: "City or time zone (Paris, Asia/Tokyo)", "aria-label": "City or time zone" });
+  input.addEventListener("input", () => input.setCustomValidity(""));
+  const add = h("form", { class: "w-form clock-add", onsubmit: e => {
+    e.preventDefault();
+    const v = input.value.trim().toLowerCase();
+    const z = all.find(t => t.toLowerCase() === v) || all.find(t => cityOf(t).toLowerCase() === v) || all.find(t => t.toLowerCase().includes(v.replace(/ /g, "_")));
+    if (!z && all.length) { input.setCustomValidity("Pick a city from the list"); input.reportValidity(); return; }
+    save([...zones, z || input.value.trim()]);
+  } }, input, list, h("button", { class: "primary", type: "submit" }, "Add"));
+  clocksBox.hidden = false;
+  clocksBox.replaceChildren(...[
+    h("div", { class: "clocks-head" }, h("b", {}, "World clock"),
+      h("button", { type: "button", class: "w-change", onclick: () => { editingClocks = !editingClocks; drawClocks(); } }, editingClocks ? "Done" : "Edit")),
+    h("div", { class: "clock-row" }, card(here, "Here", false), zones.map((z, i) => card(z, "", editingClocks, i))),
+    editingClocks && zones.length < maxClocks ? add : null].filter(Boolean));
+}
+
+// Every clock (and the other places' local times) ticks along.
+setInterval(() => {
+  for (const el of document.querySelectorAll("[data-tz]")) if (el.dataset.tz) el.textContent = clockAt(el.dataset.tz);
+}, 15000);
+
+if (clocksBox) api("GET", "/clocks").then(x => { zones = x.zones; maxClocks = x.max; drawClocks(); }).catch(() => clocksBox.remove());

@@ -111,6 +111,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
       <div class="weather" id="weather" aria-live="polite" hidden></div>
       <section class="links" id="links" aria-label="Your links"></section>
     </div>
+    <section class="clocks" id="clocks" aria-label="World clock" hidden></section>
     <section class="news" id="news" aria-label="News" hidden></section>
   </section>
   <h2>Your apps</h2>

@@ -78,6 +78,10 @@ type User struct {
 	Created     time.Time `json:"created"`
 	// Weather is where the portal's weather is for, and in which units.
 	Weather *WeatherPlace `json:"weather,omitempty"`
+	// Places are up to two more places for the weather (typed ones), and Clocks the world clock's time zones
+	// (Europe/London…; nil until they choose, for the usual few).
+	Places []WeatherPlace `json:"places,omitempty"`
+	Clocks []string       `json:"clocks"` // (no omitempty: an empty list is a choice)
 	// Links are their own quick links on the portal, and News the news source they last chose ("ap", "bbc"…).
 	Links []QuickLink `json:"links,omitempty"`
 	News  string      `json:"news,omitempty"`
@@ -243,6 +247,9 @@ type Store struct {
 }
 
 var ErrNotFound = errors.New("not found")
+
+// Path is where the state is kept.
+func (s *Store) Path() string { return s.path }
 
 // Open loads the state file, or starts empty if there isn't one yet.
 func Open(path string) (*Store, error) {

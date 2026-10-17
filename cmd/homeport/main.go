@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	_ "time/tzdata" // time zones for the world clock, whatever the machine has
 
 	"golang.org/x/term"
 

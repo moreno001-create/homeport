@@ -509,3 +509,23 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .portal .hero { padding-left: clamp(16px, 2.5vw, 40px); padding-right: clamp(16px, 2.5vw, 40px); }
 .portal .search { width: min(760px, 100%); }
 .portal .tiles { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+
+/* Portal: more weather places */
+.w-more { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.w-more ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.w-more li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto; align-items: center; gap: 10px; padding: 3px 0; }
+.w-micon { font-size: 20px; text-align: center; }
+.w-mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-more .w-change { justify-self: start; margin: 0; }
+
+/* Portal: world clock */
+.clocks { width: 100%; text-align: left; background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; display: grid; gap: 10px; }
+.clocks-head { display: flex; justify-content: space-between; align-items: center; }
+.clocks-head .w-change { margin: 0; }
+.clock-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.clock { position: relative; display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--soft) 70%, transparent); }
+.clock.here { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.clock-city { font-size: 14px; font-weight: 600; }
+.clock-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.clock .attach-x { position: absolute; top: 4px; right: 2px; }
+.clock-add input { flex: 1 1 260px; }

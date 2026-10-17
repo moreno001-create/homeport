@@ -59,8 +59,10 @@ type Day struct {
 type Forecast struct {
 	Place Place  `json:"place"`
 	Units string `json:"units"` // "f" (°F, mph) or "c" (°C, km/h)
-	Now   Now    `json:"now"`
-	Days  []Day  `json:"days"`
+	// Timezone is the place's own (America/New_York), for its local time.
+	Timezone string `json:"timezone,omitempty"`
+	Now      Now    `json:"now"`
+	Days     []Day  `json:"days"`
 }
 
 var cache = struct {
@@ -117,14 +119,15 @@ func Get(ctx context.Context, p Place, units string) (Forecast, error) {
 			Min  []float64 `json:"temperature_2m_min"`
 			Rain []*int    `json:"precipitation_probability_max"`
 		} `json:"daily"`
-		Reason string `json:"reason"`
+		Reason   string `json:"reason"`
+		Timezone string `json:"timezone"`
 	}
 	if err := getJSON(ctx, ForecastURL+"?"+q.Encode(), &raw); err != nil {
 		return Forecast{}, fmt.Errorf("couldn't get the forecast: %w", err)
 	}
 	c := raw.Current
 	day := c.IsDay == 1
-	f := Forecast{Place: p, Units: units, Days: []Day{}, Now: Now{Temp: c.Temp, FeelsLike: c.Feels, Humidity: c.Humidity, Wind: c.Wind,
+	f := Forecast{Place: p, Units: units, Timezone: raw.Timezone, Days: []Day{}, Now: Now{Temp: c.Temp, FeelsLike: c.Feels, Humidity: c.Humidity, Wind: c.Wind,
 		Code: c.Code, Text: Describe(c.Code), Icon: Icon(c.Code, day), Day: day}}
 	d := raw.Daily
 	for i := range d.Time {
