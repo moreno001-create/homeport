@@ -53,11 +53,16 @@ var releases = struct {
 	at   time.Time
 }{}
 
-// Releases are Homeport's recent releases, newest first (asked again every 10 minutes at most).
-func Releases(ctx context.Context) ([]release, error) {
+// Releases are Homeport's recent releases, newest first (asked again every 10 minutes at most, or now when fresh,
+// though not more than every 15 seconds: GitHub allows 60 questions an hour).
+func Releases(ctx context.Context, fresh ...bool) ([]release, error) {
 	releases.Lock()
 	defer releases.Unlock()
-	if releases.list != nil && time.Since(releases.at) < 10*time.Minute {
+	maxAge := 10 * time.Minute
+	if len(fresh) > 0 && fresh[0] {
+		maxAge = 15 * time.Second
+	}
+	if releases.list != nil && time.Since(releases.at) < maxAge {
 		return releases.list, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", GitHubAPI+"/repos/"+Repo+"/releases?per_page=15", nil)
@@ -119,7 +124,7 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	list, err := Releases(ctx)
+	list, err := Releases(ctx, r.URL.Query().Get("fresh") == "1")
 	if err != nil {
 		out["error"] = err.Error()
 		writeJSON(w, http.StatusOK, out)

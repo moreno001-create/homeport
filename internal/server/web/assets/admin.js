@@ -1137,7 +1137,9 @@ function updateCard() {
   const body = h("div", { class: "stack" }, h("p", { class: "muted" }, "Checking for updates…"));
   const card = h("div", { class: "card stack" }, h("h2", {}, "Homeport"), body);
   const tests = h("input", { type: "checkbox" });
+  try { tests.checked = localStorage.getItem("homeport-test-builds") === "1"; } catch { /* private window */ }
   let info;
+  const again = h("button", { type: "button", class: "w-change", onclick: () => check(true) }, "Check again");
   const draw = () => {
     const pick = [info.latest, tests.checked ? info.test : null].filter(Boolean).filter(r => newer(r.tag, info.current))
       .sort((a, b) => newer(a.tag, b.tag) ? -1 : 1)[0];
@@ -1151,10 +1153,20 @@ function updateCard() {
           : [h("p", { class: "muted small" }, (info.why ? info.why + ". " : "") + "Update with this command on the server:"), h("pre", { class: "log" }, info.command)]]
         : info.error ? null : h("p", { class: "muted small" }, "It's up to date."),
       info.test && newer(info.test.tag, info.current) ? h("label", { class: "check small" }, tests, "Offer test builds too (" + info.test.tag + ")") : null,
+      h("div", {}, again),
     ].flat().filter(x => x != null && x !== false));
   };
-  tests.addEventListener("change", () => draw());
-  api("GET", "/update").then(x => { info = x; draw(); }).catch(err => body.replaceChildren(h("p", { class: "error" }, err.message)));
+  tests.addEventListener("change", () => {
+    try { localStorage.setItem("homeport-test-builds", tests.checked ? "1" : ""); } catch { /* private window */ }
+    draw();
+  });
+  const check = fresh => {
+    again.disabled = true; again.textContent = "Checking…";
+    return api("GET", "/update" + (fresh ? "?fresh=1" : "")).then(x => { info = x; draw(); })
+      .catch(err => body.replaceChildren(h("p", { class: "error" }, err.message)))
+      .finally(() => { again.disabled = false; again.textContent = "Check again"; });
+  };
+  check(false);
 
   async function update(tag) {
     if (!confirm("Update Homeport to " + tag + "? It restarts for a moment; apps keep running.")) return;
