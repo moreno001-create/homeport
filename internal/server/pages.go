@@ -99,6 +99,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
       <input name="q" type="search" placeholder="Search Google" aria-label="Search Google" autocomplete="off" autofocus>
       <button class="primary" type="submit">Search</button>
     </form>
+    <div class="weather" id="weather" aria-live="polite" hidden></div>
   </section>
   <h2>Your apps</h2>
   {{if or .Apps .AI}}
@@ -110,6 +111,8 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>
   {{end}}
 </main>
+<script src="/assets/common.js" defer></script>
+<script src="/assets/portal.js" defer></script>
 {{template "foot" .}}{{end}}
 
 {{define "denied"}}{{template "head" .}}

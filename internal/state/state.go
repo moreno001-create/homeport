@@ -76,6 +76,20 @@ type User struct {
 	Groups      []string  `json:"groups,omitempty"`
 	Admin       bool      `json:"admin,omitempty"`
 	Created     time.Time `json:"created"`
+	// Weather is where the portal's weather is for, and in which units.
+	Weather *WeatherPlace `json:"weather,omitempty"`
+}
+
+// WeatherPlace is a user's place for the portal's weather: one they typed (a ZIP code or a town), or where their
+// browser said they were (Auto, kept to about a kilometre).
+type WeatherPlace struct {
+	Name  string  `json:"name"`
+	Lat   float64 `json:"lat"`
+	Lon   float64 `json:"lon"`
+	Query string  `json:"query,omitempty"` // what they typed
+	Auto  bool    `json:"auto,omitempty"`
+	Units string  `json:"units,omitempty"` // "f" or "c"
+	Off   bool    `json:"off,omitempty"`   // weather hidden
 }
 
 // InGroup reports whether the user belongs to group g ("all" matches every user, "admins" every admin).
