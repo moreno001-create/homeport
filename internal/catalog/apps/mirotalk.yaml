@@ -1,0 +1,28 @@
+id: mirotalk
+name: MiroTalk
+description: "Video calls in the browser: share a room's link, no accounts or apps needed. Screen sharing, chat and recording."
+category: Communication
+website: https://github.com/miroslavpejic85/mirotalk
+signIn: gate
+secrets: [jwt_key, api_key]
+notes: |
+  Open it, pick a room name and share the link: everyone joins from their browser (phones too). Only the groups you
+  allow can open it; to call people outside, put it on the internet and let anyone open it (Who can open it).
+  Calls go straight between the people in them (peer to peer), helped by public STUN/TURN servers when needed.
+compose: |
+  services:
+    app:
+      image: docker.io/mirotalk/p2p:latest
+      user: "1000:1000"
+      ports: ["127.0.0.1:{{.Port}}:3000"]
+      environment:
+        NODE_ENV: production
+        PORT: "3000"
+        TRUST_PROXY: "true"
+        TZ: "{{.TimeZone}}"
+        JWT_KEY: "{{secret "jwt_key"}}"
+        API_KEY_SECRET: "{{secret "api_key"}}"
+        SURVEY_ENABLED: "false"
+        REDIRECT_ENABLED: "false"
+        LOGS_COLORS: "false"
+      restart: unless-stopped

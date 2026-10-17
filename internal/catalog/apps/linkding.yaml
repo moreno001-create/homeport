@@ -16,6 +16,6 @@ compose: |
         LD_ENABLE_AUTH_PROXY: "True"
         LD_AUTH_PROXY_USERNAME_HEADER: HTTP_REMOTE_USER
         LD_AUTH_PROXY_LOGOUT_URL: "https://{{.Domain}}/.homeport/signout"
-        LD_CSRF_TRUSTED_ORIGINS: "https://{{.Domain}}"
+        LD_CSRF_TRUSTED_ORIGINS: "{{.Origins}}"
       volumes: ["{{.Data}}/data:/etc/linkding/data"]
       restart: unless-stopped

@@ -1,0 +1,21 @@
+id: pairdrop
+name: PairDrop
+description: "Send files and text between your devices, like AirDrop for every phone and computer at home."
+category: Files
+website: https://github.com/schlagmichdoch/PairDrop
+signIn: gate
+notes: |
+  Open it on two devices at home: they see each other, and you tap one to send files or text. Devices elsewhere can
+  pair once with a code. Nothing is stored on the server.
+compose: |
+  services:
+    app:
+      image: lscr.io/linuxserver/pairdrop:latest
+      ports: ["127.0.0.1:{{.Port}}:3000"]
+      environment:
+        PUID: "1000"
+        PGID: "1000"
+        TZ: "{{.TimeZone}}"
+        WS_FALLBACK: "true"
+        RATE_LIMIT: "false"
+      restart: unless-stopped

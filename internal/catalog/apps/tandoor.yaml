@@ -1,0 +1,40 @@
+id: tandoor
+name: Tandoor Recipes
+description: "Your recipes in one place: import them from websites, plan meals, make shopping lists, share with the household."
+category: Documents & productivity
+website: https://tandoor.dev
+signIn: gate
+secrets: [secret_key, db_password]
+notes: |
+  Open it: the first page asks for the first account (it becomes the admin). Then add the others under the admin
+  settings, or send them invite links. Only the groups you allow can reach it.
+compose: |
+  services:
+    app:
+      image: docker.io/vabene1111/recipes:latest
+      ports: ["127.0.0.1:{{.Port}}:80"]
+      environment:
+        SECRET_KEY: "{{secret "secret_key"}}"
+        ALLOWED_HOSTS: "{{.Domain}}"
+        CSRF_TRUSTED_ORIGINS: "{{.Origins}}"
+        TZ: "{{.TimeZone}}"
+        DB_ENGINE: django.db.backends.postgresql
+        POSTGRES_HOST: db
+        POSTGRES_PORT: "5432"
+        POSTGRES_DB: tandoor
+        POSTGRES_USER: tandoor
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes:
+        - "{{.Data}}/staticfiles:/opt/recipes/staticfiles"
+        - "{{.Data}}/mediafiles:/opt/recipes/mediafiles"
+      depends_on:
+        db: {condition: service_started}
+      restart: unless-stopped
+    db:
+      image: docker.io/library/postgres:16-alpine
+      environment:
+        POSTGRES_DB: tandoor
+        POSTGRES_USER: tandoor
+        POSTGRES_PASSWORD: "{{secret "db_password"}}"
+      volumes: ["{{.Data}}/postgres:/var/lib/postgresql/data"]
+      restart: unless-stopped

@@ -283,7 +283,13 @@ func oidcClient(entry catalog.App, domain string) *state.OIDCClient {
 // vars are the values a manifest's templates are filled with.
 func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 	var st state.Settings
-	m.Store.Read(func(d *state.Data) { st = *d.Settings() })
+	origins := "https://" + app.Domain
+	m.Store.Read(func(d *state.Data) {
+		st = *d.Settings()
+		if p := st.InternetPort; p != 0 && p != 443 && d.UnderHome(app.Domain) {
+			origins += ",https://" + app.Domain + ":" + strconv.Itoa(p)
+		}
+	})
 	tz := m.TimeZone
 	if tz == "" {
 		tz = "UTC"
@@ -293,7 +299,7 @@ func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 		Secrets: app.Secrets, AdminUser: installer.Name, AdminEmail: installer.Email, TimeZone: tz,
 		MainDomain: st.MainDomain, Issuer: "https://" + st.MainDomain, ClientID: app.ID,
 		CABundle: filepath.Join(home, "ca-bundle.crt"), CALocal: filepath.Join(home, "ca-local.crt"),
-		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP()}
+		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP(), Origins: origins}
 }
 
 func (m *Manager) hostIP() string {

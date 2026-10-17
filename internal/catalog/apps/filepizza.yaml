@@ -1,0 +1,19 @@
+id: filepizza
+name: FilePizza
+description: "Send a file straight from your browser to someone else's: share a link, and it goes device to device."
+category: Files
+website: https://github.com/kern/filepizza
+signIn: gate
+notes: |
+  Drop a file, share the link it gives you, and keep the page open while the other person downloads: the file goes
+  from your browser to theirs, it isn't stored on the server. Only the groups you allow can open it; to send to people
+  outside, put it on the internet and let anyone open it (Who can open it).
+compose: |
+  services:
+    app:
+      image: docker.io/kern/filepizza:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      environment:
+        PORT: "8080"
+        TZ: "{{.TimeZone}}"
+      restart: unless-stopped

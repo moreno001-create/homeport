@@ -1,0 +1,15 @@
+id: 13ft
+name: 13ft Ladder
+description: "Read articles without the clutter: paste a link and it shows the page as a search engine sees it."
+category: Tools
+website: https://github.com/wasi-master/13ft
+signIn: gate
+notes: |
+  Paste an article's address and press Submit. Some sites show their full text to search engines only; this asks for
+  the page the way Google's crawler does.
+compose: |
+  services:
+    app:
+      image: ghcr.io/wasi-master/13ft:latest
+      ports: ["127.0.0.1:{{.Port}}:5000"]
+      restart: unless-stopped
