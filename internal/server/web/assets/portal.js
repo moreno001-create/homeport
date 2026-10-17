@@ -280,3 +280,85 @@ setInterval(() => {
 }, 15000);
 
 if (clocksBox) api("GET", "/clocks").then(x => { zones = x.zones; maxClocks = x.max; drawClocks(); }).catch(() => clocksBox.remove());
+
+// MARK: Customize: the background, and which parts this page shows
+
+const lookDialog = document.getElementById("look");
+const partNames = { search: "Search bar", mail: "Webmail", weather: "Weather", links: "Your links", clocks: "World clock",
+  news: "News", apps: "Your apps", reach: "How to reach this server" };
+const bgNames = { "": "Usual", sunrise: "Sunrise", ocean: "Ocean", forest: "Forest", lavender: "Lavender", night: "Night",
+  slate: "Slate", plain: "Plain", picture: "Your picture" };
+
+function setBackground(bg) {
+  for (const c of [...document.body.classList]) if (c.startsWith("bg-")) document.body.classList.remove(c);
+  if (bg) document.body.classList.add("bg-" + bg);
+}
+
+// shrinkPhoto makes a picture at most 2560 pixels across, as a JPEG (backgrounds don't need more).
+async function shrinkPhoto(file) {
+  const img = await createImageBitmap(file);
+  const scale = Math.min(1, 2560 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return new Promise(ok => c.toBlob(b => ok(b), "image/jpeg", 0.85));
+}
+
+async function customize() {
+  let look;
+  try { look = await api("GET", "/portal"); } catch (err) { alert(err.message); return; }
+  let bg = look.background;
+  const hidden = new Set(look.hide);
+  const status = h("p", { class: "muted small" });
+  const save = async () => api("PUT", "/portal", { background: bg, hide: [...hidden] });
+
+  const picker = h("input", { type: "file", accept: "image/*", hidden: true });
+  picker.addEventListener("change", async () => {
+    const f = picker.files[0];
+    if (!f) return;
+    status.textContent = "Sending the picture…";
+    try {
+      const blob = await shrinkPhoto(f).catch(() => f);
+      const res = await fetch("/api/me/background", { method: "PUT", headers: { "X-Homeport": "1", "Content-Type": blob.type || "image/jpeg" }, body: blob, credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      bg = "picture";
+      await save();
+      location.reload();
+    } catch (err) { status.textContent = err.message; }
+  });
+
+  const swatch = name => {
+    const b = h("button", { type: "button", class: "swatch s-" + (name || "default"), "aria-pressed": String(bg === name), onclick: async () => {
+      bg = name; setBackground(name);
+      for (const s of lookDialog.querySelectorAll(".swatch")) s.setAttribute("aria-pressed", String(s === b));
+      try { await save(); status.textContent = ""; } catch (err) { status.textContent = err.message; }
+    } }, h("span", {}, bgNames[name] || name));
+    return b;
+  };
+  const swatches = ["", ...look.backgrounds];
+  if (bg === "picture") swatches.push("picture");
+
+  const boxes = look.parts.map(p => {
+    const box = h("input", { type: "checkbox", checked: !hidden.has(p) });
+    box.addEventListener("change", () => { if (box.checked) hidden.delete(p); else hidden.add(p); });
+    return h("label", { class: "check" }, box, partNames[p] || p);
+  });
+
+  lookDialog.replaceChildren(h("form", { method: "dialog", class: "stack", onsubmit: async e => {
+    e.preventDefault();
+    try { await save(); location.reload(); } catch (err) { status.textContent = err.message; }
+  } },
+    h("h2", {}, "Customize this page"),
+    h("p", { class: "muted small" }, "Only for you: everyone has their own."),
+    h("h3", {}, "Background"),
+    h("div", { class: "swatches" }, swatches.map(swatch),
+      h("button", { type: "button", class: "swatch s-add", onclick: () => picker.click() }, bg === "picture" ? "Another picture…" : "+ Your picture")),
+    picker,
+    h("h3", {}, "Show on this page"),
+    h("div", { class: "parts" }, boxes),
+    status,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => lookDialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Save"))));
+  lookDialog.showModal();
+}
+
+document.getElementById("customize")?.addEventListener("click", customize);

@@ -202,8 +202,13 @@ func (s *Server) portal(w http.ResponseWriter, r *http.Request) {
 	for _, a := range mine {
 		descs[a.ID] = s.Apps.Description(a)
 	}
+	look := s.lookOf(u.Name)
+	hidden := map[string]bool{}
+	for _, p := range look.Hide {
+		hidden[p] = true
+	}
 	renderPage(w, "portal", pageData{Title: "Your apps", User: &u, Main: s.settings().MainDomain, Apps: mine, Links: links, Descs: descs, AI: s.address(s.aiHost()),
-		Greeting: greeting(time.Now())})
+		Greeting: greeting(time.Now()), BodyClass: lookClass(look), Hide: hidden})
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {

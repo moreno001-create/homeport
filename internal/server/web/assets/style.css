@@ -460,6 +460,14 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .hero-row .weather { width: 100%; }
 .hero-row .weather.off { justify-self: center; }
 .hero-row:has(.weather[hidden]) .mail, .hero-row:has(.weather.off) .mail { grid-column: 1 / 2; }
+/* With parts hidden (Customize), the rest share the row. */
+.hero-row.no-mail { grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr); grid-template-areas: "weather links"; }
+.hero-row.no-links { grid-template-columns: minmax(150px, 200px) minmax(0, 1fr); grid-template-areas: "mail weather"; }
+.hero-row.no-weather { grid-template-columns: minmax(150px, 200px) minmax(0, 1fr); grid-template-areas: "mail links"; }
+.hero-row.no-mail.no-links { grid-template-columns: 1fr; grid-template-areas: "weather"; }
+.hero-row.no-mail.no-weather { grid-template-columns: 1fr; grid-template-areas: "links"; }
+.hero-row.no-weather.no-links { grid-template-columns: 1fr; grid-template-areas: "mail"; }
+.hero-row.no-weather.no-links .mail { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 .mail { display: grid; grid-template-columns: 1fr; gap: 2px; align-content: start;
   background: color-mix(in srgb, var(--panel) 75%, transparent); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
 .mail a { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; color: var(--ink); text-decoration: none; font-size: 14px; min-width: 0; }
@@ -469,11 +477,14 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .mail-glyph { display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; background: #31459b; padding: 0; }
 .mail a { padding: 5px 8px; }
 @media (max-width: 980px) {
-  .hero-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "weather weather" "mail links"; }
+  .hero-row, .hero-row[class*="no-"] { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); grid-template-areas: none; }
+  .hero-row .mail, .hero-row .weather, .hero-row .links { grid-area: auto; }
+  .hero-row .weather { grid-column: 1 / -1; order: -1; }
   .mail { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 }
 @media (max-width: 720px) {
-  .hero-row { grid-template-columns: 1fr; grid-template-areas: "mail" "weather" "links"; }
+  .hero-row, .hero-row[class*="no-"] { grid-template-columns: 1fr; }
+  .hero-row .weather { order: 0; }
   .mail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mail a { flex-direction: column; gap: 4px; font-size: 12px; text-align: center; }
 }
@@ -531,3 +542,40 @@ dialog .guide h2 { margin: 6px 0 0; } dialog .guide h3 { margin: 10px 0 0; font-
 .clock-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .clock .attach-x { position: absolute; top: 4px; right: 2px; }
 .clock-add input { flex: 1 1 260px; }
+
+/* Portal backgrounds (Customize). The panels become a little more solid over them. */
+body.page[class*="bg-"] .hero { background: color-mix(in srgb, var(--panel) 35%, transparent); border-color: color-mix(in srgb, var(--line) 60%, transparent); backdrop-filter: blur(6px); }
+body.page[class*="bg-"] .weather, body.page[class*="bg-"] .mail, body.page[class*="bg-"] .links,
+body.page[class*="bg-"] .news, body.page[class*="bg-"] .clocks { background: color-mix(in srgb, var(--panel) 88%, transparent); }
+body.page[class*="bg-"] .portal > h2 { color: var(--ink); background: color-mix(in srgb, var(--panel) 80%, transparent); justify-self: start; padding: 2px 12px; border-radius: 999px; }
+body.page[class*="bg-"] .bar { background: color-mix(in srgb, var(--panel) 85%, transparent); }
+body.bg-sunrise { background: linear-gradient(160deg, #ffd8a8 0%, #f7a9a8 45%, #c3a6e0 100%) fixed; }
+body.bg-ocean { background: linear-gradient(160deg, #a8e0ff 0%, #5fa8d3 50%, #1b4965 100%) fixed; }
+body.bg-forest { background: linear-gradient(160deg, #d8f3dc 0%, #74c69d 45%, #1b4332 100%) fixed; }
+body.bg-lavender { background: linear-gradient(160deg, #f3e8ff 0%, #d0bfff 50%, #7c6fd6 100%) fixed; }
+body.bg-night { background: radial-gradient(ellipse at top, #243b6b 0%, #0b1020 70%) fixed; }
+body.bg-slate { background: linear-gradient(160deg, #e2e8f0 0%, #94a3b8 60%, #475569 100%) fixed; }
+body.bg-plain { background: var(--bg); }
+body.bg-plain .hero { background: transparent; border-color: transparent; backdrop-filter: none; }
+body.bg-picture { background: #222 url("/api/me/background") center / cover no-repeat fixed; }
+body.bg-night .greet, body.bg-night .portal > h2 { color: #fff; }
+
+/* The Customize panel */
+dialog.look { width: min(560px, calc(100vw - 32px)); padding: 22px; }
+.look h2 { margin: 0 0 4px; font-size: 18px; }
+.look h3 { margin: 14px 0 8px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.swatch { height: 64px; border-radius: 10px; border: 2px solid var(--line); padding: 0; display: grid; align-items: end; justify-items: start; font-size: 12px; font-weight: 600; overflow: hidden; }
+.swatch span { background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--ink); padding: 2px 6px; border-radius: 0 6px 0 0; }
+.swatch[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.swatch.s-default { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, var(--panel)), color-mix(in srgb, var(--link) 18%, var(--panel))); }
+.swatch.s-sunrise { background: linear-gradient(160deg, #ffd8a8, #f7a9a8, #c3a6e0); }
+.swatch.s-ocean { background: linear-gradient(160deg, #a8e0ff, #5fa8d3, #1b4965); }
+.swatch.s-forest { background: linear-gradient(160deg, #d8f3dc, #74c69d, #1b4332); }
+.swatch.s-lavender { background: linear-gradient(160deg, #f3e8ff, #d0bfff, #7c6fd6); }
+.swatch.s-night { background: radial-gradient(ellipse at top, #243b6b, #0b1020); }
+.swatch.s-slate { background: linear-gradient(160deg, #e2e8f0, #94a3b8, #475569); }
+.swatch.s-plain { background: var(--bg); }
+.swatch.s-picture { background: #333 url("/api/me/background") center / cover; }
+.swatch.s-add { background: var(--soft); border-style: dashed; justify-items: center; align-items: center; color: var(--muted); }
+.parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }

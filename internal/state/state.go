@@ -82,9 +82,18 @@ type User struct {
 	// (Europe/London…; nil until they choose, for the usual few).
 	Places []WeatherPlace `json:"places,omitempty"`
 	Clocks []string       `json:"clocks"` // (no omitempty: an empty list is a choice)
+	// Portal is how their portal looks: its background and the parts they've hidden.
+	Portal *PortalLook `json:"portal,omitempty"`
 	// Links are their own quick links on the portal, and News the news source they last chose ("ap", "bbc"…).
 	Links []QuickLink `json:"links,omitempty"`
 	News  string      `json:"news,omitempty"`
+}
+
+// PortalLook is someone's choice of background ("" for the usual, a preset's name, or "picture" for their own) and
+// the parts of the portal they've hidden ("weather", "news"…).
+type PortalLook struct {
+	Background string   `json:"background,omitempty"`
+	Hide       []string `json:"hide,omitempty"`
 }
 
 // QuickLink is a site someone keeps on their portal.

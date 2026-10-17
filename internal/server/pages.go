@@ -45,6 +45,9 @@ type pageData struct {
 	Name     string
 	AI       string // the AI page's name, on the portal
 	Greeting string // "Good morning", on the portal
+	// BodyClass is the page's background (bg-ocean…), and Hide the parts of the portal its person has hidden.
+	BodyClass string
+	Hide      map[string]bool
 }
 
 var pages = template.Must(template.New("").Funcs(template.FuncMap{
@@ -65,7 +68,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 	},
 }).Parse(`
 {{define "head"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}} · {{.Main}}</title><link rel="stylesheet" href="/assets/style.css"></head><body class="page">{{end}}
+<title>{{.Title}} · {{.Main}}</title><link rel="stylesheet" href="/assets/style.css"></head><body class="page{{with .BodyClass}} {{.}}{{end}}">{{end}}
 {{define "foot"}}</body></html>{{end}}
 
 {{define "login"}}{{template "head" .}}
@@ -88,6 +91,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <div class="brand"><span class="mark" aria-hidden="true"></span><span>{{.Main}}</span></div>
   <div class="who">
     <span>{{or .User.DisplayName .User.Name}}</span>
+    <button type="button" id="customize" title="Background, and what this page shows">Customize</button>
     {{if .User.Admin}}<a class="button" href="/admin">Admin</a>{{end}}
     <form method="post" action="/logout"><button type="submit">Sign out</button></form>
   </div>
@@ -95,27 +99,27 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 <main class="wide portal">
   <section class="hero">
     <p class="greet">{{.Greeting}}, {{or .User.DisplayName .User.Name}}</p>
-    <form class="search" action="https://www.google.com/search" method="get" role="search">
+    {{if not (index .Hide "search")}}<form class="search" action="https://www.google.com/search" method="get" role="search">
       <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
       <input name="q" type="search" placeholder="Search Google" aria-label="Search Google" autocomplete="off" autofocus>
       <button class="primary" type="submit">Search</button>
-    </form>
-    <div class="hero-row">
-      <nav class="mail" aria-label="Webmail">
+    </form>{{end}}
+    {{if not (and (index .Hide "mail") (index .Hide "weather") (index .Hide "links"))}}<div class="hero-row{{if index .Hide "mail"}} no-mail{{end}}{{if index .Hide "weather"}} no-weather{{end}}{{if index .Hide "links"}} no-links{{end}}">
+      {{if not (index .Hide "mail")}}<nav class="mail" aria-label="Webmail">
         <a href="https://mail.google.com/"><img src="/assets/icons/web/gmail.svg" alt=""><span>Gmail</span></a>
         <a href="https://outlook.live.com/mail/"><img src="/assets/icons/web/microsoft-outlook.svg" alt=""><span>Outlook</span></a>
         <a href="https://mail.yahoo.com/"><img src="/assets/icons/web/yahoo-mail.png" alt=""><span>Yahoo</span></a>
         <a href="https://www.icloud.com/mail"><img src="/assets/icons/web/icloud.svg" alt=""><span>iCloud</span></a>
         <a href="https://mail.proton.me/"><img src="/assets/icons/web/proton-mail.svg" alt=""><span>Proton</span></a>
         <a href="https://mail.aol.com/"><span class="mail-glyph" aria-hidden="true">Aol.</span><span>AOL</span></a>
-      </nav>
-      <div class="weather" id="weather" aria-live="polite" hidden></div>
-      <section class="links" id="links" aria-label="Your links"></section>
-    </div>
-    <section class="clocks" id="clocks" aria-label="World clock" hidden></section>
-    <section class="news" id="news" aria-label="News" hidden></section>
+      </nav>{{end}}
+      {{if not (index .Hide "weather")}}<div class="weather" id="weather" aria-live="polite" hidden></div>{{end}}
+      {{if not (index .Hide "links")}}<section class="links" id="links" aria-label="Your links"></section>{{end}}
+    </div>{{end}}
+    {{if not (index .Hide "clocks")}}<section class="clocks" id="clocks" aria-label="World clock" hidden></section>{{end}}
+    {{if not (index .Hide "news")}}<section class="news" id="news" aria-label="News" hidden></section>{{end}}
   </section>
-  <h2>Your apps</h2>
+  {{if not (index .Hide "apps")}}<h2>Your apps</h2>
   {{if or .Apps .AI}}
   <ul class="tiles">
     {{if .AI}}<li><a class="tile" href="https://{{.AI}}/"><span class="glyph ai-glyph" aria-hidden="true">✦</span><span class="tname">AI</span><span class="tdesc">Chat with this server's own AI: questions, writing, pictures and files.</span><span class="tdomain">{{.AI}}</span></a></li>{{end}}
@@ -123,9 +127,10 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   </ul>
   {{else}}
   <p class="muted">No apps yet.{{if .User.Admin}} Install one from the <a href="/admin#apps">admin panel</a>.{{else}} Ask an admin to give you access to one.{{end}}</p>
-  {{end}}
-  <div id="reach"></div>
+  {{end}}{{end}}
+  {{if not (index .Hide "reach")}}<div id="reach"></div>{{end}}
 </main>
+<dialog id="look" class="look"></dialog>
 <script src="/assets/common.js" defer></script>
 <script src="/assets/portal.js" defer></script>
 {{template "foot" .}}{{end}}
