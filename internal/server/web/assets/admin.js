@@ -569,6 +569,7 @@ const views = {
       if (sh.guests) parts.unshift("anyone on the home network (read)");
       return parts.length ? parts.join(", ") : "nobody yet";
     };
+    const nobody = sh => !sh.guests && !Object.keys(sh.access || {}).length;
     const sharesCard = h("div", { class: "card stack" },
       h("div", { class: "head" }, h("h2", {}, "Shared folders"), h("button", { class: "primary", onclick: () => shareDialog(null, x, accounts) }, "Share a folder")),
       x.shares.length ? h("div", { class: "list" }, h("table", {},
@@ -576,7 +577,7 @@ const views = {
         h("tbody", {}, x.shares.map(sh => h("tr", {},
           h("td", {}, h("b", {}, sh.name), h("div", { class: "muted small" }, sh.path)),
           h("td", { class: "small" }, who(sh)),
-          h("td", {}, h("span", { class: "pill " + (sh.off ? "stopped" : "running") }, sh.off ? "off" : "shared")),
+          h("td", {}, h("span", { class: "pill " + (sh.off ? "stopped" : nobody(sh) ? "partly" : "running") }, sh.off ? "off" : nobody(sh) ? "no one has access" : "shared")),
           h("td", { class: "actions" },
             h("button", { onclick: () => shareDialog(sh, x, accounts) }, "Who can use it"),
             h("button", { onclick: async () => {
@@ -1592,6 +1593,8 @@ function shareDialog(sh, x, accounts) {
     const access = {};
     for (const p of picks) if (p.sel.value) access[p.name] = p.sel.value;
     const body = { name: name.value.trim(), guests: guests.checked, access, comment: comment.value.trim(), off: sh ? !!sh.off : false };
+    if (!body.guests && !Object.keys(access).length &&
+      !confirm("Nobody can open this share yet: no account has access, and guests are off. Save it anyway?")) return;
     submit.disabled = true;
     try {
       if (sh) await api("PUT", "/shares/" + encodeURIComponent(sh.name), body);

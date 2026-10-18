@@ -17,7 +17,9 @@ compose: |
       image: docker.io/copyparty/ac:latest
       user: "1000:1000"
       ports: ["127.0.0.1:{{.Port}}:3923"]
-      command: ["-v", "/w::rwmd", "--xff-src=lan", "--rproxy=1"]
+      # --http-only: Caddy does HTTPS in front, so copyparty makes no certificate of its own (an empty one, left by a
+      # power cut while it was being written, stopped copyparty from starting).
+      command: ["-v", "/w::rwmd", "--xff-src=lan", "--rproxy=1", "--http-only"]
       volumes: ["{{.Data}}/files:/w", "{{.Data}}/config:/cfg"]
       depends_on:
         init: {condition: service_completed_successfully}
