@@ -20,6 +20,7 @@ import (
 
 	"homeport/internal/auth"
 	"homeport/internal/catalog"
+	"homeport/internal/firewall"
 	"homeport/internal/runner"
 	"homeport/internal/state"
 )
@@ -307,7 +308,8 @@ func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 		Secrets: app.Secrets, AdminUser: installer.Name, AdminEmail: installer.Email, TimeZone: tz,
 		MainDomain: st.MainDomain, Issuer: "https://" + st.MainDomain, ClientID: app.ID,
 		CABundle: filepath.Join(home, "ca-bundle.crt"), CALocal: filepath.Join(home, "ca-local.crt"),
-		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP(), Origins: origins}
+		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP(), Origins: origins,
+		HomeNetworks: strings.Join(firewall.LocalNetworks(), ",")}
 }
 
 func (m *Manager) hostIP() string {

@@ -90,6 +90,9 @@ type Vars struct {
 	// Origins are the addresses browsers open it at, comma-separated: https://<domain>, and with the internet port too
 	// when that isn't 443 (https://<domain>:8443), for apps that check where requests come from (CSRF).
 	Origins string
+	// HomeNetworks are this machine's home networks, comma-separated (192.168.4.0/22), for apps that look for devices
+	// there themselves (from a container, they can't see it).
+	HomeNetworks string
 	// HostIP is this machine's address on the local network, for apps that serve the network directly (DNS on port
 	// 53, say) rather than through Caddy.
 	HostIP string
