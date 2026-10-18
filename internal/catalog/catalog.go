@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -140,8 +143,8 @@ func Get(id string) (App, bool) {
 	return App{}, false
 }
 
-func (a App) fill(text string, v Vars) (string, error) {
-	t, err := template.New(a.ID).Option("missingkey=error").Funcs(template.FuncMap{
+func (a App) fill(text string, v Vars, more ...template.FuncMap) (string, error) {
+	funcs := template.FuncMap{
 		"secret": func(name string) (string, error) {
 			s, ok := v.Secrets[name]
 			if !ok || s == "" {
@@ -149,7 +152,15 @@ func (a App) fill(text string, v Vars) (string, error) {
 			}
 			return s, nil
 		},
-	}).Parse(text)
+		// Outside the notes, a file isn't read (compose files and commands are written before the app runs).
+		"file": func(string) string { return "" },
+	}
+	for _, m := range more {
+		for k, f := range m {
+			funcs[k] = f
+		}
+	}
+	t, err := template.New(a.ID).Option("missingkey=error").Funcs(funcs).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", a.ID, err)
 	}
@@ -175,9 +186,12 @@ func (a App) RenderStep(s Step, v Vars) ([]string, error) {
 
 // RenderNotes fills in the notes' template values ({{.Domain}} and the like; secrets stay out of notes). Notes that
 // don't render are shown as they are.
+//
+// Notes can also show a file the app writes in its data folder, such as a key it makes when it first starts:
+// {{file "data/id_ed25519.pub"}} (a path inside the app's data folder; until the file is there, it says so).
 func (a App) RenderNotes(v Vars) string {
 	v.Secrets = nil
-	text, err := a.fill(a.Notes, v)
+	text, err := a.fill(a.Notes, v, template.FuncMap{"file": func(rel string) string { return dataFile(v.Data, rel) }})
 	if err != nil {
 		return strings.TrimSpace(a.Notes)
 	}
@@ -199,4 +213,19 @@ func (a App) Render(v Vars) (string, error) {
 		return "", fmt.Errorf("%s: the compose template doesn't make a valid compose file: %v", a.ID, err)
 	}
 	return buf.String(), nil
+}
+
+// dataFile is a small text file from inside an app's data folder (never outside it), for its notes.
+func dataFile(data, rel string) string {
+	clean := filepath.Clean(rel)
+	if data == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "(not available)"
+	}
+	f, err := os.Open(filepath.Join(data, clean))
+	if err != nil {
+		return "(not there yet: it appears once the app has started; open these notes again in a minute)"
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, 4096))
+	return strings.TrimSpace(string(b))
 }

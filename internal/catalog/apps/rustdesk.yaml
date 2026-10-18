@@ -1,0 +1,58 @@
+id: rustdesk
+name: RustDesk Server
+description: "Your own server for RustDesk remote desktop: reach your computers and help family, without RustDesk's public servers."
+category: Tools
+website: https://rustdesk.com/docs/en/self-host/
+signIn: gate
+notes: |
+  In the RustDesk app on each computer and phone: Settings → Network → ID/Relay server (on a phone: Settings → ID/Relay
+  server), then fill in:
+
+  - ID server: {{.MainDomain}}
+  - Relay server: {{.MainDomain}}
+  - Key: {{file "data/id_ed25519.pub"}}
+
+  Leave API server empty. The same address and key are on the app's own page (open it from the portal).
+  At home that's all. To connect from outside the home, forward these ports on the router to this server: TCP 21115 to
+  21117 and UDP 21116 (and TCP 21118 to 21119 for RustDesk's web client).
+  The key proves to the apps that they're talking to your server: keep the data folder (it holds the private key too).
+compose: |
+  services:
+    # The ID server (hbbs): computers sign in to it and find each other. -r tells them where the relay is.
+    hbbs:
+      image: docker.io/rustdesk/rustdesk-server:latest
+      command: ["hbbs", "-r", "{{.MainDomain}}:21117"]
+      ports: ["21115:21115", "21116:21116", "21116:21116/udp", "21118:21118"]
+      volumes: ["{{.Data}}/data:/root"]
+      depends_on: [hbbr]
+      restart: unless-stopped
+    # The relay (hbbr): carries a session when the two computers can't connect directly.
+    hbbr:
+      image: docker.io/rustdesk/rustdesk-server:latest
+      command: ["hbbr"]
+      ports: ["21117:21117", "21119:21119"]
+      volumes: ["{{.Data}}/data:/root"]
+      restart: unless-stopped
+    # A small page for the portal with the server's address and key, to copy into the RustDesk apps.
+    info:
+      image: docker.io/library/busybox:1.37
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      volumes: ["{{.Data}}/data:/data:ro"]
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /www
+          until [ -s /data/id_ed25519.pub ]; do sleep 2; done
+          K=$$(cat /data/id_ed25519.pub)
+          cat > /www/index.html <<HTML
+          <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>RustDesk Server</title><style>body{font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#12202f}
+          code{display:block;padding:10px 12px;background:#eef2f6;border-radius:8px;word-break:break-all;font-size:15px}h1{font-size:22px}p{color:#5b6878}</style></head>
+          <body><h1>RustDesk Server</h1><p>In the RustDesk app: Settings → Network → ID/Relay server.</p>
+          <h3>ID server</h3><code>{{.MainDomain}}</code><h3>Relay server</h3><code>{{.MainDomain}}</code><h3>Key</h3><code>$$K</code>
+          <p>Leave API server empty.</p></body></html>
+          HTML
+          exec httpd -f -p 8080 -h /www
+      depends_on: [hbbs]
+      restart: unless-stopped
