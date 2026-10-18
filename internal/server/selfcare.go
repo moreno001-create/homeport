@@ -680,6 +680,11 @@ func (s *Server) DailyChecks(ctx context.Context) {
 		if s.settings().NoDailyCheck {
 			continue
 		}
+		if s.settings().MainDomain == "" {
+			// Not set up yet (the installer is still asking its questions): check a few minutes after it is.
+			wait = 3 * time.Minute
+			continue
+		}
 		run := s.RunChecks(ctx)
 		s.keepChecks(run)
 		var lines []string
