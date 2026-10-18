@@ -320,7 +320,7 @@ OLLAMA=http://127.0.0.1:11434
 local_model="" # what the assistant ended up with, for the summary
 
 # pick_model: the best Ollama model for this machine, its download in tenths of a GB, and why, as "model|size|why".
-# With a graphics card Ollama can use (NVIDIA, or AMD with its own memory), the card's memory decides. On the processor
+# With a graphics card Ollama can use (NVIDIA, AMD with its own memory, or Intel Arc), the card's memory decides. On the processor
 # alone, speed matters most (every answer reads the whole conversation again), so the models are smaller; with plenty of
 # memory, a mixture of experts (big, but only 3B at work per word) is both quick and capable.
 pick_model() {
@@ -334,6 +334,8 @@ pick_model() {
     b=$(( $(cat "$f") / 1073741824 ))
     if [ "$b" -gt "$vram" ]; then vram=$b; gpu="AMD graphics"; fi
   done
+  # Intel Arc cards (Ollama uses them through Vulkan): their memory, by model.
+  if [ "$vram" -eq 0 ] && v="$(intel_arc)" && [ -n "$v" ]; then vram=${v%%|*}; gpu=${v#*|}; fi
   if [ "$vram" -ge 4 ]; then
     local why="$gpu with $vram GB of graphics memory"
     if [ "$vram" -ge 28 ]; then echo "qwen3.6:35b-a3b|226|$why"
@@ -347,6 +349,26 @@ pick_model() {
   if [ "$ram" -ge 32 ]; then echo "qwen3.6:35b-a3b|226|$why"
   elif [ "$ram" -ge 14 ]; then echo "qwen3.5:4b|33|$why"
   else echo "qwen3.5:2b|27|$why"; fi
+}
+# intel_arc: an Intel Arc graphics card's memory in GB and its name ("12|Intel Arc B580"), or nothing.
+intel_arc() {
+  local line
+  line="$(lspci 2>/dev/null | grep -i -E 'VGA|3D|Display' | grep -i 'Intel' | grep -i -E 'Arc|Battlemage|Alchemist|DG2' | head -1)" || true
+  [ -n "$line" ] || return 0
+  case "$line" in
+    *B580*) echo "12|Intel Arc B580" ;;
+    *B570*) echo "10|Intel Arc B570" ;;
+    *A770*) echo "8|Intel Arc A770" ;;     # 8 or 16 GB: the smaller, to be safe
+    *A380*|*A310*) echo "6|Intel Arc ${line##*Arc }" ;;
+    *) echo "8|Intel Arc graphics" ;;
+  esac
+}
+
+# vulkan_card says whether this machine has a graphics card Ollama reaches through Vulkan (Intel Arc, AMD), which
+# needs Mesa's Vulkan drivers.
+vulkan_card() {
+  [ -n "$(intel_arc)" ] && return 0
+  lspci 2>/dev/null | grep -i -E 'VGA|3D|Display' | grep -q -i -E 'AMD|ATI|Radeon'
 }
 gb() { printf -v "$1" '%d.%d GB' $(($2 / 1000000000)) $(($2 % 1000000000 / 100000000)); }
 
@@ -396,6 +418,10 @@ local_ai() {
   if [ "$need" -gt "$free" ]; then note "Not enough disk space for the local AI model $model (it needs about $need GB; $free GB free)."; return 1; fi
 
   say "$1" "$2" "Installing Ollama (runs AI models on this server)"
+  if vulkan_card; then
+    # Without Mesa's Vulkan drivers, Ollama doesn't see an Intel Arc or AMD card and runs on the processor.
+    run apt-get install -y -q mesa-vulkan-drivers libvulkan1 || note "Couldn't install the graphics card's Vulkan drivers: the AI runs on the processor"
+  fi
   if ! command -v ollama >/dev/null; then
     fetch https://ollama.com/install.sh "$tmp/ollama-install.sh" "Ollama's installer" || return 1
     run sh "$tmp/ollama-install.sh" || return 1
