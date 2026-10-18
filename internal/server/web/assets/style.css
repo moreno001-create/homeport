@@ -18,11 +18,27 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #0d1520; --panel: #142030; --ink: #e6edf5; --muted: #9aa8b8; --line: #24344a; --soft: #1a283a;
     --accent: #ff7a3d; --accent-ink: #1a0d05; --link: #7fb3ff; --ok: #4cc27c; --warn: #f0b04a; --bad: #ff7b72;
     color-scheme: dark;
   }
+}
+/* Colors chosen on this device (theme.js): light and dark whatever the device says, and high contrast. */
+:root[data-theme="dark"] {
+  --bg: #0d1520; --panel: #142030; --ink: #e6edf5; --muted: #9aa8b8; --line: #24344a; --soft: #1a283a;
+  --accent: #ff7a3d; --accent-ink: #1a0d05; --link: #7fb3ff; --ok: #4cc27c; --warn: #f0b04a; --bad: #ff7b72;
+  color-scheme: dark;
+}
+:root[data-theme="contrast"] {
+  --bg: #ffffff; --panel: #ffffff; --ink: #000000; --muted: #262626; --line: #3d3d3d; --soft: #ececec;
+  --accent: #a83300; --accent-ink: #ffffff; --link: #0000c8; --ok: #00692b; --warn: #6e3b00; --bad: #a00000;
+  color-scheme: light;
+}
+:root[data-theme="contrast-dark"] {
+  --bg: #000000; --panel: #000000; --ink: #ffffff; --muted: #e2e2e2; --line: #c8c8c8; --soft: #1c1c1c;
+  --accent: #ffb547; --accent-ink: #000000; --link: #a8d4ff; --ok: #7dffa1; --warn: #ffd37a; --bad: #ff9a90;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -579,3 +595,28 @@ dialog.look { width: min(560px, calc(100vw - 32px)); padding: 22px; }
 .swatch.s-picture { background: #333 url("/api/me/background") center / cover; }
 .swatch.s-add { background: var(--soft); border-style: dashed; justify-items: center; align-items: center; color: var(--muted); }
 .parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+
+/* High contrast: stronger edges, underlined links, labels with an outline, focus easy to see, no see-through panels. */
+:root[data-theme^="contrast"] a { text-decoration: underline; text-underline-offset: 2px; }
+:root[data-theme^="contrast"] .card, :root[data-theme^="contrast"] .tile, :root[data-theme^="contrast"] .list,
+:root[data-theme^="contrast"] .weather, :root[data-theme^="contrast"] .mail, :root[data-theme^="contrast"] .links,
+:root[data-theme^="contrast"] .news, :root[data-theme^="contrast"] .clocks, :root[data-theme^="contrast"] .hero,
+:root[data-theme^="contrast"] dialog, :root[data-theme^="contrast"] button, :root[data-theme^="contrast"] .button,
+:root[data-theme^="contrast"] input, :root[data-theme^="contrast"] select, :root[data-theme^="contrast"] textarea { border-width: 2px; border-color: var(--line); }
+:root[data-theme^="contrast"] .pill { border: 1.5px solid currentColor; background: var(--panel); }
+:root[data-theme^="contrast"] .muted, :root[data-theme^="contrast"] .small { color: var(--muted); }
+:root[data-theme^="contrast"] :focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+:root[data-theme^="contrast"] body.page[class*="bg-"] .hero, :root[data-theme^="contrast"] body.page[class*="bg-"] .weather,
+:root[data-theme^="contrast"] body.page[class*="bg-"] .mail, :root[data-theme^="contrast"] body.page[class*="bg-"] .links,
+:root[data-theme^="contrast"] body.page[class*="bg-"] .news, :root[data-theme^="contrast"] body.page[class*="bg-"] .clocks { background: var(--panel); backdrop-filter: none; }
+:root[data-theme^="contrast"] .msg.user { background: var(--soft); color: var(--ink); border: 2px solid var(--line); }
+/* Text size chosen on this device. */
+:root[data-text="large"] { zoom: 1.15; }
+:root[data-text="larger"] { zoom: 1.3; }
+
+/* The Colors picker */
+.look-picker { display: grid; gap: 6px; font-size: 13px; }
+.look-picker label { display: grid; gap: 3px; color: var(--muted); }
+.look-picker select { padding: 5px 8px; font-size: 13px; }
+.ai-look { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
+#look-spot { margin-top: auto; }

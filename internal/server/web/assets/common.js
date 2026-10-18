@@ -234,3 +234,20 @@ function reachCard(x, open) {
         a.router ? row("Router", h("span", {}, a.router), h("div", { class: "muted small" }, "The port forwarding that brings the internet here.")) : null,
       ] : null));
 }
+
+// MARK: Colors and text size (this device)
+
+// lookPicker chooses Homeport's colors and text size on this device (theme.js keeps them for every Homeport page).
+function lookPicker() {
+  const now = window.currentLook ? window.currentLook() : { theme: "", text: "" };
+  const pick = (label, name, value, options) => {
+    const sel = h("select", { "aria-label": label }, options.map(([v, t]) => h("option", { value: v }, t)));
+    sel.value = value;
+    sel.addEventListener("change", () => window.setLook && window.setLook(name, sel.value));
+    return h("label", {}, label, sel);
+  };
+  return h("div", { class: "look-picker" },
+    pick("Colors", "hp_theme", now.theme, [["", "Automatic"], ["light", "Light"], ["dark", "Dark"],
+      ["contrast", "High contrast (light)"], ["contrast-dark", "High contrast (dark)"]]),
+    pick("Text size", "hp_text", now.text, [["", "Normal"], ["large", "Large"], ["larger", "Larger"]]));
+}

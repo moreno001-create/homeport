@@ -68,7 +68,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 	},
 }).Parse(`
 {{define "head"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}} · {{.Main}}</title><link rel="stylesheet" href="/assets/style.css"></head><body class="page{{with .BodyClass}} {{.}}{{end}}">{{end}}
+<title>{{.Title}} · {{.Main}}</title><link rel="stylesheet" href="/assets/style.css"><script src="/assets/theme.js"></script></head><body class="page{{with .BodyClass}} {{.}}{{end}}">{{end}}
 {{define "foot"}}</body></html>{{end}}
 
 {{define "login"}}{{template "head" .}}

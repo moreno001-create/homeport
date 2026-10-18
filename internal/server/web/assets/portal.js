@@ -354,6 +354,8 @@ async function customize() {
     h("div", { class: "swatches" }, swatches.map(swatch),
       h("button", { type: "button", class: "swatch s-add", onclick: () => picker.click() }, bg === "picture" ? "Another picture…" : "+ Your picture")),
     picker,
+    h("h3", {}, "Colors and text (on this device)"),
+    lookPicker(),
     h("h3", {}, "Show on this page"),
     h("div", { class: "parts" }, boxes),
     status,

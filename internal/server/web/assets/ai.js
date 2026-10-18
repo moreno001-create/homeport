@@ -104,7 +104,8 @@ async function drawConvs() {
     h("button", { type: "button", class: "ai-new", onclick: () => open(null) }, "+ New chat"),
     ...(list.length ? [h("p", { class: "muted small" }, "Recent")] : []),
     ...list.map(c => h("button", { type: "button", class: state.conv && c.id === state.conv.id ? "current" : "", title: c.title,
-      onclick: () => open(c.id) }, c.title)));
+      onclick: () => open(c.id) }, c.title)),
+    h("div", { class: "ai-look" }, lookPicker()));
 }
 
 async function open(id) {

@@ -1934,6 +1934,7 @@ async function route() {
     ai.href = "https://" + (me.aiAddress || "ai." + me.settings.mainDomain) + "/"; ai.hidden = false;
     terminalLink();
   } catch (err) { toast(err.message); }
+  document.getElementById("look-spot")?.replaceChildren(lookPicker());
   window.addEventListener("hashchange", route);
   route();
 })();
