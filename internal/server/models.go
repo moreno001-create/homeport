@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -99,8 +100,8 @@ func (s *Server) machine(ctx context.Context, root string) assist.Machine {
 	switch {
 	case known:
 		m.GPUWorks = uses
-	default: // nothing loaded to tell by: NVIDIA cards work with Ollama; many older AMD ones don't
-		m.GPUWorks = m.GPUKind == "nvidia"
+	default: // nothing loaded to tell by: NVIDIA cards work with Ollama; many older AMD ones don't; Intel Arc with Vulkan
+		m.GPUWorks = m.GPUKind == "nvidia" || m.GPUKind == "intel" && vulkanIntel()
 	}
 	if cur := s.currentModel(ctx); cur != "" {
 		if tps := s.Chat.Speed(cur); tps > 0 {
@@ -371,4 +372,10 @@ func (s *Server) removeModel(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("AI models: %s removed %s", actor(r).Name, in.Model)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// vulkanIntel says whether Mesa's Vulkan driver for Intel graphics is installed (Ollama needs it for an Arc card).
+func vulkanIntel() bool {
+	m, _ := filepath.Glob("/usr/share/vulkan/icd.d/intel*.json")
+	return len(m) > 0
 }

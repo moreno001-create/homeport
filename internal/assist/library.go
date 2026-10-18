@@ -356,6 +356,7 @@ const (
 	gbs            = 1e9
 	nvidiaSpeed    = 250 * gbs
 	amdSpeed       = 180 * gbs
+	intelSpeed     = 90 * gbs // an Arc card through Vulkan (measured on a B580)
 	appleSpeed     = 90 * gbs
 	cpuSpeed       = 20 * gbs // a recent processor (AVX2)
 	oldCPUSpeed    = 9 * gbs  // without AVX2
@@ -384,8 +385,11 @@ func (m Machine) place(weights int64) (string, float64) {
 		}
 		return "", 0
 	case m.GPUWorks && m.GPUMemory > 0 && w*1.1+512<<20 <= float64(m.GPUMemory):
-		if m.GPUKind == "amd" {
+		switch m.GPUKind {
+		case "amd":
 			return "graphics card", amdSpeed
+		case "intel":
+			return "graphics card", intelSpeed
 		}
 		return "graphics card", nvidiaSpeed
 	}

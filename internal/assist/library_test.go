@@ -210,3 +210,13 @@ func TestOllamaPull(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestIntelArcRunsModels(t *testing.T) {
+	m := Machine{Hardware: sysload.Hardware{Memory: 16 << 30, AVX2: true, GPU: "Intel Arc B580", GPUKind: "intel", GPUMemory: 12 << 30}, GPUWorks: true}
+	if e := m.Estimate(6<<30, 9, 0); e.Place != "graphics card" {
+		t.Fatalf("a 6 GB model fits a 12 GB Arc card: %+v", e)
+	}
+	if e := m.Estimate(20<<30, 26, 4); e.Place != "graphics card and processor" {
+		t.Fatalf("a 20 GB model is split between the card and the processor: %+v", e)
+	}
+}

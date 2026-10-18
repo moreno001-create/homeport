@@ -17,7 +17,7 @@ type Hardware struct {
 	AVX2      bool   `json:"avx2"`              // the processor has the newer vector instructions models run much faster with
 	Apple     bool   `json:"apple"`             // Apple silicon: the graphics share the (fast) memory
 	GPU       string `json:"gpu,omitempty"`     // a graphics card with its own memory
-	GPUKind   string `json:"gpuKind,omitempty"` // "nvidia" or "amd"
+	GPUKind   string `json:"gpuKind,omitempty"` // "nvidia", "amd" or "intel"
 	GPUMemory int64  `json:"gpuMemory,omitempty"`
 }
 
@@ -56,6 +56,31 @@ func ReadHardware(ctx context.Context) Hardware {
 	}
 	if h.GPUKind == "amd" {
 		h.GPU = linuxGPUName(ctx)
+		return h
+	}
+	// Intel Arc cards don't say how much memory they have where AMD's do: their model (PCI id) does.
+	ids, _ := filepath.Glob("/sys/class/drm/card*/device/device")
+	for _, f := range ids {
+		vendor, _ := os.ReadFile(filepath.Join(filepath.Dir(f), "vendor"))
+		dev, _ := os.ReadFile(f)
+		if strings.TrimSpace(string(vendor)) != "0x8086" {
+			continue
+		}
+		if a, ok := intelArc[strings.TrimSpace(string(dev))]; ok && int64(a.gb)<<30 > h.GPUMemory {
+			h.GPU, h.GPUKind, h.GPUMemory = a.name, "intel", int64(a.gb)<<30
+		}
 	}
 	return h
+}
+
+// intelArc are Intel's graphics cards with their own memory, by PCI device id (the A770 comes with 8 or 16 GB: the
+// smaller is assumed).
+var intelArc = map[string]struct {
+	name string
+	gb   int
+}{
+	"0xe20b": {"Intel Arc B580", 12}, "0xe20c": {"Intel Arc B570", 10},
+	"0xe211": {"Intel Arc Pro B60", 24}, "0xe212": {"Intel Arc Pro B50", 16},
+	"0x56a0": {"Intel Arc A770", 8}, "0x56a1": {"Intel Arc A750", 8}, "0x56a2": {"Intel Arc A580", 8},
+	"0x56a5": {"Intel Arc A380", 6}, "0x56a6": {"Intel Arc A310", 4},
 }
