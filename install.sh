@@ -471,8 +471,15 @@ shown_ip="${first_ip:-THIS-SERVERS-ADDRESS}"
 # HOMEPORT_DDNS_NAME and HOMEPORT_DDNS_TOKEN.
 ddns="" # the free name's provider, once registered
 home_name="" # the home name, once set up
+# clean_token keeps only what a token is made of (letters, digits, - _ .): a paste can bring hidden characters along
+# (the terminal's paste markers, a line break), and Cloudflare refuses those as "invalid request headers".
+clean_token() {
+  local t=$1
+  t="${t//$'\e[200~'/}"; t="${t//$'\e[201~'/}"
+  printf '%s' "$t" | LC_ALL=C tr -cd 'A-Za-z0-9._-'
+}
 home_setup() { # home_setup PROVIDER NAME TOKEN: registers the home name and gets its certificate; on success it's the main domain
-  if printf '%s\n' "$3" | homeport domain home "$2" --provider "$1" --keep-main; then
+  if printf '%s\n' "$(clean_token "$3")" | homeport domain home "$2" --provider "$1" --keep-main; then
     HOMEPORT_DOMAIN="$(printf '%s' "${2%.}" | tr '[:upper:]' '[:lower:]')" HOMEPORT_TLS=letsencrypt
     case "$HOMEPORT_DOMAIN" in *.*) ;; *) HOMEPORT_DOMAIN="$HOMEPORT_DOMAIN.dedyn.io" ;; esac
     home_name=$HOMEPORT_DOMAIN
@@ -528,7 +535,7 @@ local_name() {
 }
 free_name() { # free_name duckdns|desec NAME TOKEN: registers the name with Homeport; on success it's the main domain
   local out
-  if out="$(printf '%s\n' "$3" | homeport domain free "$1" "$2" 2>&1)"; then
+  if out="$(printf '%s\n' "$(clean_token "$3")" | homeport domain free "$1" "$2" 2>&1)"; then
     HOMEPORT_DOMAIN="$(echo "$out" | awk '{print $1; exit}')" ddns=$1 HOMEPORT_TLS=letsencrypt
     echo "$out"
     return 0

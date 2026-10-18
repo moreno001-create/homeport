@@ -69,7 +69,7 @@ func (s *Server) addHomeName(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("this server already has a home name (%s)", s.HomeName()))
 		return
 	}
-	token := in.Token
+	token := dyndns.CleanToken(in.Token)
 	j := s.jobs.start("home name "+name, func(ctx context.Context, j *job) error {
 		return s.SetUpHomeName(ctx, provider, name, token, in.Main, j)
 	})

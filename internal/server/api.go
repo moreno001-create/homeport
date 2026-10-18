@@ -794,7 +794,7 @@ func (s *Server) freeDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.DynDNS.Register(r.Context(), in.Provider, name, in.Token); err != nil {
+	if err := s.DynDNS.Register(r.Context(), in.Provider, name, dyndns.CleanToken(in.Token)); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

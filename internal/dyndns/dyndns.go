@@ -56,6 +56,18 @@ func FullName(provider, name string) (string, error) {
 
 var domainName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
 
+// CleanToken keeps only what an API token is made of (letters, digits, - _ .): a paste can bring hidden characters
+// along (a terminal's paste markers, line breaks, spaces), which providers refuse ("invalid request headers").
+func CleanToken(t string) string {
+	t = strings.NewReplacer("\x1b[200~", "", "\x1b[201~", "").Replace(t)
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return -1
+	}, t)
+}
+
 // HomeName turns what someone typed into a home name: "myhome" (or "myhome.dedyn.io") is myhome.dedyn.io, a free name;
 // anything else with a dot is a domain of their own on deSEC (home.example.com, or example.com).
 func HomeName(typed string) (string, error) {

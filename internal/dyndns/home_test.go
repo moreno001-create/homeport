@@ -294,3 +294,11 @@ func TestHomeNameOnYourOwnDomain(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestCleanToken(t *testing.T) {
+	for _, raw := range []string{"\x1b[200~AbC123_-xyz\x1b[201~", " AbC123_-xyz\r\n", "AbC123_-xyz​", "AbC123_-xyz"} {
+		if got := CleanToken(raw); got != "AbC123_-xyz" {
+			t.Errorf("%q → %q", raw, got)
+		}
+	}
+}
