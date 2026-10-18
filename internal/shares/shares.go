@@ -321,8 +321,20 @@ func (m *Manager) Prepare(ctx context.Context, path string) (string, error) {
 		if err := m.filesAccount(ctx); err != nil {
 			return "", err
 		}
+		// The folders made on the way are open to pass through (Homeport's own default would keep them to root,
+		// and Samba, opening the share as its files' account, couldn't reach it).
+		missing := []string{}
+		for d := filepath.Dir(path); d != "/" && d != "."; d = filepath.Dir(d) {
+			if _, err := os.Stat(d); err == nil {
+				break
+			}
+			missing = append(missing, d)
+		}
 		if err := os.MkdirAll(path, 0o775); err != nil {
 			return "", err
+		}
+		for _, d := range missing {
+			_ = os.Chmod(d, 0o755)
 		}
 		u, err := user.Lookup(FilesAccount)
 		if err != nil {
@@ -361,6 +373,22 @@ func (m *Manager) filesAccount(ctx context.Context) error {
 		return fmt.Errorf("couldn't make the %s account: %s", FilesAccount, lastLine(out, err))
 	}
 	return nil
+}
+
+// PassThrough lets every account pass through the folders above path (search permission only: what's in them stays
+// private), so Samba, opening a share as its files' account, reaches it. It returns the folders it opened.
+func PassThrough(path string) []string {
+	var opened []string
+	for d := filepath.Dir(filepath.Clean(path)); d != "/" && d != "."; d = filepath.Dir(d) {
+		fi, err := os.Stat(d)
+		if err != nil || !fi.IsDir() || fi.Mode().Perm()&0o001 != 0 {
+			continue
+		}
+		if os.Chmod(d, fi.Mode().Perm()|0o001) == nil {
+			opened = append(opened, d)
+		}
+	}
+	return opened
 }
 
 // Config is homeport.conf for these shares.
@@ -441,6 +469,9 @@ func (m *Manager) Apply(ctx context.Context, list []state.Share) error {
 		if err := os.WriteFile(main, append(bytes.TrimRight(b, "\n"), []byte("\n"+add)...), 0o644); err != nil {
 			return err
 		}
+	}
+	for _, sh := range list {
+		PassThrough(sh.Path)
 	}
 	if out, err := m.Runner.Output(ctx, "", "testparm", "-s", main); err != nil {
 		_ = os.WriteFile(conf, old, 0o644)

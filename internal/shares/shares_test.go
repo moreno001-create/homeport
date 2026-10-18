@@ -162,3 +162,28 @@ func TestNotOnAMac(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 }
+
+func TestPassThrough(t *testing.T) {
+	root := t.TempDir()
+	drive := filepath.Join(root, "Backup")
+	os.MkdirAll(filepath.Join(drive, "shares"), 0o700)
+	os.Chmod(drive, 0o750)
+	share := filepath.Join(drive, "shares", "8tb")
+	os.Mkdir(share, 0o775)
+	opened := PassThrough(share)
+	for _, d := range []string{drive, filepath.Join(drive, "shares")} {
+		fi, _ := os.Stat(d)
+		if fi.Mode().Perm()&0o001 == 0 {
+			t.Errorf("%s isn't open to pass through: %v", d, fi.Mode())
+		}
+		if fi.Mode().Perm()&0o004 != 0 && d == drive {
+			t.Errorf("%s's contents shouldn't become readable to everyone: %v", d, fi.Mode())
+		}
+	}
+	if len(opened) < 2 { // (the test's own temporary folder above them is closed too)
+		t.Fatalf("opened %v", opened)
+	}
+	if again := PassThrough(share); len(again) != 0 {
+		t.Fatalf("nothing more to open the second time: %v", again)
+	}
+}
