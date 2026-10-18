@@ -40,6 +40,9 @@ type Meter struct {
 	lastBusy  uint64
 	lastTotal uint64
 	lastAt    time.Time
+	// An Intel card's idle time (milliseconds) at the last reading, for its load since.
+	gpuIdle   int64
+	gpuIdleAt time.Time
 }
 
 // Read takes a reading.
@@ -54,6 +57,9 @@ func (m *Meter) Read(ctx context.Context) Load {
 	l.CPU = m.linuxCPU()
 	l.MemUsed, l.MemTotal = linuxMemory()
 	l.GPU = linuxGPU(ctx)
+	if l.GPU == nil {
+		l.GPU = m.intelGPU()
+	}
 	return l
 }
 
@@ -224,4 +230,88 @@ func macGPU(ctx context.Context) *GPU {
 		name = string(n[1])
 	}
 	return &GPU{Name: name, Percent: pct}
+}
+
+// Roots of /sys and /proc (tests point them at a folder of their own).
+var sysRoot, procRoot = "/sys", "/proc"
+
+// intelGPU reads an Intel Arc card: its load is the share of time its render/compute engines weren't idle since the
+// last reading (the driver counts idle milliseconds), and its memory in use is what the programs using it hold, as
+// they report it (drm-total-vram0 in /proc/<pid>/fdinfo; Homeport runs as root, so it can read every program's).
+func (m *Meter) intelGPU() *GPU {
+	cards, _ := filepath.Glob(filepath.Join(sysRoot, "class/drm/card*/device"))
+	for _, dev := range cards {
+		vendor, _ := os.ReadFile(filepath.Join(dev, "vendor"))
+		id, _ := os.ReadFile(filepath.Join(dev, "device"))
+		a, ok := intelArc[strings.TrimSpace(string(id))]
+		if strings.TrimSpace(string(vendor)) != "0x8086" || !ok {
+			continue
+		}
+		g := &GPU{Name: a.name, MemTotal: int64(a.gb) << 30}
+		idle := readInt(filepath.Join(dev, "tile0/gt0/gtidle/idle_residency_ms"))
+		m.mu.Lock()
+		if !m.gpuIdleAt.IsZero() && idle >= m.gpuIdle {
+			if ms := time.Since(m.gpuIdleAt).Milliseconds(); ms > 0 {
+				g.Percent = min(100, max(0, int(100-(idle-m.gpuIdle)*100/ms)))
+			}
+		}
+		m.gpuIdle, m.gpuIdleAt = idle, time.Now()
+		m.mu.Unlock()
+		g.MemUsed = drmVRAM(filepath.Base(mustEval(dev)))
+		return g
+	}
+	return nil
+}
+
+func mustEval(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// drmVRAM adds up the graphics memory programs hold on the card at PCI address pdev (0000:09:00.0), counting each
+// client once (a program can have it open more than once).
+func drmVRAM(pdev string) int64 {
+	files, _ := filepath.Glob(filepath.Join(procRoot, "[0-9]*/fdinfo/*"))
+	seen := map[string]bool{}
+	var total int64
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil || !strings.Contains(string(b), "drm-pdev:") {
+			continue
+		}
+		var client, dev string
+		var kib int64
+		for _, line := range strings.Split(string(b), "\n") {
+			k, v, ok := strings.Cut(line, ":")
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			switch k {
+			case "drm-client-id":
+				client = v
+			case "drm-pdev":
+				dev = v
+			case "drm-total-vram0":
+				n, unit, _ := strings.Cut(v, " ")
+				kib, _ = strconv.ParseInt(n, 10, 64)
+				switch unit {
+				case "MiB":
+					kib <<= 10
+				case "GiB":
+					kib <<= 20
+				case "":
+					kib >>= 10 // bytes
+				}
+			}
+		}
+		if dev != pdev || client == "" || seen[client] {
+			continue
+		}
+		seen[client] = true
+		total += kib << 10
+	}
+	return total
 }

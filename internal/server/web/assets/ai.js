@@ -248,6 +248,7 @@ async function busy() {
       const gb = n => (n / 1073741824).toFixed(1);
       const bits = [meter("CPU", l.cpu, l.cores + " cores")];
       if (l.gpu) bits.push(meter("GPU", l.gpu.percent, l.gpu.name + (l.gpu.memTotal ? ": " + gb(l.gpu.memUsed) + " of " + gb(l.gpu.memTotal) + " GB" : "")));
+      if (l.gpu && l.gpu.memTotal) bits.push(meter("VRAM", l.gpu.memUsed * 100 / l.gpu.memTotal, l.gpu.name + " memory: " + gb(l.gpu.memUsed) + " of " + gb(l.gpu.memTotal) + " GB in use"));
       if (l.memTotal) bits.push(meter("RAM", l.memUsed * 100 / l.memTotal, gb(l.memUsed) + " of " + gb(l.memTotal) + " GB in use"));
       $("busy").replaceChildren(...bits);
       $("busy").hidden = false;

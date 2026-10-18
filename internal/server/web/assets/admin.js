@@ -1074,7 +1074,7 @@ function systemCard() {
       row("Processor", s.cpu || s.cores + " cores", s.cpu ? "· " + s.cores + " threads · " + l.cpu + "% busy" : l.cpu + "% busy"),
       row("Memory", gb(s.memory), "· " + gb(l.memUsed) + " in use"),
       row("Disk", gb(s.disk.total), "· " + gb(s.disk.free) + " free (" + Math.round(usedDisk * 100 / s.disk.total) + "% used)"),
-      row("Graphics", s.gpu, l.gpu ? "· " + l.gpu.percent + "% busy" : ""),
+      row("Graphics", s.gpu, l.gpu ? "· " + l.gpu.percent + "% busy" + (l.gpu.memTotal ? " · " + sizeText(l.gpu.memUsed) + " of " + sizeText(l.gpu.memTotal) + " graphics memory in use" : "") : ""),
       row("Up for", days(s.uptime)),
       row("Docker", s.docker),
       row("Caddy", s.caddy),
