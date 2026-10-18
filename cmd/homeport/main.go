@@ -252,6 +252,7 @@ func serve() error {
 	go followAddress(ctx, applyProxy)
 	go srv.Backup.Schedule(ctx)
 	go srv.DailyChecks(ctx)
+	go srv.RefreshShares(ctx)
 	go srv.FinishInterrupted()
 	go srv.KeepRouterPorts(ctx)
 	go srv.KeepHomeCerts(ctx)

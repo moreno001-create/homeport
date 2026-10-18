@@ -355,3 +355,20 @@ func (s *Server) knownAccount(r *http.Request) error {
 	}
 	return nil
 }
+
+// RefreshShares writes Samba's settings for the shares again when Homeport starts, so a new version's fixes (folders
+// opened for passing through, say) reach shares made before it.
+func (s *Server) RefreshShares(ctx context.Context) {
+	if s.Shares == nil {
+		return
+	}
+	list, _ := s.sharing()
+	if len(list) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := s.Shares.Apply(ctx, list); err != nil {
+		log.Printf("Shares: couldn't write Samba's settings again: %v", err)
+	}
+}
