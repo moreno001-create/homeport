@@ -1,6 +1,6 @@
 id: eg4-solar
 name: EG4 Solar
-description: "Your EG4 solar inverter (6000XP) at a glance: power flow, battery, history, alerts, weather and solar forecast, and grid charging."
+description: "Your EG4 solar inverter (6000XP): power flow, battery, history, alerts, weather and solar forecast, grid charging, and every inverter setting with plain explanations."
 category: Home & network
 website: https://github.com/moreno001-create/eg4-dashboard_ynh
 signIn: gate
@@ -8,6 +8,8 @@ notes: |
   Open it and sign in with your EG4 Monitor email and password (Settings): the server keeps reading the inverter
   from then on. For live readings every few seconds, set up the inverter's Wi-Fi dongle under Settings → Wi-Fi dongle →
   Find on network; give the dongle a fixed address in your router so it's always found quickly.
+  Inverter settings (the sliders button) change the inverter over the Wi-Fi dongle; only Homeport admins can change them,
+  and each stays locked until its safety check against EG4 Monitor has passed (it needs both the EG4 login and the dongle).
   Anyone allowed in (Who can open it) can see your solar data and start grid charging: keep it to admins or family.
 compose: |
   services:
@@ -22,6 +24,8 @@ compose: |
         TZ: "{{.TimeZone}}"
         # The home network to look for the inverter's Wi-Fi dongle in (a container can't see it by itself).
         EG4_NETWORKS: "{{.HomeNetworks}}"
+        # Only Homeport admins may change inverter settings (the Remote-Groups header from Homeport's sign-in).
+        EG4_ADMIN_GROUP: "admins"
       volumes: ["{{.Data}}/data:/data"]
       depends_on:
         init: {condition: service_completed_successfully}
