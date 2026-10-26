@@ -1,0 +1,51 @@
+id: kiwix
+name: Kiwix
+description: "Wikipedia and other reference sites, offline: read them in the browser from files kept on this server."
+category: Documents & productivity
+website: https://kiwix.org
+signIn: gate
+notes: |
+  Kiwix shows the ZIM files in its folder on the server ({{.Data}}/zim): copy or download them there and they appear
+  within a minute, no restart needed (deleting one takes it away). Find them at https://library.kiwix.org; for
+  example, on the server:
+
+    sudo wget -P {{.Data}}/zim https://download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
+
+  Sizes vary a lot: Wikipedia's top 100 articles are about 330 MB, all of English Wikipedia without pictures about
+  50 GB, and with pictures about 110 GB. For big ones, install Kiwix on a big drive (or move it there on the Storage
+  page) before downloading.
+compose: |
+  services:
+    init:
+      image: docker.io/library/busybox:1.37
+      command: ["chown", "1001:1001", "/data"]
+      volumes: ["{{.Data}}/zim:/data"]
+    app:
+      image: ghcr.io/kiwix/kiwix-serve:latest
+      ports: ["127.0.0.1:{{.Port}}:8080"]
+      volumes: ["{{.Data}}/zim:/data"]
+      # Kiwix serves a library list it keeps watching; this keeps the list in step with the folder's ZIM files, so
+      # files added or removed show up without a restart (and Kiwix starts even with none yet).
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          cd /data
+          lib=/data/.library.xml
+          build() {
+            rm -f "$$lib.new"
+            for z in *.zim; do [ -f "$$z" ] && kiwix-manage "$$lib.new" add "$$z" >/dev/null 2>&1; done
+            [ -f "$$lib.new" ] || printf '<library version="20110515"></library>\n' > "$$lib.new"
+            mv -f "$$lib.new" "$$lib"
+          }
+          list() { ls -l --full-time *.zim 2>/dev/null | md5sum; }
+          build; seen=$$(list)
+          kiwix-serve --port=8080 --library --monitorLibrary --blockexternal "$$lib" &
+          pid=$$!
+          while kill -0 $$pid 2>/dev/null; do
+            sleep 30
+            now=$$(list)
+            if [ "$$now" != "$$seen" ]; then build; seen=$$now; echo "library updated: $$(ls *.zim 2>/dev/null | wc -l) file(s)"; fi
+          done
+      depends_on:
+        init: {condition: service_completed_successfully}
+      restart: unless-stopped
