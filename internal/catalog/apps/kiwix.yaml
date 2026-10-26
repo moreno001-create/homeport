@@ -4,12 +4,15 @@ description: "Wikipedia and other reference sites, offline: read them in the bro
 category: Documents & productivity
 website: https://kiwix.org
 signIn: gate
+files:
+  folder: zim
+  ext: .zim
+  find: https://library.kiwix.org
+  what: ZIM files
 notes: |
-  Kiwix shows the ZIM files in its folder on the server ({{.Data}}/zim): copy or download them there and they appear
-  within a minute, no restart needed (deleting one takes it away). Find them at https://library.kiwix.org; for
-  example, on the server:
-
-    sudo wget -P {{.Data}}/zim https://download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
+  Add ZIM files with the Files button on the Apps page: paste a download link, a magnet link or a .torrent link from
+  https://library.kiwix.org, and the server downloads it (showing progress); it appears in Kiwix within a minute,
+  no restart needed. Files can also be copied into its folder on the server: {{.Data}}/zim.
 
   Sizes vary a lot: Wikipedia's top 100 articles are about 330 MB, all of English Wikipedia without pictures about
   50 GB, and with pictures about 110 GB. For big ones, install Kiwix on a big drive (or move it there on the Storage

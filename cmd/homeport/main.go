@@ -31,6 +31,7 @@ import (
 	"golang.org/x/term"
 
 	"homeport/internal/apps"
+	"homeport/internal/aria"
 	"homeport/internal/assist"
 	"homeport/internal/backup"
 	"homeport/internal/certs"
@@ -236,6 +237,15 @@ func serve() error {
 	srv.System = &system.Manager{Runner: sys, OS: plat.Name, UID: os.Getuid(), Logs: plat.LogsCommand}
 	srv.Firewall = &firewall.Manager{Runner: sys, OS: plat.Name}
 	srv.Shares = shares.New(sys, plat.Name)
+	if plat.Name == "linux" {
+		srv.Aria = &aria.Manager{StateDir: filepath.Join(plat.StateDir, "aria2"), Install: func(ctx context.Context, w io.Writer) error {
+			return sys.Stream(ctx, "", w, "systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--property=Type=exec",
+				"--setenv=DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q", "aria2")
+		}}
+		if srv.Aria.HasSession() { // downloads left going: carry on with them
+			go func() { _ = srv.Aria.Ready(context.Background(), io.Discard) }()
+		}
+	}
 	srv.Backup = &backup.Manager{Store: store, Apps: manager, StateDir: stateDir, Dir: filepath.Join(stateDir, "backup"), Run: backup.RunRestic,
 		SystemCA: plat.SystemCA, CaddyRoot: plat.CaddyRoot, SSHDir: backupSSHDir(stateDir)}
 	helper.Extra = srv.AssistantTools

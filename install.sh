@@ -192,7 +192,7 @@ apt_update || die "apt-get update failed (see the lines above); check this serve
 # Avahi announces homeport.local (and apps' .local names) on the home network (avahi-utils: avahi-publish); libnss-mdns
 # lets this server find them too.
 # restic makes the backups (Backups page); zstd unpacks Ollama (the local AI); rsync moves things between drives (Storage page).
-pkgs="ca-certificates curl gnupg avahi-daemon avahi-utils libnss-mdns restic zstd rsync poppler-utils"
+pkgs="ca-certificates curl gnupg avahi-daemon avahi-utils libnss-mdns restic zstd rsync poppler-utils aria2"
 # Docker: Ubuntu's (docker.io), unless Docker's own (docker-ce, from download.docker.com) is installed; and Compose to
 # match, unless a Compose plugin is already installed (Docker's docker-compose-plugin and Ubuntu's docker-compose-v2
 # both install the same file, so apt refuses to have both).

@@ -85,6 +85,7 @@ const views = {
         h("button", { onclick: () => addressDialog(a) }, "Address"),
         h("button", { onclick: () => accessDialog(a) }, "Access"),
         h("button", { onclick: () => notesDialog(a) }, "Notes"),
+        a.files ? h("button", { onclick: () => filesDialog(a) }, "Files") : null,
         h("button", { onclick: () => runJob("Updating " + a.name, () => api("POST", "/apps/" + a.id + "/update")) }, "Update"),
         h("button", { class: "danger", onclick: () => removeDialog(a) }, "Remove"))));
     return [
@@ -1085,6 +1086,7 @@ function systemCard() {
 
 function sizeText(n) {
   if (!n) return "0 bytes";
+  if (n >= 2 ** 40) return (n / 2 ** 40).toFixed(1) + " TB";
   if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
   if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
   if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " kB";
@@ -1634,6 +1636,75 @@ function shareAccountDialog(existing) {
     existing ? null : h("p", { class: "muted small" }, "Lower-case letters and digits. If it's already someone's login to this server, it uses that (with this password for shares)."),
     h("label", {}, "Password (at least 8 characters)", pw), h("label", {}, "Password again", pw2),
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), submit)));
+}
+
+// filesDialog: an app's files (Kiwix's ZIM files, say): download links, magnet and torrent links on the server, with
+// each download's progress, and the files already there.
+function filesDialog(a) {
+  const base = "/apps/" + encodeURIComponent(a.id);
+  const status = h("p", { class: "muted small" });
+  const downloads = h("div", { class: "stack" });
+  const files = h("div", {});
+  const link = h("input", { placeholder: "Download link, magnet link or .torrent link", autocapitalize: "none", spellcheck: "false", required: true });
+  const add = h("button", { class: "primary", type: "submit" }, "Download");
+  const find = h("a", { target: "_blank", rel: "noopener" });
+  let timer, info = { what: "files" };
+  const rate = n => n > 0 ? sizeText(n) + "/s" : "";
+  const left = d => d.speed > 0 && d.total > d.done ? (s => s >= 3600 ? Math.floor(s / 3600) + " h " + Math.round(s % 3600 / 60) + " min" : s >= 60 ? Math.round(s / 60) + " min" : s + " s")(Math.round((d.total - d.done) / d.speed)) + " left" : "";
+  const act = async (d, what) => { try { await api("POST", base + "/downloads/" + d.gid + "/" + what); refresh(); } catch (err) { toast(err.message); } };
+  async function refresh() {
+    let x;
+    try { x = await api("GET", base + "/files"); } catch (err) { status.textContent = err.message; return; }
+    info = x;
+    find.href = x.find || "#"; find.textContent = x.find ? "Find " + (x.what || "files") + " at " + x.find.replace(/^https?:\/\//, "") : "";
+    status.textContent = sizeText(x.free) + " free on this drive";
+    downloads.replaceChildren(...x.downloads.map(d => {
+      const pct = d.total ? Math.floor(d.done * 100 / d.total) : 0;
+      const state = d.metadata ? "getting the torrent's details…" : d.status === "active" ? (pct + "% · " + sizeText(d.done) + " of " + sizeText(d.total) + (d.speed ? " · " + rate(d.speed) : "") + " · " + (d.torrent ? d.peers + " peers" + (d.seeders ? ", " + d.seeders + " seeding" : "") : d.peers + " connections") + (left(d) ? " · " + left(d) : ""))
+        : d.status === "paused" ? "paused at " + pct + "%" : d.status === "waiting" ? "waiting its turn" : d.status === "complete" ? "done" : d.status === "error" ? "stopped: " + (d.error || "error") : d.status;
+      return h("div", { class: "dl" },
+        h("div", { class: "dl-top" }, h("b", {}, d.name || "…"), d.torrent ? h("span", { class: "pill" }, "torrent") : null),
+        h("div", { class: "meter-bar dl-bar", "aria-hidden": "true" }, h("span", { class: "meter-fill w" + Math.round(pct / 5) * 5 })),
+        h("div", { class: "row dl-row" }, h("span", { class: "muted small grow" }, state),
+          d.status === "active" || d.status === "waiting" ? h("button", { type: "button", onclick: () => act(d, "pause") }, "Pause") : null,
+          d.status === "paused" ? h("button", { type: "button", onclick: () => act(d, "resume") }, "Resume") : null,
+          h("button", { type: "button", class: d.status === "complete" ? "" : "danger", onclick: () => {
+            if (d.status !== "complete" && !confirm("Stop downloading " + (d.name || "this") + "?")) return;
+            act(d, "cancel");
+          } }, d.status === "complete" ? "Clear" : "Cancel")));
+    }));
+    files.replaceChildren(x.files.length ? h("div", { class: "list" }, h("table", {}, h("tbody", {}, x.files.map(f => h("tr", {},
+      h("td", {}, h("b", {}, f.name), h("div", { class: "muted small" }, sizeText(f.size) + " · " + new Date(f.modified).toLocaleDateString())),
+      h("td", { class: "actions" }, h("button", { class: "danger", onclick: async () => {
+        if (!confirm("Delete " + f.name + " (" + sizeText(f.size) + ")?")) return;
+        try { await api("DELETE", base + "/files/" + encodeURIComponent(f.name)); refresh(); } catch (err) { toast(err.message); }
+      } }, "Delete")))))))
+      : h("p", { class: "muted" }, "No " + (x.what || "files") + " yet."));
+    clearTimeout(timer);
+    if (dialog.open) timer = setTimeout(refresh, x.downloads.some(d => d.status !== "complete" && d.status !== "error") ? 2000 : 8000);
+  }
+  openDialog(h("div", { class: "stack" },
+    h("h2", {}, a.name + ": files"),
+    h("form", { class: "row", onsubmit: async e => {
+      e.preventDefault();
+      add.disabled = true; add.textContent = "Starting…";
+      try {
+        const j = await api("POST", base + "/files", { url: link.value.trim() });
+        for (let i = 0; i < 180; i++) {   // the first download may install the downloader (a minute or so)
+          const s = await api("GET", "/jobs/" + j.id);
+          if (s.status !== "running") { if (s.status === "failed") throw new Error(s.error || s.log); break; }
+          add.textContent = s.log.includes("Installing") ? "Installing the downloader…" : "Starting…";
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        link.value = ""; refresh();
+      } catch (err) { toast(err.message); }
+      add.disabled = false; add.textContent = "Download";
+    } }, link, add),
+    h("p", { class: "small" }, find, " · links, magnet links and .torrent links all work"),
+    downloads, h("h3", {}, "On the server"), files, status,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => { clearTimeout(timer); dialog.close(); } }, "Close"))));
+  dialog.addEventListener("close", () => clearTimeout(timer), { once: true });
+  refresh();
 }
 
 // Starts a background job and shows its log until it finishes.

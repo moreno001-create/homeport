@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"homeport/internal/apps"
+	"homeport/internal/aria"
 	"homeport/internal/assist"
 	"homeport/internal/auth"
 	"homeport/internal/backup"
@@ -62,6 +63,8 @@ type Server struct {
 	System *system.Manager
 	// Firewall is the Firewall page's ufw (nil: not offered).
 	Firewall *firewall.Manager
+	// Aria downloads files for apps (the Files button: links, magnet and torrent links; nil: not offered).
+	Aria *aria.Manager
 	// Shares is the Shares page's Samba (nil: not offered).
 	Shares *shares.Manager
 	// Backup backs the server up (nil: not offered).

@@ -620,3 +620,11 @@ dialog.look { width: min(560px, calc(100vw - 32px)); padding: 22px; }
 .look-picker select { padding: 5px 8px; font-size: 13px; }
 .ai-look { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
 #look-spot { margin-top: auto; }
+
+/* An app's files: downloads with their progress */
+.dl { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.dl-top { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.dl-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-bar { width: 100%; }
+.dl-row { align-items: center; }
+.dl-row .grow { flex: 1 1 auto; }

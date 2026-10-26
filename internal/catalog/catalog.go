@@ -45,9 +45,20 @@ type App struct {
 	// AfterInstall runs inside the app once it's up (after installs and updates). Apps often finish setting
 	// themselves up after their first start, so each step is retried for a few minutes until it works.
 	AfterInstall []Step `yaml:"afterInstall"`
+	// Files lets admins put files the app reads into one of its data folders from the admin panel: downloaded from
+	// a link (Kiwix's ZIM files, say), listed and deleted.
+	Files *Files `yaml:"files"`
 	// OIDC: the app signs people in with Homeport over OpenID Connect. Installing registers it as a client
 	// (client id = its id, secret "oidc_client_secret" made for it).
 	OIDC *OIDC `yaml:"oidc"`
+}
+
+// Files is where an app's files go and what they look like.
+type Files struct {
+	Folder string `yaml:"folder"` // inside the app's data folder, like "zim"
+	Ext    string `yaml:"ext"`    // the files' extension, like ".zim" (links must end with it)
+	Find   string `yaml:"find"`   // where to find them, like https://library.kiwix.org
+	What   string `yaml:"what"`   // what they're called, like "ZIM files"
 }
 
 type OIDC struct {

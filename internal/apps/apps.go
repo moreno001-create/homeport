@@ -951,6 +951,12 @@ func (m *Manager) ContainerAction(ctx context.Context, id, service, action strin
 	return nil
 }
 
+// Entry is the catalog entry (or own manifest) an app was installed from.
+func (m *Manager) Entry(app state.App) (catalog.App, bool) {
+	e, ok, err := m.entryOf(app)
+	return e, ok && err == nil
+}
+
 // Dir is the app's folder (compose.yaml and data/), where it really is (it may be on another drive).
 func (m *Manager) Dir(id string) string { return m.realDir(id) }
 

@@ -80,6 +80,7 @@ func (s *Server) api(mux *http.ServeMux, guard func(http.HandlerFunc) http.Handl
 	mux.HandleFunc("POST /api/apps/draft", guard(s.draftApp))
 	mux.HandleFunc("POST /api/apps/check", guard(s.checkApp))
 	mux.HandleFunc("POST /api/apps/{id}/update", guard(s.updateApp))
+	s.appFilesRoutes(mux, guard)
 	mux.HandleFunc("POST /api/apps/{id}/address", guard(s.changeAddress))
 	mux.HandleFunc("POST /api/apps/{id}/internet", guard(s.setInternet))
 	mux.HandleFunc("GET /api/addresses", guard(s.addressBases))
@@ -845,6 +846,7 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		Address   string        `json:"address"`  // where to open it (with the internet port when it has one)
 		Icon      string        `json:"icon,omitempty"`
 		Desc      string        `json:"description,omitempty"`
+		Files     bool          `json:"files,omitempty"` // takes files from the Files button
 	}
 	var list []state.App
 	online, address := map[string]bool{}, map[string]string{}
@@ -860,6 +862,9 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 		out[i] = row{ID: a.ID, Catalog: a.Catalog, Name: a.Name, Domain: a.Domain, Access: a.Access, Installed: a.Installed, HasSecret: len(a.Secrets) > 0, Source: a.Source,
 			Internet: online[a.ID], Address: address[a.ID], Icon: iconFor(a.Catalog),
 			Desc: s.Apps.Description(a)}
+		if e, ok := s.Apps.Entry(a); ok && e.Files != nil {
+			out[i].Files = true
+		}
 		if !a.Updated.IsZero() {
 			t := a.Updated
 			out[i].Updated = &t
