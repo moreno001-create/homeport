@@ -35,7 +35,7 @@ esac
 # MARK: Homebrew and Caddy
 command -v brew >/dev/null || [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] \
   || die "Homeport uses Homebrew to install Caddy. Install it from https://brew.sh, then run this again."
-BREW="$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -1)"
+BREW="$(command -v brew || { ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null || true; } | head -1)"  # only one of the two exists
 BREW_PREFIX="$("$BREW" --prefix)"
 export PATH="$BREW_PREFIX/bin:$HOME/.orbstack/bin:/usr/local/bin:$PATH"
 
