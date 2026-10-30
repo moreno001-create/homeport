@@ -197,6 +197,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		// Address and AIAddress are where the portal and the AI page are reached (with the internet port).
 		Address   string `json:"address"`
 		AIAddress string `json:"aiAddress"`
+		Platform  string `json:"platform"` // linux or macos
 	}
 	s.Store.Read(func(d *state.Data) {
 		out.Settings = *d.Settings()
@@ -204,6 +205,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	})
 	out.Version, out.Me, out.Working = s.Version, actor(r).Name, s.jobs.busy()
 	out.Address, out.AIAddress = s.address(out.Settings.MainDomain), s.address(s.aiHost())
+	out.Platform = s.platformName()
 	writeJSON(w, http.StatusOK, out)
 }
 

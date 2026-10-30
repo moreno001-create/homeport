@@ -727,7 +727,7 @@ const views = {
         h("label", {}, "Minutes a change waits for approval before it's dropped", minutes),
         h("label", { class: "check" }, daily, "Check the server every day (results on the Overview page, and in the assistants' notebook)"),
         h("div", {}, h("button", { class: "primary", type: "submit" }, "Save"))),
-      terminalForm(o.settings),
+      terminalForm(o.settings, o.platform),
       chatSettingsForm(cfg),
     ];
   },
@@ -1790,7 +1790,13 @@ function splitGroups(s) { return s.split(",").map(x => x.trim().toLowerCase()).f
 
 // MARK: Routing
 
-function terminalForm(st) {
+function terminalForm(st, platform) {
+  if (platform === "macos") {
+    // ttyd signs people in with login, which needs root; Homeport runs as a user on a Mac.
+    return h("div", { class: "card stack" }, h("h2", {}, "Terminal"),
+      h("p", { class: "muted small" }, "The web terminal is for Linux servers. On a Mac, use Terminal on the Mac itself, ",
+        "Screen Sharing (System Settings → General → Sharing), or ssh from another computer (Remote Login, in the same place)."));
+  }
   const on = h("input", { type: "checkbox", checked: !!st.terminal });
   return h("form", { class: "card stack", onsubmit: async e => {
     e.preventDefault();

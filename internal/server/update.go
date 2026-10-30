@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +21,9 @@ import (
 // MARK: Updating Homeport
 //
 // The Overview page checks GitHub for newer releases and updates Homeport with one click: it downloads that release's
-// installer and runs it as its own system job (systemd-run), outside Homeport, since the installer restarts Homeport
-// part way through. The page follows the installer's log until Homeport is back with the new version.
+// installer and runs it as its own system job, outside Homeport, since the installer restarts Homeport part way
+// through: systemd-run on Linux, a one-off launchd agent on a Mac. The page follows the installer's log until Homeport
+// is back with the new version.
 
 // Repo is where Homeport's releases are (GitHub).
 const Repo = "moreno001-create/homeport"
@@ -103,9 +105,15 @@ func Releases(ctx context.Context, fresh ...bool) ([]release, error) {
 
 var versionTag = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$`)
 
-// canUpdate says whether this server can update itself from the admin panel (Linux under systemd, as the installer
-// sets it up), and why not.
-func canUpdate() (bool, string) {
+// canUpdate says whether this server can update itself from the admin panel (as the installer sets it up: Linux under
+// systemd, a Mac under launchd), and why not.
+func (s *Server) canUpdate() (bool, string) {
+	if s.platformName() == "macos" {
+		if os.Getenv("XPC_SERVICE_NAME") != macAgent {
+			return false, "Homeport isn't running as its launchd agent here"
+		}
+		return true, ""
+	}
 	if os.Getenv("INVOCATION_ID") == "" {
 		return false, "Homeport isn't running as a system service here"
 	}
@@ -116,7 +124,7 @@ func canUpdate() (bool, string) {
 }
 
 func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
-	ok, why := canUpdate()
+	ok, why := s.canUpdate()
 	out := map[string]any{"current": s.Version, "canUpdate": ok, "why": why,
 		"command": "curl -fsSL https://moreno001-create.github.io/homeport/install.sh | sudo bash"}
 	if s.platformName() == "macos" {
@@ -152,7 +160,7 @@ func (s *Server) updateStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if ok, why := canUpdate(); !ok {
+	if ok, why := s.canUpdate(); !ok {
 		writeError(w, http.StatusBadRequest, errors.New(why+": run the installer command on the server instead"))
 		return
 	}
@@ -164,9 +172,13 @@ func (s *Server) updateStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("Homeport is busy (%s): update once that's finished", strings.Join(busy, ", ")))
 		return
 	}
-	src := GitHubDownloads + "/" + Repo + "/releases/latest/download/install.sh"
+	installer := "install.sh"
+	if s.platformName() == "macos" {
+		installer = "install-mac.sh"
+	}
+	src := GitHubDownloads + "/" + Repo + "/releases/latest/download/" + installer
 	if in.Version != "" {
-		src = GitHubDownloads + "/" + Repo + "/releases/download/" + in.Version + "/install.sh"
+		src = GitHubDownloads + "/" + Repo + "/releases/download/" + in.Version + "/" + installer
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
@@ -187,6 +199,15 @@ func (s *Server) updateStart(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(dir, "install.sh")
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if s.platformName() == "macos" {
+		if err := s.startMacUpdate(ctx, path, in.Version); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		log.Printf("Update: %s started the installer for %s", actor(r).Name, cmpOr(in.Version, "the latest release"))
+		writeJSON(w, http.StatusAccepted, map[string]string{"from": s.Version, "to": cmpOr(in.Version, "latest")})
 		return
 	}
 	args := []string{"--unit", fmt.Sprintf("homeport-update-%d", time.Now().Unix()), "--collect", "--quiet",
@@ -221,9 +242,66 @@ func download(ctx context.Context, url string) (string, error) {
 	return string(b), err
 }
 
+// macAgent is the launchd label Homeport runs under on a Mac (install-mac.sh); macUpdateAgent runs the installer.
+const (
+	macAgent       = "dev.homeport.homeport"
+	macUpdateAgent = "dev.homeport.update"
+)
+
+// startMacUpdate runs the Mac installer as a one-off launchd agent of this user, so it carries on when the installer
+// restarts Homeport's own agent. Its output goes to the install log the page follows.
+func (s *Server) startMacUpdate(ctx context.Context, script, version string) error {
+	logFile := s.installLog()
+	_ = os.MkdirAll(filepath.Dir(logFile), 0o700)
+	if err := os.WriteFile(logFile, nil, 0o600); err != nil { // this run's lines only
+		return err
+	}
+	env := "    <key>PATH</key><string>" + xmlText(os.Getenv("PATH")) + "</string>\n" +
+		"    <key>HOME</key><string>" + xmlText(os.Getenv("HOME")) + "</string>\n"
+	if version != "" {
+		env += "    <key>HOMEPORT_VERSION</key><string>" + xmlText(version) + "</string>\n"
+	}
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>` + macUpdateAgent + `</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>` + xmlText(script) + `</string></array>
+  <key>EnvironmentVariables</key><dict>
+` + env + `  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>` + xmlText(logFile) + `</string>
+  <key>StandardErrorPath</key><string>` + xmlText(logFile) + `</string>
+</dict></plist>
+`
+	path := filepath.Join(filepath.Dir(script), "update.plist")
+	if err := os.WriteFile(path, []byte(plist), 0o600); err != nil {
+		return err
+	}
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+	_ = exec.CommandContext(ctx, "launchctl", "bootout", domain+"/"+macUpdateAgent).Run() // the last update's, finished
+	if out, err := exec.CommandContext(ctx, "launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
+		return fmt.Errorf("couldn't start the installer: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func xmlText(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+// installLog is where the installer's output goes: the Linux installer's own log, or one in Homeport's folder on a Mac.
+func (s *Server) installLog() string {
+	if s.platformName() == "macos" {
+		return filepath.Join(s.stateDir(), "logs", "install.log")
+	}
+	return installLog
+}
+
 // updateLog is the installer log's last lines (its progress).
 func (s *Server) updateLog(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile(installLog)
+	b, err := os.ReadFile(s.installLog())
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"log": "", "version": s.Version})
 		return

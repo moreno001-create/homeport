@@ -13,6 +13,7 @@ final class Monitor: ObservableObject {
     @Published var docker: String?       // "OrbStack · Docker 29.8.2", nil when it doesn't answer
     @Published var ai: Bool?             // the local model server answers (nil: none set up)
     @Published var checked: Date?
+    @Published var mac = MacSettings()
     @Published var busy: String?         // what a button is doing
     @Published var problem: String?
     @Published var appBusy: Set<String> = []
@@ -58,6 +59,7 @@ final class Monitor: ObservableObject {
             apps = []
         }
         ai = await aiStatus()
+        mac = await MacSettings.read()
         checked = Date()
     }
 
@@ -191,8 +193,44 @@ final class Monitor: ObservableObject {
         job = nil
     }
 
+    // update installs the newest release for this server: the newest full release, or on a test build the newest
+    // build of any kind. It never goes back to an older version.
     func update() {
-        runInstaller(title: "Updating Homeport", env: [:])
+        guard job == nil else { return }
+        let current = version ?? ""
+        Task {
+            guard let target = await Homeport.newestRelease(testBuilds: current.contains("-")) else {
+                problem = "Couldn't ask GitHub for Homeport's releases"
+                return
+            }
+            if !current.isEmpty && Homeport.compareVersions(target, current) < 0 {
+                problem = "This Mac has \(current), newer than \(target): nothing to update"
+                return
+            }
+            runInstaller(title: target == current ? "Installing \(target) again" : "Updating Homeport to \(target)",
+                         env: ["HOMEPORT_VERSION": target])
+        }
+    }
+
+    // MARK: This Mac's settings for a server
+
+    // keepAwake turns sleep off and restart-after-power-failure on. It needs an admin's password, which macOS asks for
+    // in its own window.
+    func keepAwake() {
+        act("Changing the Mac's power settings…") {
+            let r = await Shell.run(["osascript", "-e",
+                "do shell script \"pmset -a sleep 0 disksleep 0 autorestart 1 womp 1\" with administrator privileges " +
+                "with prompt \"Homeport keeps this Mac awake so its sites stay up.\""], timeout: 300)
+            if r.ok || r.out.contains("-128") { return nil } // -128: Cancel pressed
+            return "Couldn't change the power settings: " + r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    func dockerAtLogin() {
+        act("Setting OrbStack to open at login…") {
+            let r = await Shell.run(["orb", "config", "set", "app.start_at_login", "true"])
+            return r.ok ? nil : "Couldn't: " + r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     // MARK: The name on the home network

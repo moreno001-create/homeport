@@ -155,6 +155,7 @@ struct StatusView: View {
             }
             Section("Services") { services }
             Section(m.apps.isEmpty ? "Apps" : "Apps (\(m.apps.count))") { appRows }
+            Section("This Mac") { macRows }
             Section { footer }
         }
         .formStyle(.grouped)
@@ -259,6 +260,30 @@ struct StatusView: View {
                 Button(running ? "Stop" : "Start") { m.app(app, start: !running) }.disabled(busy)
             }
         }
+    }
+
+    @ViewBuilder private var macRows: some View {
+        let mac = m.mac
+        if let mins = mac.sleepMinutes {
+            Row(dot: mins == 0 ? .good : .bad, title: "Sleep",
+                detail: mins == 0 ? "Never sleeps, so the sites stay up" : "Sleeps after \(mins) minute\(mins == 1 ? "" : "s") idle: the sites go down while it sleeps") {
+                if mins != 0 { Button("Keep awake…") { m.keepAwake() }.disabled(m.busy != nil) }
+            }
+        }
+        if let auto = mac.autorestart {
+            Row(dot: auto ? .good : .bad, title: "After a power cut",
+                detail: auto ? "Starts again by itself" : "Stays off until someone presses the power button") {
+                if !auto && mac.sleepMinutes == 0 { Button("Fix…") { m.keepAwake() }.disabled(m.busy != nil) }
+            }
+        }
+        if let login = mac.dockerAtLogin {
+            Row(dot: login ? .good : .bad, title: "OrbStack at login",
+                detail: login ? "Docker starts when you log in, so the apps come back after a restart" : "Docker doesn't start by itself: after a restart the apps stay down") {
+                if !login { Button("Fix") { m.dockerAtLogin() }.disabled(m.busy != nil) }
+            }
+        }
+        Text("Homeport runs while you're logged in: turn on automatic login (System Settings → Users & Groups) so it comes back after a restart.")
+            .font(.caption).foregroundStyle(.secondary)
     }
 
     private var footer: some View {

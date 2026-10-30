@@ -148,6 +148,8 @@ agent() { # agent NAME PROGRAM ARGS...
 </dict></plist>
 PLIST
   launchctl bootout "gui/$UID_NUM/$LABEL.$name" 2>/dev/null || true
+  # Stopped with the Homeport app's Stop button: it's disabled until started again, and bootstrap refuses it.
+  launchctl enable "gui/$UID_NUM/$LABEL.$name" 2>/dev/null || true
   # bootout returns before the old one is fully gone, and starting it again too soon fails ("Bootstrap failed: 5"):
   # wait until it's gone, and try a few times.
   # Homeport finishes an app install or update under way before it stops (up to 30 minutes).
