@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Homeport for Linux (amd64 and arm64) into dist/, with the installer and checksums, ready for a GitHub
+# Builds Homeport for Linux and macOS (amd64 and arm64) into dist/, the Mac app (on a Mac), with the installer and checksums, ready for a GitHub
 # release or to copy to a server.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -11,6 +11,10 @@ for os in linux darwin; do
   done
 done
 cp install.sh install-mac.sh dist/
+# The Mac app (installs Homeport, shows what's running, starts and stops it): only on a Mac with Xcode.
+if [ "$(uname -s)" = Darwin ] && command -v swift >/dev/null; then
+  mac/build-app.sh "$version" >/dev/null && cp mac/dist/Homeport-mac.zip dist/
+fi
 (cd dist && shasum -a 256 homeport-linux-* homeport-darwin-* > SHA256SUMS)
 echo "Built Homeport $version in dist/"
 ls -la dist

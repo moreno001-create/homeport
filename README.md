@@ -107,6 +107,10 @@ Colima if there's none), and runs Caddy and Homeport as your user with launchd (
 so they start when you log in. Everything lives in `~/Library/Application Support/Homeport`, and `homeport` commands
 need no sudo. It also sets up a local model for the assistant: LM Studio's if it has one trained for tools, else Ollama
 with a model that fits the Mac's memory.
+Or use the **Homeport app** (`Homeport-mac.zip` on each release; open it with right-click → Open the first time, as
+it isn't notarized): it runs the same installer from a short form, then shows Homeport, Caddy, Docker, the local AI and
+each app with live status, starts, stops and restarts the server (Stop keeps it off after a restart, until Start), stops
+and starts single apps, updates Homeport and opens the logs. It's in `mac/` (SwiftUI; build with `mac/build-app.sh`).
 The Mac must stay awake and logged in, with ports 80 and 443 forwarded to it from your router. If OrbStack holds
 80/443 (its HTTPS domains, or ports forwarded from its Linux machines), the installer says how to turn that off.
 
