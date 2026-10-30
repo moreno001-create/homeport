@@ -90,6 +90,8 @@ struct Row<Trailing: View>: View {
 struct StatusView: View {
     @EnvironmentObject var m: Monitor
     @AppStorage("stopAppsToo") private var stopAppsToo = false
+    @State private var confirmLocal = false
+    @State private var uninstalling = false
 
     var body: some View {
         Form {
@@ -104,6 +106,7 @@ struct StatusView: View {
             Section { footer }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $uninstalling) { UninstallView() }
     }
 
     private var state: (String, Dot.Kind) {
@@ -134,7 +137,20 @@ struct StatusView: View {
                 Spacer()
             }
             if let a = m.address {
-                Text(a).font(.callout).textSelection(.enabled).foregroundStyle(.secondary)
+                HStack {
+                    Text(a).font(.callout).textSelection(.enabled).foregroundStyle(.secondary)
+                    Spacer()
+                    if m.running && !m.isLocal {
+                        Button("Make it local…") { confirmLocal = true }
+                            .controlSize(.small)
+                            .disabled(m.busy != nil)
+                            .confirmationDialog("Make Homeport local?", isPresented: $confirmLocal) {
+                                Button("Make it local") { m.makeLocal() }
+                            } message: {
+                                Text("Homeport moves to homeport.local: this network only, with its own certificates (browsers warn once). \(m.overview?.settings?.mainDomain ?? "The internet name") and its app addresses are removed from Homeport, and it stops updating the name at DuckDNS or deSEC (the name stays yours there).")
+                            }
+                    }
+                }
             }
             HStack {
                 if m.running {
@@ -203,6 +219,7 @@ struct StatusView: View {
             HStack {
                 Button("Logs") { m.openLogs() }
                 Button("Update Homeport…") { m.update() }.disabled(m.busy != nil)
+                Button("Uninstall…", role: .destructive) { uninstalling = true }.disabled(m.busy != nil)
                 Spacer()
                 if let c = m.checked {
                     Text("Checked \(c.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary)
@@ -327,6 +344,46 @@ struct InstallView: View {
         password = ""
         again = ""
         token = ""
+    }
+}
+
+// MARK: Uninstall
+
+struct UninstallView: View {
+    @EnvironmentObject var m: Monitor
+    @Environment(\.dismiss) private var dismiss
+    @State private var keepCopy = true
+    @State private var removeTools = true
+    @State private var sure = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Uninstall Homeport").font(.title2.bold())
+            Text("This removes every app's containers, Homeport and Caddy's background services (and the Ollama one Homeport set up), and the homeport program. Your Docker runtime, LM Studio, Ollama's models and this app stay.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Keep a copy of the data (users, settings, certificates and every app's files)", isOn: $keepCopy)
+            Text(keepCopy ? "Kept beside it as “Homeport-removed-<date>” in ~/Library/Application Support." : "Moved to the Trash: gone for good once the Trash is emptied.")
+                .font(.caption).foregroundStyle(keepCopy ? Color.secondary : Color.red)
+            Toggle("Also remove Caddy and restic (installed with Homebrew for Homeport) and Caddy's certificates", isOn: $removeTools)
+            HStack {
+                Text("Type “uninstall” to confirm:")
+                TextField("", text: $sure).frame(width: 120)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Uninstall", role: .destructive) {
+                    dismiss()
+                    // After this sheet has closed: the progress opens as a sheet of its own.
+                    let (copy, tools) = (keepCopy, removeTools)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { m.uninstall(keepCopy: copy, removeTools: tools) }
+                }
+                .disabled(sure.lowercased() != "uninstall")
+            }
+        }
+        .padding(20)
+        .frame(width: 520)
     }
 }
 

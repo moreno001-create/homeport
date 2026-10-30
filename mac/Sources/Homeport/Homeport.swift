@@ -29,8 +29,30 @@ enum Homeport {
     }
 
     static func post(_ path: String) async -> Bool {
-        await Shell.run(["curl", "-sf", "--max-time", "120", "-X", "POST", "-H", "Content-Type: application/json",
-                         "--unix-socket", socket, "http://homeport/api" + path], timeout: 130).ok
+        await call("POST", path) == nil
+    }
+
+    // call sends a request with an optional JSON body; nil means it worked, else it's Homeport's error.
+    static func call(_ method: String, _ path: String, body: [String: Any]? = nil) async -> String? {
+        var args = ["curl", "-s", "--max-time", "120", "-X", method, "-H", "Content-Type: application/json",
+                    "-w", "\n%{http_code}", "--unix-socket", socket, "http://homeport/api" + path]
+        if let body, let data = try? JSONSerialization.data(withJSONObject: body) {
+            args += ["--data-binary", String(decoding: data, as: UTF8.self)]
+        }
+        let r = await Shell.run(args, timeout: 130)
+        let lines = r.out.split(separator: "\n", omittingEmptySubsequences: false)
+        let code = Int(lines.last ?? "") ?? 0
+        if r.ok && (200..<300).contains(code) { return nil }
+        let text = lines.dropLast().joined(separator: "\n")
+        struct Failure: Decodable { var error: String }
+        if let f = try? JSONDecoder().decode(Failure.self, from: Data(text.utf8)) { return f.error }
+        return r.ok ? "Homeport answered \(code)" : "Homeport isn't answering"
+    }
+
+    struct Domain: Decodable {
+        var name: String
+        var main: Bool?
+        var app: String?
     }
 
     // MARK: launchd
