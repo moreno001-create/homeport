@@ -300,15 +300,46 @@ guide_free_name() {
 if [ -n "${HOMEPORT_DDNS:-}" ] && [ -z "${HOMEPORT_DOMAIN:-}" ]; then
   free_name "$HOMEPORT_DDNS" "${HOMEPORT_DDNS_NAME:-}" "${HOMEPORT_DDNS_TOKEN:-}" || die "couldn't set up the free name (see above)"
 fi
+# local_owner NAME.local: the address of another device on this network that answers to that name ("" when it's free or
+# it's this Mac). Two Homeports on one network need different .local names.
+local_owner() {
+  local ip
+  for ip in $( (dns-sd -G v4 "$1" & p=$!; sleep 2; kill "$p") 2>/dev/null | awk '$2 == "Add" {print $6}'); do
+    case " $ips 127.0.0.1 " in *" $ip "*) ;; *) echo "$ip"; return 0 ;; esac
+  done
+  return 0
+}
+# local_name: asks for this Mac's name on the network (NAME.local), suggesting homeport, or this Mac's own name when
+# another machine has homeport.local, and refusing names another machine answers to.
+local_name() {
+  local def name owner
+  def=homeport
+  if [ -n "$(local_owner homeport.local)" ]; then
+    def="$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-\n' '-')"
+    def="${def:-homeport-2}"
+  fi
+  while :; do
+    name=""; read -r -p "Name on this network (NAME.local) [$def]: " name </dev/tty
+    name="$(printf '%s' "${name:-$def}" | tr '[:upper:]' '[:lower:]')"
+    name="${name%.local}"
+    if ! printf '%s' "$name" | grep -Eq '^[a-z][a-z0-9-]{0,40}$'; then
+      echo "Letters, digits and dashes, starting with a letter." >/dev/tty; continue
+    fi
+    owner="$(local_owner "$name.local")"
+    if [ -n "$owner" ]; then echo "$name.local is taken on this network (by $owner): choose another." >/dev/tty; continue; fi
+    HOMEPORT_DOMAIN="$name.local"
+    return 0
+  done
+}
 while [ -z "${HOMEPORT_DOMAIN:-}" ] && $tty_ok; do
   printf '\nHow should people reach this Mac?\n' >/dev/tty
-  printf '  1) homeport.local: on this network only, nothing to set up (browsers warn about its certificate once)\n' >/dev/tty
+  printf '  1) A name on this network (homeport.local, or one you choose): nothing to set up (browsers warn about its\n     certificate once). Each Homeport on the network needs its own name.\n' >/dev/tty
   printf '  2) A free name from DuckDNS (yourname.duckdns.org): from anywhere, with real HTTPS certificates\n' >/dev/tty
   printf '  3) A free name from deSEC (yourname.dedyn.io): the same, from a non-profit\n' >/dev/tty
   printf '  4) A domain of your own\n' >/dev/tty
   pick=""; read -r -p "Choose 1-4 [1]: " pick </dev/tty
   case "${pick:-1}" in
-    1) HOMEPORT_DOMAIN=homeport.local ;;
+    1) local_name ;;
     2) guide_free_name duckdns || true ;;
     3) guide_free_name desec || true ;;
     4) ask HOMEPORT_DOMAIN "Your domain (its DNS must point at this Mac's public address)" ;;

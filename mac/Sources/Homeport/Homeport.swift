@@ -34,6 +34,11 @@ enum Homeport {
 
     // call sends a request with an optional JSON body; nil means it worked, else it's Homeport's error.
     static func call(_ method: String, _ path: String, body: [String: Any]? = nil) async -> String? {
+        await request(method, path, body: body).error
+    }
+
+    // request is call that also returns what Homeport answered.
+    static func request(_ method: String, _ path: String, body: [String: Any]? = nil) async -> (error: String?, answer: String) {
         var args = ["curl", "-s", "--max-time", "120", "-X", method, "-H", "Content-Type: application/json",
                     "-w", "\n%{http_code}", "--unix-socket", socket, "http://homeport/api" + path]
         if let body, let data = try? JSONSerialization.data(withJSONObject: body) {
@@ -42,11 +47,11 @@ enum Homeport {
         let r = await Shell.run(args, timeout: 130)
         let lines = r.out.split(separator: "\n", omittingEmptySubsequences: false)
         let code = Int(lines.last ?? "") ?? 0
-        if r.ok && (200..<300).contains(code) { return nil }
         let text = lines.dropLast().joined(separator: "\n")
+        if r.ok && (200..<300).contains(code) { return (nil, text) }
         struct Failure: Decodable { var error: String }
-        if let f = try? JSONDecoder().decode(Failure.self, from: Data(text.utf8)) { return f.error }
-        return r.ok ? "Homeport answered \(code)" : "Homeport isn't answering"
+        if let f = try? JSONDecoder().decode(Failure.self, from: Data(text.utf8)) { return (f.error, text) }
+        return (r.ok ? "Homeport answered \(code)" : "Homeport isn't answering", text)
     }
 
     struct Domain: Decodable {
@@ -142,6 +147,44 @@ enum Homeport {
         var id: String
         var name: String
         var status: String
+        var domain: String?
         var address: String?
+    }
+
+    struct Job: Decodable {
+        var id: String
+        var status: String // running, done, failed
+        var error: String?
+    }
+
+    // MARK: Names on the home network
+
+    // validLocal says whether label works as NAME in NAME.local.
+    static func validLocal(_ label: String) -> Bool {
+        label.range(of: "^[a-z][a-z0-9-]{0,40}$", options: .regularExpression) != nil
+    }
+
+    // localOwner is the address of another device on this network that answers to name (NAME.local), nil when it's
+    // free or it's this Mac. Two Homeports on one network need different names.
+    static func localOwner(_ name: String) async -> String? {
+        async let answers = Shell.run(["dns-sd", "-G", "v4", name], timeout: 2)
+        async let ifconfig = Shell.run(["ifconfig"], timeout: 5)
+        let mine = Set((await ifconfig).out.split(separator: "\n").compactMap { line -> String? in
+            let f = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            return f.first == "inet" && f.count > 1 ? String(f[1]) : nil
+        })
+        for line in (await answers).out.split(separator: "\n") {
+            let f = line.split(separator: " ", omittingEmptySubsequences: true)
+            if f.count >= 6, f[1] == "Add", !mine.contains(String(f[5])) { return String(f[5]) }
+        }
+        return nil
+    }
+
+    // suggestedLocal is homeport, or this Mac's own name when another machine has homeport.local.
+    static func suggestedLocal() async -> String {
+        if await localOwner("homeport.local") == nil { return "homeport" }
+        let host = await Shell.run(["scutil", "--get", "LocalHostName"]).out.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let clean = String(host.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" })
+        return validLocal(clean) ? clean : "homeport-2"
     }
 }

@@ -17,12 +17,12 @@ final class Monitor: ObservableObject {
     @Published var problem: String?
     @Published var appBusy: Set<String> = []
 
-    // The installer's output, shown in a sheet while it runs.
-    @Published var log: [String] = []
-    @Published var logTitle = ""
-    @Published var logOpen = false
-    @Published var logDone = false
-    @Published var logOK = false
+    // The console's Activity tab: what installs, updates and uninstalls print, kept while the app is open.
+    @Published var activity: [String] = []
+    @Published var job: String?          // what's running now
+    @Published var jobResult: Bool?      // how the last one ended (shown in the window until closed)
+    @Published var consoleTab = ConsoleTab.activity
+    @Published var consoleRequests = 0   // goes up to bring the console window to the front
 
     // Apps the server's Stop button stopped, so Start brings them back.
     private let stoppedAppsKey = "stoppedApps"
@@ -156,60 +156,132 @@ final class Monitor: ObservableObject {
     // MARK: Install and update (the Mac installer, run unattended with its answers in the environment)
 
     func runInstaller(title: String, env: [String: String]) {
-        log = []
-        logTitle = title
-        logDone = false
-        logOK = false
-        logOpen = true
+        guard job == nil else { return }
+        beginJob(title)
         Task {
             let script = NSTemporaryDirectory() + "homeport-install-mac.sh"
             let get = await Shell.run(["curl", "-fsSL", Homeport.installer, "-o", script], timeout: 60)
             guard get.ok else {
-                log.append("Couldn't download the installer: " + get.out)
-                logDone = true
+                say("Couldn't download the installer: " + get.out)
+                endJob(false)
                 return
             }
             let status = await Shell.stream(["bash", script], env: env) { line in
-                self.log.append(line)
+                self.say(line)
             }
             try? FileManager.default.removeItem(atPath: script)
-            logOK = status == 0
-            log.append(logOK ? "" : "The installer stopped (exit code \(status)). The lines above say why.")
-            logDone = true
+            if status != 0 { say("The installer stopped (exit code \(status)). The lines above say why.") }
+            endJob(status == 0)
             await refresh()
         }
+    }
+
+    private func beginJob(_ title: String) {
+        job = title
+        jobResult = nil
+        if !activity.isEmpty { activity.append("") }
+        activity.append("──── \(title) · \(Date().formatted(date: .abbreviated, time: .shortened)) ────")
+        consoleTab = .activity
+        consoleRequests += 1
+    }
+
+    private func endJob(_ ok: Bool) {
+        say(ok ? "✓ Done." : "✗ It didn't finish.")
+        jobResult = ok
+        job = nil
     }
 
     func update() {
         runInstaller(title: "Updating Homeport", env: [:])
     }
 
-    // MARK: Make it local
+    // MARK: The name on the home network
 
     var isLocal: Bool { (overview?.settings?.mainDomain ?? "").hasSuffix(".local") }
 
-    // makeLocal moves the portal and admin panel to homeport.local with Homeport's own certificates, then takes the old
-    // internet name and its app addresses out of Homeport (which also stops updating it at DuckDNS or deSEC).
-    func makeLocal() {
-        guard let old = overview?.settings?.mainDomain else { return }
-        act("Moving Homeport to homeport.local…") {
-            if let err = await Homeport.call("PUT", "/settings", body: ["mainDomain": "homeport.local", "tls": "internal"]) {
-                return err
-            }
-            var inUse: [String] = []
-            for d in await Homeport.get("/domains", as: [Homeport.Domain].self) ?? []
-            where d.name == old || d.name.hasSuffix("." + old) {
-                if let app = d.app {
-                    inUse.append("\(app) (\(d.name))")
-                } else if let err = await Homeport.call("DELETE", "/domains/\(d.name)") {
-                    return "Couldn't remove \(d.name): \(err)"
-                }
-            }
-            if !inUse.isEmpty {
-                return "Homeport is local now, but these apps still use \(old): \(inUse.joined(separator: ", ")). Change their address in the admin panel, then press Make it local again."
-            }
-            return nil
+    // setLocalName makes NAME.local the main address (portal and admin panel, with Homeport's own certificates), moves
+    // the apps to app.NAME.local, and takes the old names out of Homeport: the internet name (which also stops updating
+    // it at DuckDNS or deSEC) and other .local names (so this Mac stops answering to them and another Homeport can).
+    func setLocalName(_ label: String) {
+        guard job == nil, let old = overview?.settings?.mainDomain else { return }
+        let new = label + ".local"
+        beginJob("Moving Homeport to \(new)")
+        busy = "Moving to \(new)…"
+        Task {
+            let ok = await moveToLocal(old: old, new: new)
+            endJob(ok)
+            busy = nil
+            await refresh()
         }
+    }
+
+    private func moveToLocal(old: String, new: String) async -> Bool {
+        if let owner = await Homeport.localOwner(new) {
+            say("\(new) is taken on this network (by \(owner)): choose another name.")
+            return false
+        }
+        if new != old {
+            say("==> The portal and admin panel move to https://\(new)")
+            if let err = await Homeport.call("PUT", "/settings", body: ["mainDomain": new, "tls": "internal"]) {
+                say("Couldn't: \(err)")
+                return false
+            }
+        }
+
+        say("==> Apps move under \(new)")
+        let apps = await Homeport.get("/apps", as: [Homeport.App].self) ?? []
+        // Each keeps its first name (cloud.old → cloud.new) unless another app has it, or it's Homeport's own: then its id.
+        var taken: Set<String> = ["ai", "signin"]
+        for a in apps { if let d = a.domain, d.hasSuffix("." + new) { taken.insert(String(d.dropLast(new.count + 1))) } }
+        var moved = 0
+        for app in apps {
+            guard let d = app.domain, !d.hasSuffix("." + new) else { continue }
+            guard d.hasSuffix(".local") || d == old || d.hasSuffix("." + old) else {
+                say("\(app.name) stays at \(d) (a domain of its own).")
+                continue
+            }
+            var label = String(d.split(separator: ".").first ?? Substring(app.id))
+            if taken.contains(label) { label = app.id }
+            taken.insert(label)
+            say("\(app.name): \(d) → \(label).\(new) (it restarts for a moment)")
+            if let err = await moveApp(app.id, to: "\(label).\(new)") {
+                say("Couldn't move \(app.name): \(err)")
+                return false
+            }
+            moved += 1
+        }
+        if moved == 0 { say("Every app is under \(new) already.") }
+
+        say("==> Old names come out of Homeport")
+        var removed = 0
+        for d in await Homeport.get("/domains", as: [Homeport.Domain].self) ?? [] {
+            let oldName = d.name == old || d.name.hasSuffix("." + old) || d.name.hasSuffix(".local")
+            guard oldName, d.name != new, !d.name.hasSuffix("." + new), d.app == nil, d.main != true else { continue }
+            if let err = await Homeport.call("DELETE", "/domains/\(d.name)") {
+                say("Couldn't remove \(d.name): \(err)")
+            } else {
+                say("Removed \(d.name).")
+                removed += 1
+            }
+        }
+        if removed == 0 { say("Nothing to remove.") }
+        say("")
+        say("Homeport is at https://\(new) (admin panel: https://\(new)/admin). Browsers warn about its certificate once.")
+        return true
+    }
+
+    // moveApp changes an app's address and waits for it to finish (it's a job in Homeport).
+    private func moveApp(_ id: String, to domain: String) async -> String? {
+        let r = await Homeport.request("POST", "/apps/\(id)/address", body: ["domain": domain])
+        if let err = r.error { return err }
+        guard let job = try? JSONDecoder().decode(Homeport.Job.self, from: Data(r.answer.utf8)) else { return nil }
+        for _ in 0..<300 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let j = await Homeport.get("/jobs/\(job.id)", as: Homeport.Job.self) else { continue }
+            if j.status == "done" { return nil }
+            if j.status == "failed" { return j.error ?? "it failed" }
+        }
+        return "it's taking more than 5 minutes: see the admin panel"
     }
 
     // MARK: Uninstall
@@ -217,11 +289,8 @@ final class Monitor: ObservableObject {
     // uninstall removes the apps' containers, the launchd agents and the homeport program, optionally Caddy and restic,
     // and keeps the data as a dated copy beside it (keepCopy) or moves it to the Trash.
     func uninstall(keepCopy: Bool, removeTools: Bool) {
-        log = []
-        logTitle = "Uninstalling Homeport"
-        logDone = false
-        logOK = false
-        logOpen = true
+        guard job == nil else { return }
+        beginJob("Uninstalling Homeport")
         busy = "Uninstalling…"
         Task {
             let fm = FileManager.default
@@ -292,8 +361,7 @@ final class Monitor: ObservableObject {
 
             say("")
             say("Homeport is removed. Left as they were: your Docker runtime, LM Studio, Ollama and its models, and the name at DuckDNS or deSEC. Drag this app to the Trash to remove it too.")
-            logOK = true
-            logDone = true
+            endJob(true)
             overview = nil
             apps = []
             busy = nil
@@ -301,7 +369,15 @@ final class Monitor: ObservableObject {
         }
     }
 
-    private func say(_ line: String) { log.append(line) }
+    private func say(_ line: String) {
+        activity.append(line)
+        if activity.count > 20000 { activity.removeFirst(activity.count - 20000) }
+    }
+
+    func showConsole(_ tab: ConsoleTab? = nil) {
+        if let tab { consoleTab = tab }
+        consoleRequests += 1
+    }
 
     // MARK: Opening things
 
@@ -310,13 +386,12 @@ final class Monitor: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    func openLogs() {
-        let log = Homeport.logs + "/homeport.log"
-        if FileManager.default.fileExists(atPath: log) {
-            NSWorkspace.shared.open([URL(fileURLWithPath: log)], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Console.app"),
-                                    configuration: NSWorkspace.OpenConfiguration())
+    // reveal shows a log file in Finder (or Homeport's folder when there's no log yet).
+    func reveal(_ path: String) {
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         } else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: Homeport.state))
+            NSWorkspace.shared.open(URL(fileURLWithPath: FileManager.default.fileExists(atPath: Homeport.state) ? Homeport.state : Shell.home))
         }
     }
 }

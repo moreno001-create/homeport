@@ -16,8 +16,21 @@ struct HomeportApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {
                 Button("Check Now") { Task { await monitor.refresh() } }.keyboardShortcut("r")
+                ConsoleCommand()
             }
         }
+
+        Window("Homeport Console", id: "console") {
+            ConsoleView().environmentObject(monitor)
+        }
+        .defaultSize(width: 860, height: 520)
+    }
+}
+
+struct ConsoleCommand: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Show Console") { openWindow(id: "console") }.keyboardShortcut("l")
     }
 }
 
@@ -29,23 +42,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let out = ProcessInfo.processInfo.environment["HOMEPORT_SNAPSHOT"] else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-            guard let view = NSApp.windows.first(where: { $0.isVisible })?.contentView,
-                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+            // One file per window: file.png, then file-2.png… (HOMEPORT_CONSOLE=Caddy, say, opens the console first).
+            for (i, window) in NSApp.windows.filter({ $0.isVisible && $0.contentView != nil }).enumerated() {
+                guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let path = i == 0 ? out : out.replacingOccurrences(of: ".png", with: "-\(i + 1).png")
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            }
         }
     }
 }
 
 struct ContentView: View {
     @EnvironmentObject var m: Monitor
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
             if m.installed { StatusView() } else { InstallView() }
         }
-        .task { await m.watch() }
-        .sheet(isPresented: $m.logOpen) { LogView() }
+        .safeAreaInset(edge: .top, spacing: 0) { JobStrip() }
+        .task {
+            if let tab = ProcessInfo.processInfo.environment["HOMEPORT_CONSOLE"].flatMap(ConsoleTab.init(rawValue:)) { m.showConsole(tab) }
+            await m.watch()
+        }
+        .onChange(of: m.consoleRequests) { _ in openWindow(id: "console") }
+    }
+}
+
+// JobStrip shows an install, update or uninstall going on (and how it ended), with the way to the console.
+struct JobStrip: View {
+    @EnvironmentObject var m: Monitor
+
+    var body: some View {
+        if m.job != nil || m.jobResult != nil {
+            HStack(spacing: 8) {
+                if let job = m.job {
+                    ProgressView().controlSize(.small)
+                    Text(job + "…")
+                    Text(m.activity.last(where: { !$0.isEmpty }) ?? "").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                } else if let ok = m.jobResult {
+                    Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill").foregroundStyle(ok ? .green : .red)
+                    Text(ok ? "Finished" : "It didn't finish: the console says why")
+                }
+                Spacer()
+                Button("Console") { m.showConsole(.activity) }.controlSize(.small)
+                if m.job == nil {
+                    Button { m.jobResult = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).help("Hide")
+                }
+            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+        }
     }
 }
 
@@ -90,7 +142,7 @@ struct Row<Trailing: View>: View {
 struct StatusView: View {
     @EnvironmentObject var m: Monitor
     @AppStorage("stopAppsToo") private var stopAppsToo = false
-    @State private var confirmLocal = false
+    @State private var renaming = false
     @State private var uninstalling = false
 
     var body: some View {
@@ -107,6 +159,7 @@ struct StatusView: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $uninstalling) { UninstallView() }
+        .sheet(isPresented: $renaming) { LocalNameSheet() }
     }
 
     private var state: (String, Dot.Kind) {
@@ -140,15 +193,10 @@ struct StatusView: View {
                 HStack {
                     Text(a).font(.callout).textSelection(.enabled).foregroundStyle(.secondary)
                     Spacer()
-                    if m.running && !m.isLocal {
-                        Button("Make it local…") { confirmLocal = true }
+                    if m.running {
+                        Button(m.isLocal ? "Change name…" : "Make it local…") { renaming = true }
                             .controlSize(.small)
-                            .disabled(m.busy != nil)
-                            .confirmationDialog("Make Homeport local?", isPresented: $confirmLocal) {
-                                Button("Make it local") { m.makeLocal() }
-                            } message: {
-                                Text("Homeport moves to homeport.local: this network only, with its own certificates (browsers warn once). \(m.overview?.settings?.mainDomain ?? "The internet name") and its app addresses are removed from Homeport, and it stops updating the name at DuckDNS or deSEC (the name stays yours there).")
-                            }
+                            .disabled(m.busy != nil || m.job != nil)
                     }
                 }
             }
@@ -217,9 +265,9 @@ struct StatusView: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Stop the apps too when stopping the server", isOn: $stopAppsToo)
             HStack {
-                Button("Logs") { m.openLogs() }
-                Button("Update Homeport…") { m.update() }.disabled(m.busy != nil)
-                Button("Uninstall…", role: .destructive) { uninstalling = true }.disabled(m.busy != nil)
+                Button("Console") { m.showConsole() }
+                Button("Update Homeport…") { m.update() }.disabled(m.busy != nil || m.job != nil)
+                Button("Uninstall…", role: .destructive) { uninstalling = true }.disabled(m.busy != nil || m.job != nil)
                 Spacer()
                 if let c = m.checked {
                     Text("Checked \(c.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary)
@@ -239,7 +287,7 @@ struct InstallView: View {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .local: return "homeport.local (this network only)"
+            case .local: return "A name on this network (homeport.local, or your own choice)"
             case .duckdns: return "A free DuckDNS name (yourname.duckdns.org)"
             case .desec: return "A free deSEC name (yourname.dedyn.io)"
             case .own: return "A domain of my own"
@@ -256,9 +304,13 @@ struct InstallView: View {
     @State private var password = ""
     @State private var again = ""
     @State private var localAI = true
+    @State private var localLabel = ""
+    @State private var localOwner: String?
 
     private var problem: String? {
         if Homeport.brew == nil { return "Install Homebrew first (it installs Caddy)." }
+        if reach == .local && !Homeport.validLocal(localLabel) { return "Choose a name on this network." }
+        if reach == .local && localOwner != nil { return "\(localLabel).local is taken on this network." }
         if (reach == .duckdns || reach == .desec) && (name.isEmpty || token.isEmpty) { return "Fill in the name and its token." }
         if reach == .own && !domain.contains(".") { return "Fill in your domain." }
         if admin.range(of: "^[a-z][a-z0-9._-]*$", options: .regularExpression) == nil { return "The admin's name: lowercase letters and digits, starting with a letter." }
@@ -291,7 +343,9 @@ struct InstallView: View {
                 .labelsHidden()
                 switch reach {
                 case .local:
-                    Text("Browsers warn about its certificate once. Nothing to set up.").font(.caption).foregroundStyle(.secondary)
+                    LocalNameField(label: $localLabel, owner: $localOwner)
+                    Text("Browsers warn about its certificate once. Each Homeport on this network needs its own name.")
+                        .font(.caption).foregroundStyle(.secondary)
                 case .duckdns, .desec:
                     TextField("Name", text: $name, prompt: Text(reach == .duckdns ? "yourname (for yourname.duckdns.org)" : "yourname (for yourname.dedyn.io)"))
                     SecureField("Token", text: $token)
@@ -319,9 +373,10 @@ struct InstallView: View {
                 HStack {
                     if let p = problem { Text(p).font(.callout).foregroundStyle(.secondary) }
                     Spacer()
-                    Button("Install") { install() }
+                    Button("Console") { m.showConsole(.activity) }
+                    Button(m.job == nil ? "Install" : "Installing…") { install() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(problem != nil)
+                        .disabled(problem != nil || m.job != nil)
                 }
             }
         }
@@ -331,7 +386,7 @@ struct InstallView: View {
     private func install() {
         var env = ["HOMEPORT_ADMIN": admin, "HOMEPORT_PASSWORD": password]
         switch reach {
-        case .local: env["HOMEPORT_DOMAIN"] = "homeport.local"
+        case .local: env["HOMEPORT_DOMAIN"] = localLabel + ".local"
         case .duckdns, .desec:
             env["HOMEPORT_DDNS"] = reach.rawValue
             env["HOMEPORT_DDNS_NAME"] = name
@@ -344,6 +399,98 @@ struct InstallView: View {
         password = ""
         again = ""
         token = ""
+    }
+}
+
+// MARK: The name on the home network
+
+// LocalNameField is NAME.local, checked against the network as it's typed (another machine answering to it means
+// it's taken). It starts with homeport, or this Mac's own name when homeport.local is taken.
+struct LocalNameField: View {
+    @Binding var label: String
+    @Binding var owner: String?
+    var current: String? = nil // the name Homeport has now (it's this Mac's, so not "taken")
+    @State private var checking = false
+    @State private var suggested = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                TextField("Name", text: $label, prompt: Text("homeport"))
+                    .onChange(of: label) { v in
+                        let clean = v.lowercased().replacingOccurrences(of: ".local", with: "")
+                        if clean != v { label = clean }
+                    }
+                Text(".local").foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                if label.isEmpty {
+                    EmptyView()
+                } else if !Homeport.validLocal(label) {
+                    Text("Letters, digits and dashes, starting with a letter.").foregroundStyle(.red)
+                } else if checking {
+                    ProgressView().controlSize(.mini)
+                    Text("Checking the network…").foregroundStyle(.secondary)
+                } else if let o = owner {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                    Text("\(label).local is taken on this network (by \(o)).").foregroundStyle(.red)
+                } else {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text("https://\(label).local is free.").foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption)
+        }
+        .task(id: label) {
+            if label.isEmpty && current == nil && !suggested {
+                suggested = true
+                label = await Homeport.suggestedLocal()
+                return
+            }
+            guard Homeport.validLocal(label) else { owner = nil; return }
+            checking = true
+            try? await Task.sleep(nanoseconds: 500_000_000) // after typing stops
+            if Task.isCancelled { return }
+            owner = label + ".local" == current ? nil : await Homeport.localOwner(label + ".local")
+            checking = false
+        }
+    }
+}
+
+// LocalNameSheet makes Homeport local (from an internet name) or changes its .local name.
+struct LocalNameSheet: View {
+    @EnvironmentObject var m: Monitor
+    @Environment(\.dismiss) private var dismiss
+    @State private var label = ""
+    @State private var owner: String?
+
+    private var main: String { m.overview?.settings?.mainDomain ?? "" }
+    private var unchanged: Bool { label + ".local" == main }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(m.isLocal ? "Change the name on this network" : "Make Homeport local").font(.title2.bold())
+            Text(m.isLocal
+                 ? "Homeport and its apps move to the new name (cloud.\(main) becomes cloud.NEW.local), and this Mac stops answering to \(main), so another Homeport on the network can use it. Bookmarks to the old names stop working."
+                 : "Homeport moves to a name on this network only, with its own certificates (browsers warn once). Apps move under it too. \(main) and its app addresses come out of Homeport, which stops updating the name at DuckDNS or deSEC (the name stays yours there).")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            LocalNameField(label: $label, owner: $owner, current: m.isLocal ? main : nil)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(m.isLocal ? "Change name" : "Make it local") {
+                    dismiss()
+                    let l = label
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { m.setLocalName(l) }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!Homeport.validLocal(label) || owner != nil || unchanged)
+            }
+        }
+        .padding(20)
+        .frame(width: 500)
+        .onAppear { if m.isLocal { label = String(main.dropLast(".local".count)) } }
     }
 }
 
@@ -384,45 +531,5 @@ struct UninstallView: View {
         }
         .padding(20)
         .frame(width: 520)
-    }
-}
-
-// MARK: Installer output
-
-struct LogView: View {
-    @EnvironmentObject var m: Monitor
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                if !m.logDone { ProgressView().controlSize(.small) }
-                else { Image(systemName: m.logOK ? "checkmark.circle.fill" : "xmark.octagon.fill").foregroundStyle(m.logOK ? .green : .red) }
-                Text(m.logDone ? (m.logOK ? "Done" : "It didn't finish") : m.logTitle + "…").font(.headline)
-            }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(m.log.enumerated()), id: \.offset) { i, line in
-                            Text(line.isEmpty ? " " : line)
-                                .font(.system(.caption, design: .monospaced))
-                                .fontWeight(line.hasPrefix("==>") ? .bold : .regular)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id(i)
-                        }
-                    }
-                    .padding(8)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .onChange(of: m.log.count) { n in proxy.scrollTo(n - 1, anchor: .bottom) }
-            }
-            HStack {
-                Spacer()
-                Button("Close") { m.logOpen = false }.keyboardShortcut(.defaultAction).disabled(!m.logDone)
-            }
-        }
-        .padding()
-        .frame(width: 640, height: 460)
     }
 }
