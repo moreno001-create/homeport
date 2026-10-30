@@ -42,6 +42,7 @@ export PATH="$BREW_PREFIX/bin:$HOME/.orbstack/bin:/usr/local/bin:$PATH"
 say "Installing Caddy"
 command -v caddy >/dev/null || "$BREW" install caddy
 command -v restic >/dev/null || "$BREW" install restic   # backups (Backups page)
+command -v aria2c >/dev/null || "$BREW" install aria2   # downloads for apps' Files button (Kiwix's ZIM files)
 caddy version
 
 # MARK: Docker runtime

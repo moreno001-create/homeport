@@ -76,8 +76,16 @@ func (m *Manager) Ready(ctx context.Context, w io.Writer) error {
 	if _, err := os.Stat(session); err != nil {
 		_ = os.WriteFile(session, nil, 0o600)
 	}
+	// The secret goes in a file only Homeport's account can read: on the command line, any account on the machine
+	// could see it (ps) and use aria2, which runs as root on Linux, to write files anywhere.
+	conf := filepath.Join(m.StateDir, "aria2.conf")
+	if err := os.WriteFile(conf, []byte("rpc-secret="+m.secret+"\n"), 0o600); err != nil {
+		return err
+	}
+	_ = os.Chmod(conf, 0o600) // an older file kept its mode
 	args := []string{
-		"--enable-rpc", "--rpc-listen-all=false", "--rpc-listen-port=" + strconv.Itoa(m.port()), "--rpc-secret=" + m.secret,
+		"--conf-path=" + conf,
+		"--enable-rpc", "--rpc-listen-all=false", "--rpc-listen-port=" + strconv.Itoa(m.port()),
 		"--input-file=" + session, "--save-session=" + session, "--save-session-interval=30",
 		"--continue=true", "--max-concurrent-downloads=3", "--follow-torrent=mem", "--follow-metalink=mem", "--seed-time=0",
 		"--bt-save-metadata=false", "--file-allocation=none", "--auto-file-renaming=false", "--allow-overwrite=false",
