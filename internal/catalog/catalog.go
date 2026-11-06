@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -163,6 +164,8 @@ func (a App) fill(text string, v Vars, more ...template.FuncMap) (string, error)
 			}
 			return s, nil
 		},
+		// quotemeta makes a value safe inside a regular expression (Collabora's list of allowed Nextclouds).
+		"quotemeta": regexp.QuoteMeta,
 		// Outside the notes, a file isn't read (compose files and commands are written before the app runs).
 		"file": func(string) string { return "" },
 	}

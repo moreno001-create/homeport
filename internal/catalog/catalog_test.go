@@ -83,6 +83,23 @@ func TestHomeAssistantProxySettingsAreInItsStore(t *testing.T) {
 	t.Fatal("home-assistant isn't in the catalog")
 }
 
+// Collabora only works for the Nextclouds in aliasgroup1: any address under the main domain, and nothing else.
+func TestCollaboraAllowsOnlyTheMainDomain(t *testing.T) {
+	a, ok := Get("collabora")
+	if !ok {
+		t.Fatal("collabora isn't in the catalog")
+	}
+	out, err := a.Render(Vars{ID: a.ID, Domain: "collabora.home.example.com", Port: 18000, Data: "/data", TimeZone: "UTC",
+		MainDomain: "home.example.com", Secrets: map[string]string{"admin_password": "pw"}, CABundle: "/ca.crt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `aliasgroup1: 'https://.*\.home\.example\.com:443'`
+	if !strings.Contains(out, want) {
+		t.Errorf("want %s in:\n%s", want, out)
+	}
+}
+
 func TestUnknownSecretIsAnError(t *testing.T) {
 	a := App{ID: "x", Compose: "services:\n  app:\n    image: \"{{secret \"nope\"}}\"\n"}
 	if _, err := a.Render(Vars{Secrets: map[string]string{}}); err == nil {

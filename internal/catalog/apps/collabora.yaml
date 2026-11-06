@@ -1,0 +1,35 @@
+id: collabora
+name: Collabora Online
+description: Open and edit documents, spreadsheets and presentations together in the browser, inside Nextcloud.
+category: Documents & productivity
+website: https://www.collaboraonline.com
+signIn: own
+secrets: [admin_password]
+notes: |
+  It works inside Nextcloud: in Nextcloud, install "Nextcloud Office", then under Administration settings → Office choose
+  "Use your own server" and enter https://{{.Domain}} (not the built-in CODE server, which can crash Nextcloud's web
+  server on a Mac). It accepts Nextcloud at any address under {{.MainDomain}}.
+  Nextcloud and the browser both reach it at this address, so it stays public; it only opens documents for Nextcloud.
+  Its admin page is https://{{.Domain}}/browser/dist/admin/admin.html, as "admin" with the admin password in this app's
+  secrets.
+compose: |
+  services:
+    app:
+      image: collabora/code:latest
+      ports: ["127.0.0.1:{{.Port}}:9980"]
+      # Nextcloud's address leads back through this server's Caddy (home routers often can't loop back to a public
+      # address); at another address than nextcloud.<main domain>, the router has to.
+      extra_hosts: ["nextcloud.{{.MainDomain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
+      environment:
+        # The Nextclouds allowed to use it: any address under the main domain (a regular expression).
+        aliasgroup1: 'https://.*\.{{quotemeta .MainDomain}}:443'
+        server_name: "{{.Domain}}"
+        username: admin
+        password: "{{secret "admin_password"}}"
+        # Caddy handles HTTPS in front of it.
+        extra_params: "--o:ssl.enable=false --o:ssl.termination=true"
+        DONT_GEN_SSL_CERT: "1"
+        TZ: "{{.TimeZone}}"
+      volumes:
+        - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
+      restart: unless-stopped

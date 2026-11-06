@@ -47,7 +47,7 @@ Docker and Caddy. (Working name.)
   that reaches outside the app's own folder and port: privileged containers, the host's network, the Docker socket,
   folders from the server, extra published ports, builds from source.
 
-Apps in the catalog: Nextcloud, Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
+Apps in the catalog: Nextcloud (with Collabora Online for documents), Vaultwarden, Jellyfin, Immich, Audiobookshelf, Navidrome, Home Assistant,
 AdGuard Home, Paperless-ngx, Stirling PDF, Actual Budget, FreshRSS, Memos, Mealie, Forgejo, Syncthing, Uptime Kuma,
 linkding, Wiki.js, n8n, changedetection.io, IT Tools, Excalidraw, Calibre-Web, Kavita, Grocy, Homebox, Wallos,
 code-server, ntfy, WordPress, Ghost, BookStack, Joplin Server, Trilium Notes, Vikunja, Firefly III, SearXNG, PrivateBin,

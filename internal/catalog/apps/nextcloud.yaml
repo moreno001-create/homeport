@@ -29,8 +29,9 @@ compose: |
       image: nextcloud:stable-apache
       depends_on: [db, redis]
       ports: ["127.0.0.1:{{.Port}}:80"]
-      # Its own address leads back through this server's Caddy (home routers often can't loop back to a public address).
-      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
+      # Its own address (and Collabora's, for Nextcloud Office) leads back through this server's Caddy (home routers
+      # often can't loop back to a public address).
+      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway", "collabora.{{.MainDomain}}:host-gateway"]
       environment: &env
         POSTGRES_HOST: db
         POSTGRES_DB: nextcloud
@@ -56,7 +57,7 @@ compose: |
       image: nextcloud:stable-apache
       entrypoint: /cron.sh
       depends_on: [app]
-      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
+      extra_hosts: ["{{.Domain}}:host-gateway", "{{.MainDomain}}:host-gateway", "collabora.{{.MainDomain}}:host-gateway"]
       environment: *env
       volumes:
         - "{{.Data}}/html:/var/www/html"
