@@ -56,6 +56,33 @@ func TestEveryAppRenders(t *testing.T) {
 	}
 }
 
+// Home Assistant takes an http: block in configuration.yaml as a trial it undoes after 5 minutes, and drops it in 2027.2.
+func TestHomeAssistantProxySettingsAreInItsStore(t *testing.T) {
+	all, err := All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range all {
+		if a.ID != "home-assistant" {
+			continue
+		}
+		out, err := a.Render(Vars{ID: a.ID, Domain: "ha.example.com", Port: 18000, Data: "/data", TimeZone: "UTC"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "http:\\n") {
+			t.Errorf("configuration.yaml still gets an http: block:\n%s", out)
+		}
+		for _, want := range []string{`"use_x_forwarded_for": true`, `"pending": null`, `"yaml_migration_done": true`} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the stored settings lack %s:\n%s", want, out)
+			}
+		}
+		return
+	}
+	t.Fatal("home-assistant isn't in the catalog")
+}
+
 func TestUnknownSecretIsAnError(t *testing.T) {
 	a := App{ID: "x", Compose: "services:\n  app:\n    image: \"{{secret \"nope\"}}\"\n"}
 	if _, err := a.Render(Vars{Secrets: map[string]string{}}); err == nil {
