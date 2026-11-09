@@ -364,3 +364,37 @@ async function customize() {
 }
 
 document.getElementById("customize")?.addEventListener("click", customize);
+
+// Changing your own password: the current one, then the new one twice. Other browsers and apps signed in as you are
+// signed out; this one stays.
+function changePassword() {
+  const cur = h("input", { type: "password", autocomplete: "current-password", required: true });
+  const next = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: "10" });
+  const again = h("input", { type: "password", autocomplete: "new-password", required: true });
+  const status = h("p", { class: "muted small", role: "status" });
+  const go = h("button", { class: "primary", type: "submit" }, "Change password");
+  lookDialog.replaceChildren(h("form", { method: "dialog", class: "stack", onsubmit: async e => {
+    e.preventDefault();
+    if (next.value !== again.value) { status.textContent = "The two new passwords aren't the same."; again.focus(); return; }
+    go.disabled = true;
+    status.textContent = "Changing it…";
+    try {
+      await api("POST", "/password", { current: cur.value, new: next.value });
+      lookDialog.replaceChildren(h("div", { class: "stack" }, h("h2", {}, "Password changed"),
+        h("p", {}, "Use the new one from now on, in every app. Other browsers and phones signed in as you have been signed out; this one stays signed in."),
+        h("p", { class: "muted small" }, "Phones that sync calendars or files with an app password keep working: those are separate."),
+        h("div", { class: "buttons" }, h("button", { class: "primary", type: "button", onclick: () => lookDialog.close() }, "Done"))));
+    } catch (err) { status.textContent = err.message.charAt(0).toUpperCase() + err.message.slice(1) + "."; go.disabled = false; }
+  } },
+    h("h2", {}, "Change your password"),
+    h("p", { class: "muted small" }, "It's your one password for every app on this server."),
+    h("label", {}, "Current password", cur),
+    h("label", {}, "New password (at least 10 characters)", next),
+    h("label", {}, "New password again", again),
+    status,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => lookDialog.close() }, "Cancel"), go)));
+  lookDialog.showModal();
+  setTimeout(() => cur.focus(), 30);
+}
+
+document.getElementById("password")?.addEventListener("click", changePassword);

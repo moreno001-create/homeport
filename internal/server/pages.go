@@ -92,6 +92,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <div class="who">
     <span>{{or .User.DisplayName .User.Name}}</span>
     <button type="button" id="customize" title="Background, and what this page shows">Customize</button>
+    <button type="button" id="password" title="Change your password">Password</button>
     {{if .User.Admin}}<a class="button" href="/admin">Admin</a>{{end}}
     <form method="post" action="/logout"><button type="submit">Sign out</button></form>
   </div>

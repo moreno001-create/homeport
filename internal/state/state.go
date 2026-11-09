@@ -534,6 +534,13 @@ func (v *Data) DeleteSessionsOf(user string) {
 	v.d.Refresh = filter(v.d.Refresh, func(r RefreshToken) bool { return r.User != user })
 }
 
+// SignOutElsewhere signs a user out of every browser and app but one session (and the app sessions made from it):
+// after they change their own password, the browser they did it in stays signed in.
+func (v *Data) SignOutElsewhere(user, keep string) {
+	v.d.Sessions = filter(v.d.Sessions, func(s Session) bool { return s.User != user || s.TokenHash == keep || s.Parent == keep })
+	v.d.Refresh = filter(v.d.Refresh, func(r RefreshToken) bool { return r.User != user })
+}
+
 func (v *Data) AddRefresh(r RefreshToken) {
 	now := time.Now()
 	v.d.Refresh = filter(v.d.Refresh, func(x RefreshToken) bool { return x.Expires.After(now) })
