@@ -21,6 +21,10 @@ notes: |
   model and an embedding model (like nomic-embed-text). Questions and documents stay on your network. Words in scanned
   pages and photos of papers are read inside Cove (Tesseract). Kids' accounts (Admin) get a simpler Cove without money,
   home records or public links. The photo map's background comes from openstreetmap.org.
+  In Cove → Admin → Home connections: Home Assistant (http://host.docker.internal:8123 and a long-lived token from
+  your Home Assistant profile) for lights, locks, solar and the weather; Jellyfin (http://host.docker.internal:8096
+  and an API key); and an off-site backup (restic: Backblaze B2, S3 or another computer). The pantry looks barcodes
+  up on openfoodfacts.org.
 compose: |
   services:
     init:
