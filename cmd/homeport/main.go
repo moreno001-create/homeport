@@ -117,6 +117,7 @@ func usage() {
   homeport user list
   homeport user add NAME [--name "Full Name"] [--email E] [--groups a,b] [--admin]
   homeport user passwd NAME
+  homeport user reset-2step NAME   turn off someone's two-step sign-in (a lost phone and no recovery codes)
   homeport user groups NAME a,b
   homeport user delete NAME
 
@@ -648,6 +649,15 @@ func cmdUser(args []string) error {
 			return err
 		}
 		fmt.Println("Added", pos[0])
+		return nil
+	case "reset-2step":
+		if len(rest) != 1 {
+			return errors.New("usage: homeport user reset-2step NAME")
+		}
+		if err := call("PATCH", "/users/"+rest[0], map[string]any{"resetTwoStep": true}, nil); err != nil {
+			return err
+		}
+		fmt.Println("Two-step sign-in is off for " + rest[0] + "; they're signed out everywhere and sign in with their password.")
 		return nil
 	case "passwd", "password":
 		if len(rest) != 1 {

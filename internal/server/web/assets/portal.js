@@ -397,4 +397,98 @@ function changePassword() {
   setTimeout(() => cur.focus(), 30);
 }
 
-document.getElementById("password")?.addEventListener("click", changePassword);
+// --- Security: the password, two-step sign-in (an authenticator app, recovery codes), passkeys
+
+const pb64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=")), c => c.charCodeAt(0));
+const punb64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function askPassword(title, why) {
+  return new Promise(resolve => {
+    const pw = h("input", { type: "password", autocomplete: "current-password", required: true });
+    lookDialog.replaceChildren(h("form", { method: "dialog", class: "stack", onsubmit: e => { e.preventDefault(); resolve(pw.value); } },
+      h("h2", {}, title), h("p", { class: "muted small" }, why || "Your password, to be sure it's you."), h("label", {}, "Password", pw),
+      h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => { resolve(null); security(); } }, "Back"), h("button", { class: "primary", type: "submit" }, "Continue"))));
+    if (!lookDialog.open) lookDialog.showModal();
+    setTimeout(() => pw.focus(), 30);
+  });
+}
+
+function showCodes(codes) {
+  const text = codes.join("\n");
+  lookDialog.replaceChildren(h("div", { class: "stack" }, h("h2", {}, "Your recovery codes"),
+    h("p", {}, "If you lose your phone, each of these signs you in once. Keep them somewhere safe (a password manager, or printed in a drawer). They won't be shown again."),
+    h("pre", { class: "codes" }, text),
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => navigator.clipboard?.writeText(text) }, "Copy"),
+      h("button", { type: "button", onclick: () => print() }, "Print"), h("button", { class: "primary", type: "button", onclick: () => security() }, "I've saved them"))));
+}
+
+async function setUpAuthenticator() {
+  let s;
+  try { s = await api("POST", "/totp/start"); } catch (err) { alert(err.message); return; }
+  const code = h("input", { inputmode: "numeric", autocomplete: "one-time-code", required: true, maxlength: "6" });
+  const pw = h("input", { type: "password", autocomplete: "current-password", required: true });
+  const status = h("p", { class: "muted small", role: "status" });
+  lookDialog.replaceChildren(h("form", { method: "dialog", class: "stack", onsubmit: async e => {
+    e.preventDefault();
+    try { const r = await api("POST", "/totp/confirm", { password: pw.value, code: code.value }); showCodes(r.recovery); }
+    catch (err) { status.textContent = err.message.charAt(0).toUpperCase() + err.message.slice(1) + "."; }
+  } },
+    h("h2", {}, "Add an authenticator app"),
+    h("p", { class: "small" }, "In an authenticator app (Apple Passwords, Google Authenticator, 1Password, Authy…), scan this code. On this phone, tap “", h("a", { href: s.uri }, "open in an app"), "”."),
+    h("img", { src: s.qr, alt: "QR code for the authenticator app", class: "qr" }),
+    h("p", { class: "muted small" }, "Or type this key: ", h("code", {}, s.secret.replace(/(.{4})/g, "$1 ").trim())),
+    h("label", {}, "The 6-digit code it shows", code), h("label", {}, "Your password", pw), status,
+    h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => security() }, "Back"), h("button", { class: "primary", type: "submit" }, "Turn it on"))));
+  setTimeout(() => code.focus(), 30);
+}
+
+async function addPasskey() {
+  const password = await askPassword("Add a passkey", "Your password first. Then your phone or computer asks for Face ID, Touch ID or your device's code.");
+  if (password == null) return;
+  try {
+    const opts = await api("POST", "/passkeys/begin", { password });
+    const pk = opts.publicKey;
+    pk.challenge = pb64(pk.challenge);
+    pk.user.id = pb64(pk.user.id);
+    (pk.excludeCredentials || []).forEach(c => { c.id = pb64(c.id); });
+    const cred = await navigator.credentials.create({ publicKey: pk });
+    const body = { id: cred.id, rawId: punb64(cred.rawId), type: cred.type,
+      response: { clientDataJSON: punb64(cred.response.clientDataJSON), attestationObject: punb64(cred.response.attestationObject),
+        transports: cred.response.getTransports ? cred.response.getTransports() : [] } };
+    const name = /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad" : /Android/.test(navigator.userAgent) ? "Android phone" : /Mac/.test(navigator.userAgent) ? "Mac" : "This computer";
+    const res = await fetch("/api/me/passkeys/finish?name=" + encodeURIComponent(name), { method: "POST", credentials: "same-origin",
+      headers: { "X-Homeport": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    security("Passkey added. Next time, “Sign in with a passkey” on the sign-in page.");
+  } catch (err) {
+    security(err.name === "NotAllowedError" ? "Adding the passkey was cancelled." : err.message);
+  }
+}
+
+async function security(note) {
+  let sec;
+  try { sec = await api("GET", "/security"); } catch (err) { alert(err.message); return; }
+  const when = t => t && !t.startsWith("0001") ? new Date(t).toLocaleDateString([], { dateStyle: "medium" }) : "never";
+  const on = sec.totp || sec.passkeys.length;
+  lookDialog.replaceChildren(h("div", { class: "stack security" },
+    h("h2", {}, "Sign-in and security"),
+    note ? h("p", { class: "notice", role: "status" }, note) : null,
+    h("section", {}, h("h3", {}, "Password"), h("p", { class: "muted small" }, "One password for every app on this server."),
+      h("button", { type: "button", onclick: () => changePassword() }, "Change password")),
+    h("section", {}, h("h3", {}, "Two-step sign-in ", h("span", { class: on ? "pill on" : "pill" }, on ? "On" : "Off")),
+      h("p", { class: "muted small" }, "After your password, a code from your phone (or a passkey), so a stolen password alone can't get in."),
+      sec.totp ? h("div", { class: "row" }, h("span", {}, "✓ Authenticator app"),
+        h("button", { type: "button", onclick: async () => { const p = await askPassword("Turn off the authenticator app"); if (p == null) return; try { await api("POST", "/totp/off", { password: p }); security("The authenticator app is off."); } catch (err) { security(err.message); } } }, "Turn off")) :
+        h("button", { type: "button", class: "primary", onclick: () => setUpAuthenticator() }, "Add an authenticator app"),
+      on ? h("p", { class: "small" }, `Recovery codes: ${sec.recoveryLeft} left. `,
+        h("button", { type: "button", class: "link", onclick: async () => { const p = await askPassword("New recovery codes", "The old codes stop working."); if (p == null) return; try { showCodes((await api("POST", "/recovery", { password: p })).recovery); } catch (err) { security(err.message); } } }, "Make new ones")) : null),
+    h("section", {}, h("h3", {}, "Passkeys"),
+      h("p", { class: "muted small" }, "Sign in with Face ID, Touch ID or your device's code, without typing a password. A passkey works at the address it was made at (this is " + sec.here + ")."),
+      sec.passkeys.length ? h("ul", { class: "keys" }, sec.passkeys.map(k => h("li", {}, h("b", {}, k.name), h("span", { class: "muted small" }, ` · ${k.host} · added ${when(k.added)} · last used ${when(k.lastUsed)}`),
+        h("button", { type: "button", class: "link", onclick: async () => { const p = await askPassword("Remove “" + k.name + "”"); if (p == null) return; try { await api("POST", "/passkeys/remove", { password: p, id: k.id }); security("Removed."); } catch (err) { security(err.message); } } }, "Remove")))) : null,
+      window.PublicKeyCredential ? h("button", { type: "button", onclick: () => addPasskey() }, "Add a passkey on this device") : h("p", { class: "muted small" }, "This browser can't make passkeys.")),
+    h("div", { class: "buttons" }, h("button", { class: "primary", type: "button", onclick: () => lookDialog.close() }, "Done"))));
+  if (!lookDialog.open) lookDialog.showModal();
+}
+
+document.getElementById("password")?.addEventListener("click", () => security());

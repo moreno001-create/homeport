@@ -79,6 +79,7 @@ type Server struct {
 	handoffs map[string]handoff     // one-time codes that carry a sign-in to an app's domain
 	bad      map[string][]time.Time // failed sign-ins by address
 	codes    map[string]authCode    // OIDC authorization codes
+	twoStep  *twoStep               // sign-ins waiting for their second step, and two-step setups in progress
 }
 
 // A handoff carries a signed-in portal session to one app domain, once, within a minute.
@@ -110,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	s.startRoutes(mux)
 	s.lookRoutes(mux)
 	s.passwordRoutes(mux)
+	s.twoStepRoutes(mux)
 	ai := s.aiHandler()
 	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The AI page has its own name; Caddy's sign-in checks (/auth/) come from any site.

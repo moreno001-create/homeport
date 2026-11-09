@@ -236,9 +236,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	var hash string
+	var who state.User
 	s.Store.Read(func(d *state.Data) {
 		if u, ok := d.User(name); ok {
-			hash = u.Password
+			hash, who = u.Password, *u
 		}
 	})
 	if hash == "" {
@@ -248,6 +249,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if hash == "" || !auth.CheckPassword(hash, r.FormValue("password")) {
 		s.noteBadLogin(ip)
 		fail("That user name and password don't match.", http.StatusUnauthorized)
+		return
+	}
+	// Two-step sign-in: the password was right; now the code or a passkey.
+	if who.TwoStep() {
+		s.startSecondStep(w, r, who, ret)
 		return
 	}
 	// Signed in on the address used: the main domain, or this machine's own address.

@@ -372,6 +372,7 @@ type publicUser struct {
 	Groups      []string  `json:"groups"`
 	Admin       bool      `json:"admin"`
 	Created     time.Time `json:"created"`
+	TwoStep     bool      `json:"twoStep"`
 }
 
 func public(u state.User) publicUser {
@@ -379,7 +380,7 @@ func public(u state.User) publicUser {
 	if g == nil {
 		g = []string{}
 	}
-	return publicUser{u.Name, u.DisplayName, u.Email, g, u.Admin, u.Created}
+	return publicUser{u.Name, u.DisplayName, u.Email, g, u.Admin, u.Created, u.TwoStep()}
 }
 
 type newUser struct {
@@ -481,6 +482,8 @@ func (s *Server) changeUser(w http.ResponseWriter, r *http.Request) {
 		Password    *string   `json:"password"`
 		Groups      *[]string `json:"groups"`
 		Admin       *bool     `json:"admin"`
+		// ResetTwoStep turns off someone's two-step sign-in (a lost phone and no recovery codes left).
+		ResetTwoStep bool `json:"resetTwoStep"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -510,6 +513,10 @@ func (s *Server) changeUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.Admin != nil && !*in.Admin && u.Admin && countAdmins(d) == 1 {
 			return errors.New("this is the only admin; make someone else an admin first")
+		}
+		if in.ResetTwoStep {
+			u.TOTP, u.Recovery, u.Passkeys = "", nil, nil
+			d.DeleteSessionsOf(u.Name)
 		}
 		if in.DisplayName != nil {
 			u.DisplayName = strings.TrimSpace(*in.DisplayName)

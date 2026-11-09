@@ -41,7 +41,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-# Signed for this machine only (no Developer ID): a copy downloaded from the internet opens with right-click → Open.
-codesign --force --sign - "$app"
+# Signed with this Mac's Developer ID when it has one (and notarized when a notarytool profile is set up), else for
+# this machine only: then a copy downloaded from the internet opens with right-click → Open.
+"$(dirname "$0")/sign.sh" dev.homeport.mac "$app"
 (cd dist && rm -f Homeport-mac.zip && ditto -c -k --keepParent Homeport.app Homeport-mac.zip)
 echo "Built $app ($version)"

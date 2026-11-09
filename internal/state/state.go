@@ -69,13 +69,19 @@ type ChatSettings struct {
 }
 
 type User struct {
-	Name        string    `json:"name"`
-	DisplayName string    `json:"displayName"`
-	Email       string    `json:"email,omitempty"`
-	Password    string    `json:"password"` // argon2id hash
-	Groups      []string  `json:"groups,omitempty"`
-	Admin       bool      `json:"admin,omitempty"`
-	Created     time.Time `json:"created"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email,omitempty"`
+	Password    string `json:"password"` // argon2id hash
+	// Two-step sign-in: an authenticator app's secret (base32), recovery codes (hashes; each works once), and
+	// passkeys. With any of them, signing in with a password asks for a second step.
+	TOTP       string    `json:"totp,omitempty"`
+	Recovery   []string  `json:"recovery,omitempty"`
+	Passkeys   []Passkey `json:"passkeys,omitempty"`
+	WebAuthnID []byte    `json:"webauthnId,omitempty"` // the random handle passkeys know this account by
+	Groups     []string  `json:"groups,omitempty"`
+	Admin      bool      `json:"admin,omitempty"`
+	Created    time.Time `json:"created"`
 	// Weather is where the portal's weather is for, and in which units.
 	Weather *WeatherPlace `json:"weather,omitempty"`
 	// Places are up to two more places for the weather (typed ones), and Clocks the world clock's time zones
@@ -527,6 +533,19 @@ func (v *Data) Session(tokenHash string) (*Session, bool) {
 func (v *Data) DeleteSession(tokenHash string) {
 	v.d.Sessions = filter(v.d.Sessions, func(s Session) bool { return s.TokenHash != tokenHash && s.Parent != tokenHash })
 }
+
+// Passkey is a passkey (Face ID, Touch ID, a security key) saved for signing in.
+type Passkey struct {
+	ID         string          `json:"id"` // base64url of the credential id
+	Name       string          `json:"name"`
+	Host       string          `json:"host"` // the address it was made at (passkeys belong to one)
+	Credential json.RawMessage `json:"credential"`
+	Added      time.Time       `json:"added"`
+	LastUsed   time.Time       `json:"lastUsed,omitempty"`
+}
+
+// TwoStep says whether signing in with a password needs a second step.
+func (u User) TwoStep() bool { return u.TOTP != "" || len(u.Passkeys) > 0 }
 
 // DeleteSessionsOf signs a user out of every browser and app (after a password change, say).
 func (v *Data) DeleteSessionsOf(user string) {

@@ -628,3 +628,16 @@ dialog.look { width: min(560px, calc(100vw - 32px)); padding: 22px; }
 .dl-bar { width: 100%; }
 .dl-row { align-items: center; }
 .dl-row .grow { flex: 1 1 auto; }
+
+/* sign-in and security */
+button.passkey { width: 100%; }
+.security section { border-top: 1px solid var(--line, #ddd); padding-top: 10px; }
+.security h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
+.security .pill { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: rgba(127,127,127,.18); }
+.security .pill.on { background: #16a34a; color: #fff; }
+.security .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.security ul.keys { padding-left: 18px; }
+button.link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+pre.codes { columns: 2; font-size: 15px; padding: 12px; border-radius: 8px; background: rgba(127,127,127,.1); }
+img.qr { width: 200px; height: 200px; image-rendering: pixelated; background: #fff; padding: 6px; border-radius: 8px; align-self: center; }
+.notice { background: rgba(37,99,235,.12); padding: 8px 10px; border-radius: 8px; }

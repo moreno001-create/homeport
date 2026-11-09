@@ -1541,9 +1541,11 @@ function userDialog(u) {
   const password = h("input", { type: "password", autocomplete: "new-password", required: !editing, minlength: "10" });
   const groups = h("input", { value: u ? u.groups.join(", ") : "" , placeholder: "family, work" });
   const admin = h("input", { type: "checkbox", checked: u ? u.admin : false });
+  const reset2 = h("input", { type: "checkbox" });
   openDialog(h("form", { method: "dialog", onsubmit: async e => {
     e.preventDefault();
     const body = { displayName: display.value.trim(), email: email.value.trim(), groups: splitGroups(groups.value), admin: admin.checked };
+    if (reset2.checked) body.resetTwoStep = true;
     if (password.value) body.password = password.value;
     try {
       if (editing) await api("PATCH", "/users/" + u.name, body);
@@ -1558,6 +1560,7 @@ function userDialog(u) {
     h("label", {}, editing ? "New password (leave empty to keep it)" : "Password (at least 10 characters)", password),
     h("label", {}, "Groups (comma-separated)", groups),
     h("label", { class: "check" }, admin, "Admin (can use this panel)"),
+    editing && u.twoStep ? h("label", { class: "check" }, reset2, "Turn off their two-step sign-in (a lost phone and no recovery codes): their codes and passkeys are removed and they're signed out") : null,
     h("div", { class: "buttons" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), h("button", { class: "primary", type: "submit" }, editing ? "Save" : "Add"))));
 }
 

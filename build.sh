@@ -10,6 +10,10 @@ for os in linux darwin; do
     CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$version" -o "dist/homeport-$os-$arch" ./cmd/homeport
   done
 done
+# Signed with this Mac's Developer ID when it has one (macOS then keeps Homeport's permissions across updates).
+if [ "$(uname -s)" = Darwin ]; then
+  mac/sign.sh dev.homeport.homeport dist/homeport-darwin-amd64 dist/homeport-darwin-arm64
+fi
 cp install.sh install-mac.sh dist/
 # The Mac app (installs Homeport, shows what's running, starts and stops it): only on a Mac with Xcode.
 if [ "$(uname -s)" = Darwin ] && command -v swift >/dev/null; then

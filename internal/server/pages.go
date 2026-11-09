@@ -48,6 +48,8 @@ type pageData struct {
 	// BodyClass is the page's background (bg-ocean…), and Hide the parts of the portal its person has hidden.
 	BodyClass string
 	Hide      map[string]bool
+	// The second step of signing in: what this person has set up.
+	TOTP, PasskeysHere bool
 }
 
 var pages = template.Must(template.New("").Funcs(template.FuncMap{
@@ -81,9 +83,28 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
     <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
     <input type="hidden" name="return" value="{{.Return}}">
     <button class="primary" type="submit">Sign in</button>
+    <button type="button" id="passkey" class="passkey" hidden>Sign in with a passkey</button>
   </form>
   <p class="muted small">One sign-in for every app on this server.</p>
 </main>
+<script src="/assets/login.js" defer></script>
+{{template "foot" .}}{{end}}
+
+{{define "secondstep"}}{{template "head" .}}
+<main class="narrow">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><span>{{.Main}}</span></div>
+  <form class="card stack" method="post" action="/login/code">
+    <h1>One more step</h1>
+    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    {{if .TOTP}}<label>The 6-digit code from your authenticator app<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9a-zA-Z -]*" required autofocus></label>
+    <button class="primary" type="submit">Continue</button>{{else}}<input type="hidden" name="code" value="">{{end}}
+    {{if .PasskeysHere}}<button type="button" id="passkey" class="passkey"{{if not .TOTP}} autofocus{{end}}>Use a passkey</button>{{end}}
+    <p class="muted small">Lost your phone? Type one of your recovery codes{{if not .TOTP}} in the box{{end}}. No codes left? Ask an admin to turn off two-step sign-in for {{.Name}}.</p>
+    {{if not .TOTP}}<label>Recovery code<input name="code" autocomplete="off"></label><button type="submit">Continue</button>{{end}}
+    <p class="small"><a href="/login">Start over</a></p>
+  </form>
+</main>
+<script src="/assets/login.js" defer></script>
 {{template "foot" .}}{{end}}
 
 {{define "portal"}}{{template "head" .}}
@@ -92,7 +113,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
   <div class="who">
     <span>{{or .User.DisplayName .User.Name}}</span>
     <button type="button" id="customize" title="Background, and what this page shows">Customize</button>
-    <button type="button" id="password" title="Change your password">Password</button>
+    <button type="button" id="password" title="Your password, two-step sign-in and passkeys">Security</button>
     {{if .User.Admin}}<a class="button" href="/admin">Admin</a>{{end}}
     <form method="post" action="/logout"><button type="submit">Sign out</button></form>
   </div>
