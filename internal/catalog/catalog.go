@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -52,6 +53,9 @@ type App struct {
 	// OIDC: the app signs people in with Homeport over OpenID Connect. Installing registers it as a client
 	// (client id = its id, secret "oidc_client_secret" made for it).
 	OIDC *OIDC `yaml:"oidc"`
+	// Requires are other catalog apps this one needs (Cove's documents open in Collabora): installing or updating it
+	// installs them first, at <id>.<main domain>, when they aren't there. {{domainOf "id"}} is where one is served.
+	Requires []string `yaml:"requires"`
 }
 
 // Files is where an app's files go and what they look like.
@@ -111,6 +115,8 @@ type Vars struct {
 	// HostIP is this machine's address on the local network, for apps that serve the network directly (DNS on port
 	// 53, say) rather than through Caddy.
 	HostIP string
+	// Apps are where the installed catalog apps are served, by catalog id (for domainOf).
+	Apps map[string]string
 }
 
 // All lists the catalog, sorted by name.
@@ -166,6 +172,16 @@ func (a App) fill(text string, v Vars, more ...template.FuncMap) (string, error)
 		},
 		// quotemeta makes a value safe inside a regular expression (Collabora's list of allowed Nextclouds).
 		"quotemeta": regexp.QuoteMeta,
+		// domainOf is where another installed catalog app is served (one the manifest requires).
+		"domainOf": func(id string) (string, error) {
+			if d := v.Apps[id]; d != "" {
+				return d, nil
+			}
+			if slices.Contains(a.Requires, id) && v.MainDomain != "" { // while checking a manifest: where it would go
+				return id + "." + v.MainDomain, nil
+			}
+			return "", fmt.Errorf("%s isn't installed (list it under requires)", id)
+		},
 		// Outside the notes, a file isn't read (compose files and commands are written before the app runs).
 		"file": func(string) string { return "" },
 	}

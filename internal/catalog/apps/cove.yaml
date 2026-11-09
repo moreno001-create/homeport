@@ -6,10 +6,13 @@ website: https://github.com/moreno001-create/cove
 signIn: own
 oidc:
   redirectPaths: [/auth/callback]
+# Documents open in Collabora Online, installed alongside at its own address (collabora.<main domain>).
+requires: [collabora]
 notes: |
   Everyone signs in with their Homeport account. Documents (Word, Excel, PowerPoint, OpenDocument) open and are edited
-  right in Cove, by several people at once: its own copy of Collabora Online (LibreOffice) comes with it, so the
-  first start downloads about 1.5 GB, and it uses about half a gigabyte of memory while documents are open.
+  right in Cove, by several people at once, in Collabora Online (LibreOffice), which installing Cove installs too, at
+  https://{{domainOf "collabora"}} (about 1.5 GB to download the first time; half a gigabyte of memory while documents
+  are open). Collabora is its own app at its own address, so its pages never run inside Cove's.
   Phones and computers sync with app passwords made in Cove → Settings: calendars and tasks (iPhone Reminders) at
   https://{{.Domain}}/dav/cal/ (CalDAV), contacts at https://{{.Domain}}/dav/card/ (CardDAV), files at
   https://{{.Domain}}/dav/files/ (WebDAV). On a phone, Add to Home Screen makes it an app.
@@ -34,33 +37,20 @@ compose: |
     app:
       image: ghcr.io/moreno001-create/cove:latest
       ports: ["127.0.0.1:{{.Port}}:8080"]
-      # Homeport's sign-in (and ntfy, for notifications on phones) are reached through this server's Caddy (home routers
-      # often can't loop back to a public address); host.docker.internal is this server, for a local AI (LM Studio, Ollama).
-      extra_hosts: ["{{.MainDomain}}:host-gateway", "ntfy.{{.MainDomain}}:host-gateway", "host.docker.internal:host-gateway"]
+      # Homeport's sign-in, Collabora and ntfy are reached through this server's Caddy (home routers often can't loop
+      # back to a public address); host.docker.internal is this server, for a local AI (LM Studio, Ollama).
+      extra_hosts: ["{{.MainDomain}}:host-gateway", "ntfy.{{.MainDomain}}:host-gateway", "{{domainOf "collabora"}}:host-gateway", "host.docker.internal:host-gateway"]
       environment:
         COVE_URL: "https://{{.Domain}}"
         COVE_OIDC_ISSUER: "{{.Issuer}}"
         COVE_OIDC_CLIENT_ID: "{{.ClientID}}"
         COVE_OIDC_CLIENT_SECRET: "{{secret "oidc_client_secret"}}"
-        # The office below, reached inside: Cove passes its pages through, and it reads files from Cove directly.
-        COVE_OFFICE_INTERNAL: "http://office:9980"
-        COVE_WOPI_URL: "http://app:8080"
+        # Collabora, Homeport's own app (it reads files from Cove at Cove's address, through Caddy too).
+        COVE_COLLABORA: "https://{{domainOf "collabora"}}"
         TZ: "{{.TimeZone}}"
       volumes:
         - "{{.Data}}/data:/data"
         - "{{.CABundle}}:/etc/ssl/certs/ca-certificates.crt:ro"
       depends_on:
         init: {condition: service_completed_successfully}
-      restart: unless-stopped
-    # Collabora Online (LibreOffice in the browser), only for Cove: nothing outside reaches it except through Cove.
-    office:
-      image: collabora/code:latest
-      environment:
-        aliasgroup1: "http://app:8080"
-        server_name: "{{.Domain}}"
-        DONT_GEN_SSL_CERT: "1"
-        # HTTPS is Caddy's; no admin pages; saves 30 seconds after typing stops, and every 2 minutes while it goes on;
-        # home mode: no welcome screen or feedback pop-ups (and at most 10 documents open at once, plenty at home).
-        extra_params: "--o:ssl.enable=false --o:ssl.termination=true --o:admin_console.enable=false --o:per_document.idlesave_duration_secs=30 --o:per_document.autosave_duration_secs=120 --o:home_mode.enable=true"
-        TZ: "{{.TimeZone}}"
       restart: unless-stopped

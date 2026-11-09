@@ -91,6 +91,13 @@ func (m *Manager) redact(id, text string) string {
 // Install sets up a new app from the catalog and starts it. installer is the admin doing it (some apps make them
 // their own admin).
 func (m *Manager) Install(ctx context.Context, req InstallRequest, installer state.User, log io.Writer) (state.App, error) {
+	if req.Manifest == "" {
+		if entry, ok := catalog.Get(req.Catalog); ok {
+			if err := m.installRequired(ctx, entry, installer, log); err != nil {
+				return state.App{}, err
+			}
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -293,8 +300,14 @@ func oidcClient(entry catalog.App, domain string) *state.OIDCClient {
 func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 	var st state.Settings
 	origins := "https://" + app.Domain
+	apps := map[string]string{}
 	m.Store.Read(func(d *state.Data) {
 		st = *d.Settings()
+		for _, a := range d.Apps() {
+			if a.Catalog != "" && apps[a.Catalog] == "" {
+				apps[a.Catalog] = a.Domain
+			}
+		}
 		if p := st.InternetPort; p != 0 && p != 443 && d.UnderHome(app.Domain) {
 			origins += ",https://" + app.Domain + ":" + strconv.Itoa(p)
 		}
@@ -309,7 +322,33 @@ func (m *Manager) vars(app state.App, installer state.User) catalog.Vars {
 		MainDomain: st.MainDomain, Issuer: "https://" + st.MainDomain, ClientID: app.ID,
 		CABundle: filepath.Join(home, "ca-bundle.crt"), CALocal: filepath.Join(home, "ca-local.crt"),
 		InternalTLS: st.TLS == state.TLSInternal, HostIP: m.hostIP(), Origins: origins,
-		HomeNetworks: strings.Join(firewall.LocalNetworks(), ",")}
+		HomeNetworks: strings.Join(firewall.LocalNetworks(), ","), Apps: apps}
+}
+
+// installRequired installs the catalog apps entry needs that aren't installed yet, each at <id>.<main domain>.
+func (m *Manager) installRequired(ctx context.Context, entry catalog.App, installer state.User, log io.Writer) error {
+	for _, id := range entry.Requires {
+		need, ok := catalog.Get(id)
+		if !ok {
+			return fmt.Errorf("%s needs %q, which isn't in the catalog", entry.Name, id)
+		}
+		var have bool
+		var main string
+		m.Store.Read(func(d *state.Data) {
+			main = d.Settings().MainDomain
+			for _, a := range d.Apps() {
+				have = have || a.Catalog == id
+			}
+		})
+		if have {
+			continue
+		}
+		fmt.Fprintf(log, "%s needs %s: installing it first\n", entry.Name, need.Name)
+		if _, err := m.Install(ctx, InstallRequest{Catalog: id, Domain: id + "." + main}, installer, log); err != nil {
+			return fmt.Errorf("%s needs %s, and installing it didn't work: %w", entry.Name, need.Name, err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) hostIP() string {
@@ -373,6 +412,13 @@ func (m *Manager) writeCompose(entry catalog.App, app state.App, installer state
 
 // Update downloads the newest images for the app and restarts it with them (its data stays).
 func (m *Manager) Update(ctx context.Context, id string, log io.Writer) error {
+	if app, installer, err := m.lookup(id); err == nil {
+		if entry, known, err := m.entryOf(app); err == nil && known {
+			if err := m.installRequired(ctx, entry, installer, log); err != nil {
+				return err
+			}
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.update(ctx, id, log)

@@ -1,15 +1,15 @@
 id: collabora
 name: Collabora Online
-description: Open and edit documents, spreadsheets and presentations together in the browser, inside Nextcloud.
+description: Open and edit documents, spreadsheets and presentations together in the browser, inside Cove or Nextcloud.
 category: Documents & productivity
 website: https://www.collaboraonline.com
 signIn: own
 secrets: [admin_password]
 notes: |
-  It works inside Nextcloud: in Nextcloud, install "Nextcloud Office", then under Administration settings → Office choose
+  Cove uses it by itself (installing Cove installs it). For Nextcloud: in Nextcloud, install "Nextcloud Office", then under Administration settings → Office choose
   "Use your own server" and enter https://{{.Domain}} (not the built-in CODE server, which can crash Nextcloud's web
-  server on a Mac). It accepts Nextcloud at any address under {{.MainDomain}}.
-  Nextcloud and the browser both reach it at this address, so it stays public; it only opens documents for Nextcloud.
+  server on a Mac). It accepts Cove and Nextcloud at any address under {{.MainDomain}}.
+  They and the browser all reach it at this address, so it stays public; it only opens documents for them.
   Its admin page is https://{{.Domain}}/browser/dist/admin/admin.html, as "admin" with the admin password in this app's
   secrets.
 compose: |
@@ -17,17 +17,18 @@ compose: |
     app:
       image: collabora/code:latest
       ports: ["127.0.0.1:{{.Port}}:9980"]
-      # Nextcloud's address leads back through this server's Caddy (home routers often can't loop back to a public
-      # address); at another address than nextcloud.<main domain>, the router has to.
-      extra_hosts: ["nextcloud.{{.MainDomain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
+      # Cove's and Nextcloud's addresses lead back through this server's Caddy (home routers often can't loop back to a
+      # public address); at other addresses than cove. and nextcloud.<main domain>, the router has to.
+      extra_hosts: ["nextcloud.{{.MainDomain}}:host-gateway", "cove.{{.MainDomain}}:host-gateway", "{{.MainDomain}}:host-gateway"]
       environment:
-        # The Nextclouds allowed to use it: any address under the main domain (a regular expression).
+        # The apps allowed to use it (Cove, Nextcloud): any address under the main domain (a regular expression).
         aliasgroup1: 'https://.*\.{{quotemeta .MainDomain}}:443'
         server_name: "{{.Domain}}"
         username: admin
         password: "{{secret "admin_password"}}"
-        # Caddy handles HTTPS in front of it.
-        extra_params: "--o:ssl.enable=false --o:ssl.termination=true"
+        # Caddy handles HTTPS in front of it; saves 30 seconds after typing stops and every 2 minutes while it goes on;
+        # home mode: no welcome screen or feedback pop-ups.
+        extra_params: "--o:ssl.enable=false --o:ssl.termination=true --o:per_document.idlesave_duration_secs=30 --o:per_document.autosave_duration_secs=120 --o:home_mode.enable=true"
         DONT_GEN_SSL_CERT: "1"
         TZ: "{{.TimeZone}}"
       volumes:
