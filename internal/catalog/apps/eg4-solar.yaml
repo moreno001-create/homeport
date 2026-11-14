@@ -1,6 +1,6 @@
 id: eg4-solar
 name: EG4 Solar
-description: "Your EG4 solar inverter (6000XP): power flow, battery, history, alerts, weather and solar forecast, grid charging, and every inverter setting with plain explanations."
+description: "Your solar inverter (EG4 6000XP, or a POWLAND 12000W): power flow, battery, split-phase output, history, weather and solar forecast, and the inverter's settings with plain explanations."
 category: Home & network
 website: https://github.com/moreno001-create/eg4-dashboard_ynh
 signIn: gate
@@ -11,6 +11,10 @@ notes: |
   Inverter settings (the sliders button) change the inverter over the Wi-Fi dongle; only Homeport admins can change them,
   and each stays locked until its safety check against EG4 Monitor has passed (it needs both the EG4 login and the dongle).
   Anyone allowed in (Who can open it) can see your solar data and start grid charging: keep it to admins or family.
+
+  POWLAND 12000W instead: open it and type the address of the inverter's Wi-Fi stick (the one the SmartValue app set up)
+  under "Or a POWLAND inverter" (or Settings → POWLAND inverter). The stick connects to this server on port 8899, so
+  that port is open on the home network; SmartValue keeps working. Give the stick a fixed address in your router.
 compose: |
   services:
     init:
@@ -19,9 +23,12 @@ compose: |
       volumes: ["{{.Data}}/data:/data"]
     app:
       image: ghcr.io/moreno001-create/eg4-dashboard:latest
-      ports: ["127.0.0.1:{{.Port}}:8766"]
+      # 8899: a POWLAND inverter's Wi-Fi stick connects in here (it's told this server's address over UDP).
+      ports: ["127.0.0.1:{{.Port}}:8766", "{{.HostIP}}:8899:8899"]
       environment:
         TZ: "{{.TimeZone}}"
+        # The address the POWLAND's stick should connect to: this machine's, not the container's.
+        POWLAND_ADVERTISE: "{{.HostIP}}"
         # The home network to look for the inverter's Wi-Fi dongle in (a container can't see it by itself).
         EG4_NETWORKS: "{{.HomeNetworks}}"
         # Only Homeport admins may change inverter settings (the Remote-Groups header from Homeport's sign-in).
